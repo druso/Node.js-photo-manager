@@ -1,0 +1,11 @@
+{
+  "photo_grid": {
+    "lazy_load_threshold": 100
+  },
+  "keyboard_shortcuts": {
+    "next_photo": "ArrowRight",
+    "prev_photo": "ArrowLeft",
+    "zoom_in": "+",
+    "zoom_out": "-"
+  }
+}
