@@ -6,6 +6,18 @@
     "next_photo": "ArrowRight",
     "prev_photo": "ArrowLeft",
     "zoom_in": "=",
-    "zoom_out": "-"
+    "zoom_out": "-",
+    "view_grid": "g",
+    "view_table": "t",
+    "toggle_filters": "f",
+    "select_all": "a",
+    "toggle_select": "s",
+    "close_viewer": "Escape",
+    "toggle_info": "i"
+  },
+  "ui": {
+    "default_view_mode": "grid",
+    "filters_collapsed_default": true,
+    "remember_last_project": true
   }
 }

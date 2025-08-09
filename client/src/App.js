@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
+import { listProjects, getProject, createProject } from './api/projectsApi';
 import ProjectSelector from './components/ProjectSelector';
 import PhotoUpload from './components/PhotoUpload';
 import PhotoDisplay from './components/PhotoDisplay';
-import PhotoTagger from './components/PhotoTagger';
+import OperationsMenu from './components/OperationsMenu';
 import PhotoViewer from './components/PhotoViewer';
 import Settings from './components/Settings';
 import UniversalFilter from './components/UniversalFilter';
@@ -28,43 +29,58 @@ function App() {
     orientation: 'any'
   });
 
+  // Keyboard shortcuts moved below filteredProjectData definition to avoid TDZ
+
   // Fetch all projects on component mount
   useEffect(() => {
     fetchProjects();
     fetchConfig();
   }, []);
 
-  // Remember last project
+  // Apply UI defaults on config load
+  useEffect(() => {
+    if (!config) return;
+    if (config.ui?.default_view_mode === 'grid' || config.ui?.default_view_mode === 'table') {
+      setViewMode(config.ui.default_view_mode);
+    }
+    if (typeof config.ui?.filters_collapsed_default === 'boolean') {
+      setFiltersCollapsed(config.ui.filters_collapsed_default);
+    }
+  }, [config]);
+
+  // Remember last project (configurable)
   useEffect(() => {
     if (projects.length > 0 && !selectedProject) {
-      // Projects exist but none selected - try to load last project
-      const lastProjectFolder = localStorage.getItem('druso-last-project');
-      if (lastProjectFolder) {
-        const lastProject = projects.find(p => p.folder === lastProjectFolder);
-        if (lastProject) {
-          handleProjectSelect(lastProject);
-          return;
+      const remember = config?.ui?.remember_last_project !== false;
+      if (remember) {
+        const lastProjectFolder = localStorage.getItem('druso-last-project');
+        if (lastProjectFolder) {
+          const lastProject = projects.find(p => p.folder === lastProjectFolder);
+          if (lastProject) {
+            handleProjectSelect(lastProject);
+            return;
+          }
         }
       }
-      // If no last project or it doesn't exist anymore, select the first one
+      // If not remembering or not found, select the first one
       handleProjectSelect(projects[0]);
     }
-  }, [projects, selectedProject]);
+  }, [projects, selectedProject, config]);
 
-  // Remember selected project
+  // Remember selected project (configurable)
   useEffect(() => {
     if (selectedProject) {
-      localStorage.setItem('druso-last-project', selectedProject.folder);
+      const remember = config?.ui?.remember_last_project !== false;
+      if (remember) {
+        localStorage.setItem('druso-last-project', selectedProject.folder);
+      }
     }
-  }, [selectedProject]);
+  }, [selectedProject, config]);
 
   const fetchProjects = async () => {
     try {
-      const response = await fetch('/api/projects');
-      if (response.ok) {
-        const data = await response.json();
-        setProjects(data);
-      }
+      const data = await listProjects();
+      setProjects(data);
     } catch (error) {
       console.error('Error fetching projects:', error);
     }
@@ -73,11 +89,8 @@ function App() {
   const fetchProjectData = async (projectFolder) => {
     setLoading(true);
     try {
-      const response = await fetch(`/api/projects/${projectFolder}`);
-      if (response.ok) {
-        const data = await response.json();
-        setProjectData(data);
-      }
+      const data = await getProject(projectFolder);
+      setProjectData(data);
     } catch (error) {
       console.error('Error fetching project data:', error);
     } finally {
@@ -101,17 +114,9 @@ function App() {
 
   const handleProjectCreate = async (projectName) => {
     try {
-      const response = await fetch('/api/projects', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: projectName }),
-      });
-      
-      if (response.ok) {
-        const newProject = await response.json();
-        await fetchProjects();
-        handleProjectSelect(newProject);
-      }
+      const newProject = await createProject(projectName);
+      await fetchProjects();
+      handleProjectSelect(newProject);
     } catch (error) {
       console.error('Error creating project:', error);
     }
@@ -273,13 +278,65 @@ function App() {
     photos: filteredPhotos
   } : null;
 
+  // Active filter count for badge
+  const activeFilterCount = (
+    (activeFilters.textSearch ? 1 : 0) +
+    (activeFilters.dateRange?.start ? 1 : 0) +
+    (activeFilters.dateRange?.end ? 1 : 0) +
+    (activeFilters.rawAvailable === true ? 1 : 0) +
+    (activeFilters.orientation && activeFilters.orientation !== 'any' ? 1 : 0)
+  );
+
+  const hasActiveFilters = !!(
+    (activeFilters.textSearch && activeFilters.textSearch.trim()) ||
+    activeFilters.dateRange?.start ||
+    activeFilters.dateRange?.end ||
+    activeFilters.rawAvailable === true ||
+    (activeFilters.orientation && activeFilters.orientation !== 'any')
+  );
+
+  // Keyboard shortcuts: use config.keyboard_shortcuts with sensible defaults
+  useEffect(() => {
+    const onKeyDown = (e) => {
+      // Ignore when typing or with modifiers
+      const tag = (e.target.tagName || '').toLowerCase();
+      if (tag === 'input' || tag === 'textarea' || e.metaKey || e.ctrlKey || e.altKey) return;
+      if (!selectedProject) return;
+
+      const ks = config?.keyboard_shortcuts || {};
+      const keyGrid = ks.view_grid || 'g';
+      const keyTable = ks.view_table || 't';
+      const keyToggleFilters = ks.toggle_filters || 'f';
+      const keySelectAll = ks.select_all || 'a';
+
+      if (e.key === keyGrid) {
+        setViewMode('grid');
+      } else if (e.key === keyTable) {
+        setViewMode('table');
+      } else if (e.key === keyToggleFilters) {
+        if (activeTab !== 'upload') setFiltersCollapsed(prev => !prev);
+      } else if (e.key === keySelectAll) {
+        // Toggle select all on filtered set
+        if (activeTab === 'view' && filteredProjectData?.photos) {
+          setSelectedPhotos(prev => {
+            const all = filteredProjectData.photos.map(p => p.filename);
+            if (prev.size === all.length) return new Set();
+            return new Set(all);
+          });
+        }
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [selectedProject, activeTab, filteredProjectData, setViewMode, setSelectedPhotos, setFiltersCollapsed, config]);
+
   return (
     <div className="min-h-screen bg-gray-50">
       {/* Sticky Header Container */}
       <div className="sticky top-0 z-20 bg-gray-50">
         {/* Header */}
         <header className="bg-gray-100 shadow-sm border-b relative">
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="w-full px-4 sm:px-6 lg:px-8">
             <div className="flex justify-between items-center py-4">
               <h1 className="text-2xl font-bold text-gray-900">
                 Druso photo manager
@@ -327,7 +384,7 @@ function App() {
           {/* Mobile Menu Overlay */}
           {showMobileMenu && (
             <div className="absolute top-full left-0 right-0 bg-gray-100 border-t border-gray-200 shadow-lg z-50 md:hidden">
-              <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
+              <div className="w-full px-4 sm:px-6 lg:px-8 py-4">
                 <div className="space-y-4">
                   <ProjectSelector 
                     projects={projects}
@@ -361,8 +418,8 @@ function App() {
         {/* Navigation Tabs */}
         {selectedProject && (
           <div className="bg-white border-b relative">
-            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-              <div className="flex justify-between items-center">
+            <div className="w-full px-4 sm:px-6 lg:px-8">
+              <div className="flex items-center justify-between py-3">
                 <nav className="flex space-x-8" aria-label="Tabs">
                   <button
                     onClick={() => setActiveTab('view')}
@@ -384,16 +441,7 @@ function App() {
                   >
                     Import Photos
                   </button>
-                  <button
-                    onClick={() => setActiveTab('tag')}
-                    className={`py-4 px-1 border-b-2 font-medium text-sm ${
-                      activeTab === 'tag'
-                        ? 'border-blue-500 text-blue-600'
-                        : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                    }`}
-                  >
-                    Tag Photos
-                  </button>
+                  {/* Tag tab removed: tagging is now in Operations dropdown on the View tab */}
                 </nav>
                 
                 {/* Filter Button */}
@@ -412,20 +460,11 @@ function App() {
                   <svg className="h-5 w-5 sm:hidden" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
                   </svg>
-                  {/* Active Filter Indicator - Notification Dot */}
-                  {(activeFilters.textSearch || 
-                    activeFilters.dateRange?.start || 
-                    activeFilters.dateRange?.end || 
-                    activeFilters.rawAvailable === true || 
-                    activeFilters.orientation !== 'any') && (
-                    <>
-                      {/* Desktop: Show "Active" text */}
-                      <span className="hidden sm:inline bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded-full">
-                        Active
-                      </span>
-                      {/* Mobile: Show notification dot */}
-                      <span className="sm:hidden w-2 h-2 bg-blue-500 rounded-full"></span>
-                    </>
+                  {/* Active Filter Count Badge */}
+                  {activeFilterCount > 0 && (
+                    <span className="inline-flex items-center justify-center min-w-[1.25rem] h-5 px-1 text-xs font-semibold rounded-full bg-blue-100 text-blue-800">
+                      {activeFilterCount}
+                    </span>
                   )}
                   {/* Chevron */}
                   <svg className={`h-4 w-4 transition-transform ${filtersCollapsed ? '' : 'rotate-180'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -447,15 +486,84 @@ function App() {
                 </p>
               </div>
             </div>
+
+            {/* Unified Controls Bar (part of sticky header) */}
+            {activeTab === 'view' && (
+              <div className="px-4 py-2 bg-white border-t">
+                <div className="flex items-center justify-between gap-3">
+                  {/* Left: Selection + recap */}
+                  <div className="flex items-center gap-3">
+                    <button
+                      onClick={() => {
+                        if (!filteredProjectData?.photos?.length) return;
+                        if (selectedPhotos.size === filteredProjectData.photos.length) {
+                          setSelectedPhotos(new Set());
+                        } else {
+                          setSelectedPhotos(new Set(filteredProjectData.photos.map(e => e.filename)));
+                        }
+                      }}
+                      className="text-sm text-blue-600 hover:underline"
+                    >
+                      {selectedPhotos.size === filteredProjectData?.photos?.length ? 'Deselect All' : 'Select All'}
+                    </button>
+                    <span className="text-sm text-gray-600">{selectedPhotos.size} selected</span>
+                    <span className="text-xs text-gray-400">• {filteredPhotos.length} of {projectData?.photos?.length || 0} shown</span>
+                    {hasActiveFilters && (
+                      <button
+                        onClick={() => setActiveFilters({
+                          textSearch: '',
+                          dateRange: { start: '', end: '' },
+                          rawAvailable: false,
+                          orientation: 'any'
+                        })}
+                        className="text-xs text-red-600 hover:text-red-700 underline ml-1"
+                        title="Clear all filters"
+                      >
+                        Clear all filters
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Right: View toggle + Operations */}
+                  <div className="flex items-center gap-2">
+                    <div className="flex space-x-2">
+                      <button
+                        onClick={() => setViewMode('grid')}
+                        className={`px-3 py-1.5 text-sm rounded-md ${
+                          viewMode === 'grid' ? 'bg-blue-500 text-white' : 'bg-gray-200 text-gray-700'
+                        }`}
+                      >
+                        Grid
+                      </button>
+                      <button
+                        onClick={() => setViewMode('table')}
+                        className={`px-3 py-1.5 text-sm rounded-md ${
+                          viewMode === 'table' ? 'bg-blue-500 text-white' : 'bg-gray-200 text-gray-700'
+                        }`}
+                      >
+                        Table
+                      </button>
+                    </div>
+                    <OperationsMenu
+                      projectFolder={selectedProject.folder}
+                      projectData={filteredProjectData}
+                      selectedPhotos={selectedPhotos}
+                      setSelectedPhotos={setSelectedPhotos}
+                      onTagsUpdated={handleTagsUpdated}
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
             
-            {/* Universal Filter Dropdown */}
-            {!filtersCollapsed && (
+            {/* Universal Filter Dropdown (view tab only) */}
+            {activeTab !== 'upload' && !filtersCollapsed && (
               <div className="absolute top-full left-0 right-0 bg-white border-b shadow-lg z-40">
                 <UniversalFilter
                   projectData={projectData}
                   filters={activeFilters}
                   onFilterChange={setActiveFilters}
-                  disabled={activeTab === 'upload'}
+                  disabled={false}
                 />
               </div>
             )}
@@ -509,37 +617,11 @@ function App() {
             <span className="ml-3 text-gray-600">Loading project data...</span>
           </div>
         ) : (
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-2 pb-8">
+          <div className="w-full px-4 sm:px-6 lg:px-8 pt-2 pb-8">
 
 
             {activeTab === 'view' && (
               <div>
-                {/* View Mode Toggle */}
-                <div className="flex justify-between items-center mb-6">
-                  <div className="flex space-x-2">
-                    <button
-                      onClick={() => setViewMode('grid')}
-                      className={`px-4 py-2 text-sm font-medium rounded-md ${
-                        viewMode === 'grid'
-                          ? 'bg-blue-100 text-blue-700'
-                          : 'text-gray-500 hover:text-gray-700'
-                      }`}
-                    >
-                      Grid
-                    </button>
-                    <button
-                      onClick={() => setViewMode('table')}
-                      className={`px-4 py-2 text-sm font-medium rounded-md ${
-                        viewMode === 'table'
-                          ? 'bg-blue-100 text-blue-700'
-                          : 'text-gray-500 hover:text-gray-700'
-                      }`}
-                    >
-                      Table
-                    </button>
-                  </div>
-                </div>
-
                 <PhotoDisplay 
                   viewMode={viewMode}
                   projectData={filteredProjectData}
@@ -547,6 +629,7 @@ function App() {
                   onPhotoSelect={(photo) => handlePhotoSelect(photo, filteredPhotos)}
                   onToggleSelection={handleToggleSelection}
                   selectedPhotos={selectedPhotos}
+                  lazyLoadThreshold={config?.photo_grid?.lazy_load_threshold ?? 100}
                 />
               </div>
             )}
@@ -558,18 +641,7 @@ function App() {
               />
             )}
 
-            {activeTab === 'tag' && projectData && (
-              <PhotoTagger
-                projectData={filteredProjectData}
-                projectFolder={selectedProject.folder}
-                onTagsUpdated={handleTagsUpdated}
-                onPhotoSelect={handlePhotoSelect}
-                onToggleSelection={handleToggleSelection}
-                selectedPhotos={selectedPhotos}
-                setSelectedPhotos={setSelectedPhotos}
-                config={config}
-              />
-            )}
+            {/* Tag tab removed; tagging via OperationsMenu */}
           </div>
         )}
       </main>
@@ -581,6 +653,8 @@ function App() {
           startIndex={viewerState.startIndex}
           onClose={handleCloseViewer}
           config={config}
+          selectedPhotos={selectedPhotos}
+          onToggleSelect={handleToggleSelection}
         />
       )}
 

@@ -1,13 +1,18 @@
 import React, { useState, useEffect } from 'react';
+import { deleteProject } from '../api/projectsApi';
 
 const Settings = ({ project, config, onConfigUpdate, onProjectDelete, onClose }) => {
   const [deleteConfirmText, setDeleteConfirmText] = useState('');
   const [localConfig, setLocalConfig] = useState(null);
+  const [openSection, setOpenSection] = useState('delete'); // only one open at a time
 
   useEffect(() => {
     // Deep copy config to local state to avoid direct mutation
     if (config) {
-      setLocalConfig(JSON.parse(JSON.stringify(config)));
+      const copy = JSON.parse(JSON.stringify(config));
+      // Ensure ui exists with defaults when missing
+      copy.ui = copy.ui || { default_view_mode: 'grid', filters_collapsed_default: true, remember_last_project: true };
+      setLocalConfig(copy);
     }
   }, [config]);
 
@@ -67,20 +72,13 @@ const Settings = ({ project, config, onConfigUpdate, onProjectDelete, onClose })
     }
 
     try {
-      const response = await fetch(`/api/projects/${project.folder}`, {
-        method: 'DELETE',
-      });
-
-      if (response.ok) {
-        alert('Project deleted successfully.');
-        onProjectDelete();
-      } else {
-        const errorData = await response.json();
-        alert(`Failed to delete project: ${errorData.error}`);
-      }
+      await deleteProject(project.folder);
+      alert('Project deleted successfully.');
+      onProjectDelete();
     } catch (error) {
       console.error('Error deleting project:', error);
-      alert('An error occurred while deleting the project.');
+      // error may contain server message in error.message
+      alert(`An error occurred while deleting the project. ${error?.message || ''}`);
     }
   };
 
@@ -94,88 +92,165 @@ const Settings = ({ project, config, onConfigUpdate, onProjectDelete, onClose })
     );
   }
 
+  // Sidebar layout with single-open accordions
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-      <div className="bg-white rounded-lg shadow-xl p-6 w-full max-w-md">
-        <div className="flex justify-between items-center mb-4">
-          <h2 className="text-2xl font-bold">Settings</h2>
-          <button onClick={onClose} className="text-gray-500 hover:text-gray-800">&times;</button>
+    <div className="fixed inset-0 z-50 flex">
+      {/* Backdrop */}
+      <div className="flex-1 bg-black/40" onClick={onClose} />
+      {/* Right sidebar */}
+      <aside className="w-full max-w-md h-full bg-white shadow-xl border-l flex flex-col">
+        {/* Header */}
+        <div className="flex items-center justify-between px-4 py-3 border-b">
+          <h2 className="text-xl font-semibold">Settings</h2>
+          <button onClick={onClose} className="text-gray-500 hover:text-gray-800" aria-label="Close">&times;</button>
         </div>
 
-        <div className="space-y-6 max-h-[70vh] overflow-y-auto pr-4">
-          {/* General Settings */}
-          <div>
-            <h3 className="text-lg font-semibold">General</h3>
-            <div className="mt-2 space-y-2">
-              <label className="block">
-                <span className="text-gray-700">Lazy Load Threshold</span>
-                <input 
-                  type="number"
-                  value={localConfig.photo_grid.lazy_load_threshold}
-                  onChange={(e) => handleConfigChange('photo_grid', 'lazy_load_threshold', parseInt(e.target.value, 10) || 0)}
-                  className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-md"
-                />
-              </label>
-            </div>
-          </div>
-
-          {/* Keyboard Shortcuts */}
-          <div className="border-t pt-4">
-            <h3 className="text-lg font-semibold">Keyboard Shortcuts</h3>
-            <div className="mt-2 grid grid-cols-2 gap-4">
-              {Object.entries(localConfig.keyboard_shortcuts).map(([key, value]) => (
-                <label key={key} className="block">
-                  <span className="text-gray-700 capitalize">{key.replace(/_/g, ' ')}</span>
-                  <input 
-                    type="text"
-                    value={value}
-                    onChange={(e) => handleConfigChange('keyboard_shortcuts', key, e.target.value)}
-                    className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-md"
-                  />
-                </label>
-              ))}
-            </div>
-          </div>
-
-          {/* Project Deletion */}
-          {project && (
-            <div className="border-t pt-4">
-              <h3 className="text-lg font-semibold text-red-600">Delete Project</h3>
-              <p className="text-sm text-gray-600 mt-1">
-                This action is irreversible. It will permanently delete the project folder, including all photos and metadata.
-              </p>
-              <div className="mt-4">
-                <label htmlFor="delete-confirm" className="block text-sm font-medium text-gray-700">
-                  To confirm, please type "i am sure" below:
-                </label>
-                <input
-                  id="delete-confirm"
-                  type="text"
-                  value={deleteConfirmText}
-                  onChange={(e) => setDeleteConfirmText(e.target.value)}
-                  className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-red-500"
-                />
+        {/* Body */}
+        <div className="flex-1 overflow-y-auto">
+          <div className="divide-y">
+            {/* Delete Project - first */}
+            {project && (
+              <section>
                 <button
-                  onClick={handleDeleteProject}
-                  disabled={deleteConfirmText !== 'i am sure'}
-                  className="mt-2 w-full px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                  className={`w-full flex items-center justify-between px-4 py-3 text-left ${openSection==='delete' ? 'bg-red-50' : ''}`}
+                  onClick={() => setOpenSection(prev => prev === 'delete' ? null : 'delete')}
                 >
-                  Delete Project Permanently
+                  <span className="text-red-600 font-medium">Delete Project</span>
+                  <span className="text-sm text-gray-500">{openSection==='delete' ? '▲' : '▼'}</span>
                 </button>
-              </div>
-            </div>
-          )}
+                {openSection === 'delete' && (
+                  <div className="px-4 pb-4">
+                    <p className="text-sm text-gray-700">
+                      This action is irreversible. It will permanently delete the project folder, including all photos and metadata.
+                    </p>
+                    <div className="mt-4">
+                      <label htmlFor="delete-confirm" className="block text-sm font-medium text-gray-700">
+                        To confirm, please type "i am sure" below:
+                      </label>
+                      <input
+                        id="delete-confirm"
+                        type="text"
+                        value={deleteConfirmText}
+                        onChange={(e) => setDeleteConfirmText(e.target.value)}
+                        className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-red-500"
+                      />
+                      <button
+                        onClick={handleDeleteProject}
+                        disabled={deleteConfirmText !== 'i am sure'}
+                        className="mt-2 w-full px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        Delete Project Permanently
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </section>
+            )}
+
+            {/* General */}
+            <section>
+              <button
+                className={`w-full flex items-center justify-between px-4 py-3 text-left ${openSection==='general' ? 'bg-gray-50' : ''}`}
+                onClick={() => setOpenSection(prev => prev === 'general' ? null : 'general')}
+              >
+                <span className="font-medium">General</span>
+                <span className="text-sm text-gray-500">{openSection==='general' ? '▲' : '▼'}</span>
+              </button>
+              {openSection === 'general' && (
+                <div className="px-4 pb-4 space-y-2">
+                  <label className="block">
+                    <span className="text-gray-700">Lazy Load Threshold</span>
+                    <input
+                      type="number"
+                      value={localConfig.photo_grid.lazy_load_threshold}
+                      onChange={(e) => handleConfigChange('photo_grid', 'lazy_load_threshold', parseInt(e.target.value, 10) || 0)}
+                      className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-md"
+                    />
+                  </label>
+                </div>
+              )}
+            </section>
+
+            {/* UI Preferences */}
+            <section>
+              <button
+                className={`w-full flex items-center justify-between px-4 py-3 text-left ${openSection==='ui' ? 'bg-gray-50' : ''}`}
+                onClick={() => setOpenSection(prev => prev === 'ui' ? null : 'ui')}
+              >
+                <span className="font-medium">UI Preferences</span>
+                <span className="text-sm text-gray-500">{openSection==='ui' ? '▲' : '▼'}</span>
+              </button>
+              {openSection === 'ui' && (
+                <div className="px-4 pb-4 space-y-3">
+                  <label className="block">
+                    <span className="text-gray-700">Default View Mode</span>
+                    <select
+                      value={localConfig.ui?.default_view_mode || 'grid'}
+                      onChange={(e) => handleConfigChange('ui', 'default_view_mode', e.target.value)}
+                      className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-md"
+                    >
+                      <option value="grid">Grid</option>
+                      <option value="table">Table</option>
+                    </select>
+                  </label>
+                  <label className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={!!localConfig.ui?.filters_collapsed_default}
+                      onChange={(e) => handleConfigChange('ui', 'filters_collapsed_default', e.target.checked)}
+                    />
+                    <span className="text-gray-700">Collapse filters by default</span>
+                  </label>
+                  <label className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={localConfig.ui?.remember_last_project !== false}
+                      onChange={(e) => handleConfigChange('ui', 'remember_last_project', e.target.checked)}
+                    />
+                    <span className="text-gray-700">Remember last opened project</span>
+                  </label>
+                </div>
+              )}
+            </section>
+
+            {/* Keyboard Shortcuts */}
+            <section>
+              <button
+                className={`w-full flex items-center justify-between px-4 py-3 text-left ${openSection==='shortcuts' ? 'bg-gray-50' : ''}`}
+                onClick={() => setOpenSection(prev => prev === 'shortcuts' ? null : 'shortcuts')}
+              >
+                <span className="font-medium">Keyboard Shortcuts</span>
+                <span className="text-sm text-gray-500">{openSection==='shortcuts' ? '▲' : '▼'}</span>
+              </button>
+              {openSection === 'shortcuts' && (
+                <div className="px-4 pb-4 grid grid-cols-2 gap-4">
+                  {Object.entries(localConfig.keyboard_shortcuts).map(([key, value]) => (
+                    <label key={key} className="block">
+                      <span className="text-gray-700 capitalize">{key.replace(/_/g, ' ')}</span>
+                      <input
+                        type="text"
+                        value={value}
+                        onChange={(e) => handleConfigChange('keyboard_shortcuts', key, e.target.value)}
+                        className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-md"
+                      />
+                    </label>
+                  ))}
+                </div>
+              )}
+            </section>
+          </div>
         </div>
 
-        <div className="border-t pt-4 mt-6 flex justify-end space-x-2">
-          <button onClick={handleRestoreDefaults} className="px-4 py-2 bg-gray-200 text-gray-800 rounded-md hover:bg-gray-300">
+        {/* Footer */}
+        <div className="border-t px-4 py-3 flex justify-between items-center">
+          <button onClick={handleRestoreDefaults} className="px-3 py-2 bg-gray-200 text-gray-800 rounded-md hover:bg-gray-300">
             Restore Defaults
           </button>
           <button onClick={handleSaveConfig} className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700">
             Save & Close
           </button>
         </div>
-      </div>
+      </aside>
     </div>
   );
 };

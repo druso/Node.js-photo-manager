@@ -98,24 +98,7 @@ const UniversalFilter = ({
 
   return (
     <div className={`${disabled ? 'bg-gray-50' : 'bg-white'}`}>
-      <div className="max-w-7xl mx-auto p-4 space-y-6">
-        {/* Clear All Button */}
-        {hasActiveFilters && (
-          <div className="flex justify-end">
-            <button
-              onClick={clearAllFilters}
-              disabled={disabled}
-              className={`text-sm ${
-                disabled 
-                  ? 'text-gray-400 cursor-not-allowed'
-                  : 'text-red-600 hover:text-red-800'
-              }`}
-            >
-              Clear all filters
-            </button>
-          </div>
-        )}
-
+      <div className="w-full p-4 space-y-6">
         {/* All Filters in organized layout */}
         <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
           {/* Text Search with Suggestions */}
@@ -131,7 +114,7 @@ const UniversalFilter = ({
               onFocus={() => setShowSuggestions(filters.textSearch.length > 0)}
               onBlur={() => setTimeout(() => setShowSuggestions(false), 200)}
               placeholder="Type to search filenames, tags, or metadata..."
-              className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+              className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
               disabled={disabled}
             />
             
@@ -193,7 +176,7 @@ const UniversalFilter = ({
               id="orientation"
               value={filters.orientation}
               onChange={(e) => updateFilters({ ...filters, orientation: e.target.value })}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+              className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
               disabled={disabled}
             >
               <option value="any">Any</option>

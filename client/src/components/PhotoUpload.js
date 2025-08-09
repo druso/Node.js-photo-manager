@@ -1,4 +1,5 @@
 import React, { useState, useRef } from 'react';
+import { analyzeFiles as apiAnalyzeFiles, generateThumbnails as apiGenerateThumbnails } from '../api/uploadsApi';
 
 const PhotoUpload = ({ projectFolder, onPhotosUploaded }) => {
   const [isDragOver, setIsDragOver] = useState(false);
@@ -26,19 +27,7 @@ const PhotoUpload = ({ projectFolder, onPhotosUploaded }) => {
     
     try {
       // Send file list to backend for authoritative analysis
-      const response = await fetch(`/api/projects/${projectFolder}/analyze-files`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ files: fileList })
-      });
-      
-      if (!response.ok) {
-        throw new Error(`Analysis failed: ${response.status} ${response.statusText}`);
-      }
-      
-      const analysisResult = await response.json();
+      const analysisResult = await apiAnalyzeFiles(projectFolder, fileList);
       console.log('Backend analysis result:', analysisResult);
       
       // Add file objects back to the groups for upload
@@ -196,33 +185,18 @@ const PhotoUpload = ({ projectFolder, onPhotosUploaded }) => {
       
       // Call thumbnail generation endpoint
       try {
-        const thumbnailResponse = await fetch(`/api/projects/${projectFolder}/generate-thumbnails`, {
-          method: 'POST'
-        });
+        const thumbnailResult = await apiGenerateThumbnails(projectFolder);
+        console.log('Thumbnail generation result:', thumbnailResult);
         
-        if (thumbnailResponse.ok) {
-          const thumbnailResult = await thumbnailResponse.json();
-          console.log('Thumbnail generation result:', thumbnailResult);
-          
-          setUploadProgress(
-            prevProgress => prevProgress.map(p => ({ 
-              ...p, 
-              status: 'completed',
-              name: `Successfully uploaded ${p.totalImages} image${p.totalImages > 1 ? 's' : ''} (${p.totalFiles} files)! Generated ${thumbnailResult.processed} thumbnails.`
-            }))
-          );
-        } else {
-          console.warn('Thumbnail generation failed:', await thumbnailResponse.text());
-          setUploadProgress(
-            prevProgress => prevProgress.map(p => ({ 
-              ...p, 
-              status: 'completed',
-              name: `Successfully uploaded ${p.totalImages} image${p.totalImages > 1 ? 's' : ''} (${p.totalFiles} files)! (Thumbnail generation failed)`
-            }))
-          );
-        }
-      } catch (thumbnailError) {
-        console.error('Thumbnail generation error:', thumbnailError);
+        setUploadProgress(
+          prevProgress => prevProgress.map(p => ({ 
+            ...p, 
+            status: 'completed',
+            name: `Successfully uploaded ${p.totalImages} image${p.totalImages > 1 ? 's' : ''} (${p.totalFiles} files)! Generated ${thumbnailResult.processed} thumbnails.`
+          }))
+        );
+      } catch (err) {
+        console.warn('Thumbnail generation failed:', err);
         setUploadProgress(
           prevProgress => prevProgress.map(p => ({ 
             ...p, 

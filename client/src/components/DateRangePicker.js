@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 
 // Date taken filter component - only handles date_time_original field
 const DateRangePicker = ({ 
@@ -7,6 +7,8 @@ const DateRangePicker = ({
   disabled = false 
 }) => {
   const [showPresets, setShowPresets] = useState(false);
+  const [month, setMonth] = useState(() => new Date().getMonth()); // 0-11
+  const [year, setYear] = useState(() => new Date().getFullYear());
 
   const datePresets = [
     {
@@ -92,6 +94,46 @@ const DateRangePicker = ({
 
   const hasDateRange = dateRange.start || dateRange.end;
 
+  // Ensure start <= end if both provided
+  const onStartChange = (val) => {
+    const next = { ...dateRange, start: val };
+    if (next.end && val && val > next.end) {
+      // If start goes past end, move end to start
+      next.end = val;
+    }
+    onDateRangeChange(next);
+  };
+
+  const onEndChange = (val) => {
+    const next = { ...dateRange, end: val };
+    if (next.start && val && val < next.start) {
+      // If end goes before start, move start to end
+      next.start = val;
+    }
+    onDateRangeChange(next);
+  };
+
+  // Build Month/Year lists
+  const monthNames = useMemo(() => (
+    ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
+  ), []);
+
+  const years = useMemo(() => {
+    const current = new Date().getFullYear();
+    const arr = [];
+    for (let y = current; y >= current - 15; y--) arr.push(y);
+    return arr;
+  }, []);
+
+  const applyMonthYear = () => {
+    const start = new Date(year, month, 1);
+    const end = new Date(year, month + 1, 0);
+    onDateRangeChange({
+      start: start.toISOString().slice(0, 10),
+      end: end.toISOString().slice(0, 10)
+    });
+  };
+
   return (
     <div className="space-y-3">
         {/* Preset Buttons */}
@@ -143,6 +185,41 @@ const DateRangePicker = ({
               Clear dates
             </button>
           )}
+          {/* Month/Year quick range */}
+          <div className="flex items-center gap-2">
+            <select
+              value={month}
+              onChange={(e) => setMonth(parseInt(e.target.value, 10))}
+              disabled={disabled}
+              className="px-2 py-1 text-sm border rounded-md"
+            >
+              {monthNames.map((m, idx) => (
+                <option key={idx} value={idx}>{m}</option>
+              ))}
+            </select>
+            <select
+              value={year}
+              onChange={(e) => setYear(parseInt(e.target.value, 10))}
+              disabled={disabled}
+              className="px-2 py-1 text-sm border rounded-md"
+            >
+              {years.map(y => (
+                <option key={y} value={y}>{y}</option>
+              ))}
+            </select>
+            <button
+              type="button"
+              onClick={applyMonthYear}
+              disabled={disabled}
+              className={`px-3 py-1 text-sm border rounded-md transition-colors ${
+                disabled
+                  ? 'text-gray-400 border-gray-200 cursor-not-allowed'
+                  : 'text-gray-700 border-gray-300 hover:bg-gray-50'
+              }`}
+            >
+              Set month
+            </button>
+          </div>
         </div>
 
         {/* Custom Date Range */}
@@ -155,8 +232,8 @@ const DateRangePicker = ({
               id="dateStart"
               type="date"
               value={dateRange.start}
-              onChange={(e) => onDateRangeChange({ ...dateRange, start: e.target.value })}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+              onChange={(e) => onStartChange(e.target.value)}
+              className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
               disabled={disabled}
             />
           </div>
@@ -169,8 +246,8 @@ const DateRangePicker = ({
               id="dateEnd"
               type="date"
               value={dateRange.end}
-              onChange={(e) => onDateRangeChange({ ...dateRange, end: e.target.value })}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+              onChange={(e) => onEndChange(e.target.value)}
+              className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
               disabled={disabled}
             />
           </div>

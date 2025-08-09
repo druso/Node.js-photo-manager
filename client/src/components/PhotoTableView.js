@@ -1,4 +1,5 @@
 import React from 'react';
+import Thumbnail from './Thumbnail';
 
 const PhotoTableView = ({ projectData, projectFolder, onPhotoSelect, selectedPhotos, onToggleSelection }) => {
   const photos = projectData?.photos || [];
@@ -36,38 +37,13 @@ const PhotoTableView = ({ projectData, projectFolder, onPhotoSelect, selectedPho
             >
               <td className="px-6 py-4 whitespace-nowrap">
                 <div className="relative group w-16 h-16">
-                {(() => {
-                  const isRawFile = /\.(arw|cr2|nef|dng|raw)$/i.test(photo.filename);
-                  const hasThumbnail = photo.thumbnail_status === 'generated';
-                  const thumbnailPending = photo.thumbnail_status === 'pending';
-                  const thumbnailFailed = photo.thumbnail_status === 'failed';
-                  
-                  if (isRawFile || !hasThumbnail) {
-                    return (
-                      <div className="w-full h-full flex flex-col items-center justify-center bg-gray-300 text-gray-600 rounded-md">
-                        <svg className="w-6 h-6 mb-1" fill="currentColor" viewBox="0 0 20 20">
-                          <path fillRule="evenodd" d="M4 3a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V5a2 2 0 00-2-2H4zm12 12H4l4-8 3 6 2-4 3 6z" clipRule="evenodd" />
-                        </svg>
-                        {isRawFile ? (
-                          <span className="text-xs font-medium">RAW</span>
-                        ) : thumbnailPending ? (
-                          <span className="text-xs font-medium">PROC</span>
-                        ) : (
-                          <span className="text-xs font-medium">NO PREV</span>
-                        )}
-                      </div>
-                    );
-                  } else {
-                    return (
-                      <img 
-                        src={`/api/projects/${projectFolder}/thumbnail/${photo.filename}`}
-                        alt={`Thumbnail of ${photo.filename}`}
-                        className="w-full h-full object-cover rounded-md"
-                        loading="lazy"
-                      />
-                    );
-                  }
-                })()}
+                  <Thumbnail
+                    photo={photo}
+                    projectFolder={projectFolder}
+                    className="w-full h-full"
+                    rounded={true}
+                    alt={`Thumbnail of ${photo.filename}`}
+                  />
                   <div 
                     className="absolute inset-0 bg-black bg-opacity-50 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity rounded-md"
                   >

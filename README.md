@@ -43,7 +43,14 @@ You need to have two terminals open to run both the backend and frontend servers
     The frontend will open automatically in your browser at `http://localhost:3000`.
 
 
+## Security
 
-kill $(lsof -t -i:5000) || true && cd "/home/druso/code/Node.js photo manager" && npm start &
+This project uses short‑lived signed URLs for downloads by default. For details, configuration, and future hardening guidance (auth and packaging), see `SECURITY.md`.
 
-kill $(lsof -t -i:3000) || true && cd "/home/druso/code/Node.js photo manager/client" && npm start &
+
+
+
+node server.js
+
+cd client
+npm start
