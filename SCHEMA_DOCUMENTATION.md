@@ -32,6 +32,29 @@ The photo management application uses a formal schema system to ensure data cons
 }
 ```
 
+### Derivative Status Fields
+
+- **thumbnail_status** and **preview_status** track background processing of derived assets.
+  - Values:
+    - `pending`: derivative generation queued/not yet processed
+    - `generated`: derivative successfully created on disk
+    - `failed`: attempted but failed; retryable via force endpoints
+    - `not_supported`: derivative not applicable (e.g., RAW-only without supported converter)
+
+### On‑Disk Layout for Derivatives
+
+- Thumbnails: `<project>/.thumb/<filename>.jpg`
+- Previews: `<project>/.preview/<filename>.jpg`
+
+### Related Backend Endpoints
+
+- POST `/api/projects/:folder/generate-thumbnails?force=true|false`
+- POST `/api/projects/:folder/generate-previews?force=true|false`
+- GET `/api/projects/:folder/thumbnail/:filename` → serves generated thumbnail JPG
+- GET `/api/projects/:folder/preview/:filename` → serves generated preview JPG
+
+See implementations in `server/routes/uploads.js` and `server/routes/assets.js`.
+
 ### Photo Entry Structure
 ```json
 {
@@ -44,6 +67,8 @@ The photo management application uses a formal schema system to ensure data cons
   "other_available": "boolean (required)",
   "keep_jpg": "boolean (required)",
   "keep_raw": "boolean (required)",
+  "thumbnail_status": "string (required) - one of: pending | generated | failed | not_supported",
+  "preview_status": "string (required) - one of: pending | generated | failed | not_supported",
   "tags": "array of strings (required)",
   "metadata": {
     "date_time_original": "ISO datetime string (optional)",

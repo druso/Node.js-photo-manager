@@ -1,6 +1,6 @@
 # Node.js Photo Manager
 
-This is a photo management application with a Node.js backend and a React frontend.
+This is a photo management application with a Node.js backend and a React (Vite) frontend.
 
 ## Getting Started
 
@@ -29,23 +29,29 @@ This is a photo management application with a Node.js backend and a React fronte
 You need to have two terminals open to run both the backend and frontend servers concurrently.
 
 1.  **Start the Backend Server:**
-    In the project's root directory, run:
+    In the project's root directory, run one of:
     ```bash
-    node server.js
+    npm start         # plain Node (recommended during testing)
+    # or
+    npm run dev       # nodemon auto-restarts on backend file changes
     ```
-    The backend will be running on `http://localhost:5000`.
+    The backend runs on `http://localhost:5000`.
 
-2.  **Start the Frontend Development Server:**
+2.  **Start the Frontend (Vite) Dev Server:**
     In a separate terminal, navigate to the `client` directory and run:
     ```bash
-    npm start
+    npm run dev       # Vite dev server on http://localhost:3000
     ```
-    The frontend will open automatically in your browser at `http://localhost:3000`.
-
+    Additional scripts:
+    ```bash
+    npm run build     # production build to dist/
+    npm run preview   # preview the production build on http://localhost:3000
+    ```
+    The Vite dev server proxies `/api/*` to `http://localhost:5000` as configured in `client/vite.config.js`.
 
 ## Security
 
-This project uses short‑lived signed URLs for downloads by default. For details, configuration, and future hardening guidance (auth and packaging), see `SECURITY.md`.
+This project uses short‑lived signed URLs for downloads by default. For details, configuration, and future hardening guidance (auth and packaging), see [`SECURITY.md`](SECURITY.md).
 
 ## CI
 
@@ -57,9 +63,27 @@ This project uses short‑lived signed URLs for downloads by default. For detail
   nvm use 22
   ```
 
-## Frontend (CRA) Note
+## Frontend (Vite) Note
 
-- The client is bootstrapped with Create React App (CRA) via `react-scripts@5`.
-- React itself is on latest stable (`react@19`), but CRA’s toolchain (webpack, svgo, resolve-url-loader, webpack-dev-server) can report advisories in audits.
-- These advisories are typically dev-only and do not affect the backend security posture. We’re intentionally keeping the frontend unchanged for now.
-- If we want to reduce audit noise in the future, consider migrating from CRA to a modern bundler (e.g., Vite). This is optional and can be planned later.
+- Frontend uses Vite with `@vitejs/plugin-react`.
+- Entry point: `client/index.html` -> `src/main.jsx` -> `src/App.jsx` and components (`.jsx`).
+- Dev server: `http://localhost:3000` with proxy to backend on `http://localhost:5000`.
+- If you see JSX parse overlays, ensure JSX files use `.jsx` and clear Vite cache: `rm -rf client/node_modules/.vite`.
+
+## Schema Documentation
+
+See [`SCHEMA_DOCUMENTATION.md`](SCHEMA_DOCUMENTATION.md) for the project data/manifest schema and field definitions.
+
+## Troubleshooting
+
+- **Port 5000 in use**: kill old processes
+  ```bash
+  lsof -i :5000 -t | xargs -r kill
+  lsof -i :5000 -t | xargs -r kill -9
+  pkill -f "nodemon|node server.js" || true
+  ```
+- **Vite cache issues**: clear and restart
+  ```bash
+  rm -rf client/node_modules/.vite
+  (cd client && npm run dev)
+  ```

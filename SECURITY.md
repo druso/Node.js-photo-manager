@@ -57,4 +57,4 @@ When introducing user accounts and per‑user projects:
   - `server/utils/signedUrl.js` – HMAC signing/verifying helpers
   - `server/routes/assets.js` – token verification on downloads; `POST /api/projects/:folder/download-url` to mint URLs
 - Frontend
-  - `client/src/components/PhotoViewer.js` – requests signed URL then downloads via fetch+blob
+  - `client/src/components/PhotoViewer.jsx` – requests signed URL then downloads via fetch+blob
