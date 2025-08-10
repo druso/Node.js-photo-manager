@@ -6,8 +6,8 @@ This is a photo management application with a Node.js backend and a React fronte
 
 ### Prerequisites
 
-- Node.js (v18 or later recommended)
-- npm
+- Node.js (v22 LTS required)
+- npm (v10 or newer)
 
 ### Installation
 
@@ -47,10 +47,19 @@ You need to have two terminals open to run both the backend and frontend servers
 
 This project uses short‑lived signed URLs for downloads by default. For details, configuration, and future hardening guidance (auth and packaging), see `SECURITY.md`.
 
+## CI
 
+- GitHub Actions workflow: `.github/workflows/ci.yml`
+- Uses Node 22, runs `npm ci`, and performs a production audit (`npm audit --omit=dev`).
+- Ensure local development matches CI by using Node 22. You can use nvm:
+  ```bash
+  nvm install 22
+  nvm use 22
+  ```
 
+## Frontend (CRA) Note
 
-node server.js
-
-cd client
-npm start
+- The client is bootstrapped with Create React App (CRA) via `react-scripts@5`.
+- React itself is on latest stable (`react@19`), but CRA’s toolchain (webpack, svgo, resolve-url-loader, webpack-dev-server) can report advisories in audits.
+- These advisories are typically dev-only and do not affect the backend security posture. We’re intentionally keeping the frontend unchanged for now.
+- If we want to reduce audit noise in the future, consider migrating from CRA to a modern bundler (e.g., Vite). This is optional and can be planned later.
