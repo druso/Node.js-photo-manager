@@ -1,10 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { deleteProject } from '../api/projectsApi';
+import { generateThumbnails, generatePreviews } from '../api/uploadsApi';
 
 const Settings = ({ project, config, onConfigUpdate, onProjectDelete, onClose }) => {
   const [deleteConfirmText, setDeleteConfirmText] = useState('');
   const [localConfig, setLocalConfig] = useState(null);
   const [openSection, setOpenSection] = useState('delete'); // only one open at a time
+  const [regenLoading, setRegenLoading] = useState(false);
 
   useEffect(() => {
     // Deep copy config to local state to avoid direct mutation
@@ -12,6 +14,10 @@ const Settings = ({ project, config, onConfigUpdate, onProjectDelete, onClose })
       const copy = JSON.parse(JSON.stringify(config));
       // Ensure ui exists with defaults when missing
       copy.ui = copy.ui || { default_view_mode: 'grid', filters_collapsed_default: true, remember_last_project: true };
+      // Ensure processing defaults
+      copy.processing = copy.processing || {};
+      copy.processing.thumbnail = copy.processing.thumbnail || { maxDim: 200, quality: 80 };
+      copy.processing.preview = copy.processing.preview || { maxDim: 6000, quality: 80 };
       setLocalConfig(copy);
     }
   }, [config]);
@@ -24,6 +30,38 @@ const Settings = ({ project, config, onConfigUpdate, onProjectDelete, onClose })
         [key]: value,
       },
     }));
+  };
+
+  const handleProcessingChange = (type, key, value) => {
+    setLocalConfig(prev => ({
+      ...prev,
+      processing: {
+        ...prev.processing,
+        [type]: {
+          ...prev.processing?.[type],
+          [key]: value,
+        }
+      }
+    }));
+  };
+
+  const handleRegenerateAll = async () => {
+    if (!project) {
+      alert('Open a project to regenerate.');
+      return;
+    }
+    if (!window.confirm('Force regenerate thumbnails and previews for this project? This may take a while.')) return;
+    try {
+      setRegenLoading(true);
+      const thumb = await generateThumbnails(project.folder, { force: true });
+      const prev = await generatePreviews(project.folder, { force: true });
+      alert(`Regeneration complete. Thumbnails: ${thumb.processed}/${thumb.total}. Previews: ${prev.processed}/${prev.total}.`);
+    } catch (err) {
+      console.error('Regeneration failed:', err);
+      alert('Regeneration failed. See console for details.');
+    } finally {
+      setRegenLoading(false);
+    }
   };
 
   const handleSaveConfig = async () => {
@@ -146,6 +184,69 @@ const Settings = ({ project, config, onConfigUpdate, onProjectDelete, onClose })
                 )}
               </section>
             )}
+
+            {/* Image Preprocessing (processing + maintenance) */}
+            <section>
+              <button
+                className={`w-full flex items-center justify-between px-4 py-3 text-left ${openSection==='image_preprocessing' ? 'bg-gray-50' : ''}`}
+                onClick={() => setOpenSection(prev => prev === 'image_preprocessing' ? null : 'image_preprocessing')}
+              >
+                <span className="font-medium">Image Preprocessing</span>
+                <span className="text-sm text-gray-500">{openSection==='image_preprocessing' ? '▲' : '▼'}</span>
+              </button>
+              {openSection === 'image_preprocessing' && (
+                <div className="px-4 pb-4 space-y-6">
+                  <div>
+                    <h3 className="text-sm font-semibold mb-2">Thumbnails</h3>
+                    <div className="grid grid-cols-2 gap-3">
+                      <label className="block">
+                        <span className="text-gray-700">Max Dimension (px)</span>
+                        <input type="number" min={1} value={localConfig.processing.thumbnail.maxDim}
+                          onChange={(e)=>handleProcessingChange('thumbnail','maxDim', parseInt(e.target.value,10)||0)}
+                          className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-md" />
+                      </label>
+                      <label className="block">
+                        <span className="text-gray-700">JPEG Quality</span>
+                        <input type="number" min={1} max={100} value={localConfig.processing.thumbnail.quality}
+                          onChange={(e)=>handleProcessingChange('thumbnail','quality', Math.max(1, Math.min(100, parseInt(e.target.value,10)||0)))}
+                          className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-md" />
+                      </label>
+                    </div>
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-semibold mb-2">Previews</h3>
+                    <div className="grid grid-cols-2 gap-3">
+                      <label className="block">
+                        <span className="text-gray-700">Max Dimension (px)</span>
+                        <input type="number" min={1} value={localConfig.processing.preview.maxDim}
+                          onChange={(e)=>handleProcessingChange('preview','maxDim', parseInt(e.target.value,10)||0)}
+                          className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-md" />
+                      </label>
+                      <label className="block">
+                        <span className="text-gray-700">JPEG Quality</span>
+                        <input type="number" min={1} max={100} value={localConfig.processing.preview.quality}
+                          onChange={(e)=>handleProcessingChange('preview','quality', Math.max(1, Math.min(100, parseInt(e.target.value,10)||0)))}
+                          className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-md" />
+                      </label>
+                    </div>
+                  </div>
+
+                  <div className="pt-2 border-t" />
+                  <div className="space-y-2">
+                    <p className="text-sm text-gray-700">Generate or re-generate derived images for the current project.</p>
+                    <button
+                      onClick={handleRegenerateAll}
+                      disabled={regenLoading || !project}
+                      className={`px-4 py-2 rounded-md text-white ${regenLoading ? 'bg-gray-400' : 'bg-blue-600 hover:bg-blue-700'}`}
+                    >
+                      {regenLoading ? 'Regenerating…' : 'Regenerate thumbnails & previews'}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </section>
+
+            {/* Maintenance removed: merged into Image Preprocessing */}
 
             {/* General */}
             <section>

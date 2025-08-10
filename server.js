@@ -28,18 +28,10 @@ app.use('/api/projects', tagsRouter);
 const PROJECTS_DIR = path.join(__dirname, '.projects');
 fs.ensureDirSync(PROJECTS_DIR);
 
-// Config management
+// Config management (centralized in service)
 const CONFIG_PATH = path.join(__dirname, 'config.json');
-const DEFAULT_CONFIG_PATH = path.join(__dirname, 'config.default.json');
-
-const loadConfig = () => {
-  if (!fs.existsSync(CONFIG_PATH)) {
-    fs.copySync(DEFAULT_CONFIG_PATH, CONFIG_PATH);
-  }
-  return fs.readJsonSync(CONFIG_PATH);
-};
-
-let config = loadConfig();
+const { getConfig } = require('./server/services/config');
+let config = getConfig();
 
 // Configure multer for file uploads
 const storage = multer.memoryStorage();
@@ -161,16 +153,23 @@ const saveManifest = async (projectPath, manifest) => {
 
 // Assets routes moved to server/routes/assets.js
 
-// Get config
+// Get config (ensure merged defaults)
 app.get('/api/config', (req, res) => {
-  res.json(config);
+  try {
+    config = getConfig();
+    res.json(config);
+  } catch (e) {
+    console.error('Error loading config:', e);
+    res.status(500).json({ error: 'Failed to load config' });
+  }
 });
 
 // Update config
 app.post('/api/config', async (req, res) => {
   try {
-    config = { ...config, ...req.body };
-    await fs.writeJson(CONFIG_PATH, config, { spaces: 2 });
+    // Save received config verbatim, then re-load merged defaults for response
+    await fs.writeJson(CONFIG_PATH, req.body, { spaces: 2 });
+    config = getConfig();
     res.json(config);
   } catch (error) {
     console.error('Error saving config:', error);

@@ -8,6 +8,9 @@ const PhotoViewer = ({ projectData, projectFolder, startIndex, onClose, config, 
   const [showInfo, setShowInfo] = useState(false);
   const containerRef = useRef(null);
   const [naturalSize, setNaturalSize] = useState({ w: 0, h: 0 });
+  const [usePreview, setUsePreview] = useState(true);
+  const [imageLoading, setImageLoading] = useState(true);
+  const fallbackTriedRef = useRef(false);
   const [isPanning, setIsPanning] = useState(false);
   const panRef = useRef({ startX: 0, startY: 0, origX: 0, origY: 0 });
   const pinchRef = useRef({ active: false, startDist: 0, startZoom: 0 });
@@ -16,6 +19,11 @@ const PhotoViewer = ({ projectData, projectFolder, startIndex, onClose, config, 
 
   const photos = projectData?.photos || [];
   const currentPhoto = photos[currentIndex];
+
+  // Whenever the photo index or preview/full-res mode changes, show loading until onLoad
+  useEffect(() => {
+    setImageLoading(true);
+  }, [currentIndex, usePreview]);
 
   // Keep a ref in sync with position to avoid stale values inside event handlers
   useEffect(() => { positionRef.current = position; }, [position]);
@@ -70,6 +78,8 @@ const PhotoViewer = ({ projectData, projectFolder, startIndex, onClose, config, 
     setCurrentIndex(prevIndex => (prevIndex + 1) % photos.length);
     setZoomPercent(0);
     setPosition({ x: 0, y: 0 });
+    setUsePreview(true);
+    fallbackTriedRef.current = false;
   }, [photos.length]);
 
   const prevPhoto = useCallback(() => {
@@ -77,6 +87,8 @@ const PhotoViewer = ({ projectData, projectFolder, startIndex, onClose, config, 
     setCurrentIndex(prevIndex => (prevIndex - 1 + photos.length) % photos.length);
     setZoomPercent(0);
     setPosition({ x: 0, y: 0 });
+    setUsePreview(true);
+    fallbackTriedRef.current = false;
   }, [photos.length]);
 
   useEffect(() => {
@@ -240,6 +252,16 @@ const PhotoViewer = ({ projectData, projectFolder, startIndex, onClose, config, 
     };
   }, [zoomPercent, position, isPanning]);
 
+  // Add a non-passive wheel listener so we can call preventDefault safely
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    el.addEventListener('wheel', handleWheel, { passive: false });
+    return () => {
+      el.removeEventListener('wheel', handleWheel);
+    };
+  }, [handleWheel]);
+
   // Mouse pan when zoomed beyond fit
   const onMouseDown = (e) => { if (zoomPercent <= 0) return; e.preventDefault(); setIsPanning(true); panRef.current = { startX: e.clientX, startY: e.clientY, origX: position.x, origY: position.y }; };
   const onMouseMove = (e) => { if (!isPanning) return; const dx = e.clientX - panRef.current.startX; const dy = e.clientY - panRef.current.startY; const { x, y } = clampPosition(panRef.current.origX + dx, panRef.current.origY + dy); setPosition({ x, y }); };
@@ -280,14 +302,45 @@ const PhotoViewer = ({ projectData, projectFolder, startIndex, onClose, config, 
     onClose();
   };
 
+  // Determine image source: preview by default, toggle to full-res
+  const imageSrc = usePreview
+    ? `/api/projects/${encodeURIComponent(projectFolder)}/preview/${encodeURIComponent(currentPhoto.filename)}`
+    : `/api/projects/${encodeURIComponent(projectFolder)}/image/${encodeURIComponent(currentPhoto.filename)}`;
+
+
+
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-90 z-50 flex" onWheel={handleWheel} onClick={handleBackdropClick} style={{ overscrollBehavior: 'contain', touchAction: 'none' }}>
+    <div className="fixed inset-0 bg-black bg-opacity-90 z-50 flex" onClick={handleBackdropClick} style={{ overscrollBehavior: 'contain', touchAction: 'none' }}>
       {/* Toolbar */}
       <div className="absolute top-3 left-3 right-3 z-50 flex items-center justify-between pointer-events-none" onMouseDown={(e)=>e.stopPropagation()} onClick={(e)=>e.stopPropagation()}>
         <div className="flex items-center gap-2 pointer-events-auto">
           <button onClick={onClose} className="px-3 py-1.5 text-sm rounded-md bg-red-600 text-white shadow hover:bg-red-700" title="Close">Close</button>
           <button onClick={() => setShowInfo(v => !v)} title="Info" className="px-3 py-1.5 text-sm rounded-md bg-white text-gray-900 shadow hover:bg-gray-100">Info</button>
           <button onClick={() => onToggleSelect && onToggleSelect(currentPhoto)} title="Toggle selected (S)" className={`px-3 py-1.5 text-sm rounded-md shadow ${isSelected ? 'bg-blue-600 text-white hover:bg-blue-700' : 'bg-white text-gray-900 hover:bg-gray-100'}`}>{isSelected ? 'Selected' : 'Select'}</button>
+          {!isRawFile && (
+            <div className="flex items-center gap-3 select-none bg-white text-gray-900 rounded-md shadow px-3 py-1.5">
+              <span className="text-sm">High Res</span>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={!usePreview}
+                onClick={() => { setUsePreview(prev => !prev); setImageLoading(true); fallbackTriedRef.current = false; }}
+                onMouseDown={(e)=>e.stopPropagation()}
+                title="Toggle High Resolution"
+                className={`relative inline-flex h-6 w-12 items-center rounded-full transition-colors focus:outline-none ${!usePreview ? 'bg-blue-600' : 'bg-gray-300'}`}
+              >
+                <span
+                  className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform ${!usePreview ? 'translate-x-6' : 'translate-x-1'}`}
+                />
+              </button>
+              {imageLoading && (
+                <svg className="animate-spin h-4 w-4 text-gray-600" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path>
+                </svg>
+              )}
+            </div>
+          )}
           {/* Download dropdown */}
           <div className="relative">
             <details className="group">
@@ -345,15 +398,22 @@ const PhotoViewer = ({ projectData, projectFolder, startIndex, onClose, config, 
           // Regular image
           <>
             <img 
-              src={`/api/projects/${encodeURIComponent(projectFolder)}/image/${encodeURIComponent(currentPhoto.filename)}`}
+              key={imageSrc}
+              src={imageSrc}
               alt={currentPhoto.filename}
-              onLoad={onImgLoad}
-              className="max-w-none transition-transform duration-150"
-              style={{ transform: `translate(${position.x}px, ${position.y}px) scale(${effectiveScale})` }}
+              onLoad={(e)=>{ onImgLoad(e); setImageLoading(false); }}
+              className="max-w-none"
+              style={{ transform: `translate3d(${position.x}px, ${position.y}px, 0) scale(${effectiveScale})`, willChange: 'transform' }}
               onMouseDown={(e)=>{ e.stopPropagation(); onMouseDown(e); }}
               onClick={(e)=> e.stopPropagation()}
               onError={(e) => {
-                // Fallback if image fails to load
+                // If preview fails, fallback to full-resolution once
+                if (usePreview && !fallbackTriedRef.current) {
+                  fallbackTriedRef.current = true;
+                  setUsePreview(false);
+                  return;
+                }
+                // Fallback if image still fails to load
                 e.target.style.display = 'none';
                 e.target.nextSibling.style.display = 'flex';
               }}

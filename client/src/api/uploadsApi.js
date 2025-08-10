@@ -23,10 +23,20 @@ export async function uploadFiles(folder, fileList) {
   return res.json();
 }
 
-export async function generateThumbnails(folder) {
-  const res = await fetch(`/api/projects/${encodeURIComponent(folder)}/generate-thumbnails`, {
+export async function generateThumbnails(folder, { force } = {}) {
+  const q = force ? '?force=true' : '';
+  const res = await fetch(`/api/projects/${encodeURIComponent(folder)}/generate-thumbnails${q}`, {
     method: 'POST'
   });
   if (!res.ok) throw new Error(`generateThumbnails failed: ${res.status}`);
+  return res.json();
+}
+
+export async function generatePreviews(folder, { force } = {}) {
+  const q = force ? '?force=true' : '';
+  const res = await fetch(`/api/projects/${encodeURIComponent(folder)}/generate-previews${q}`, {
+    method: 'POST'
+  });
+  if (!res.ok) throw new Error(`generatePreviews failed: ${res.status}`);
   return res.json();
 }

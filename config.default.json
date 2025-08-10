@@ -19,5 +19,9 @@
     "default_view_mode": "grid",
     "filters_collapsed_default": true,
     "remember_last_project": true
+  },
+  "processing": {
+    "thumbnail": { "maxDim": 200, "quality": 80 },
+    "preview": { "maxDim": 6000, "quality": 80 }
   }
 }

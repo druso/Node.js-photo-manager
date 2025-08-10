@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { analyzeFiles as apiAnalyzeFiles, generateThumbnails as apiGenerateThumbnails } from '../api/uploadsApi';
+import { analyzeFiles as apiAnalyzeFiles, generateThumbnails as apiGenerateThumbnails, generatePreviews as apiGeneratePreviews } from '../api/uploadsApi';
 
 const PhotoUpload = ({ projectFolder, onPhotosUploaded }) => {
   const [isDragOver, setIsDragOver] = useState(false);
@@ -173,13 +173,13 @@ const PhotoUpload = ({ projectFolder, onPhotosUploaded }) => {
       if (xhr.status >= 200 && xhr.status < 300) {
         const result = JSON.parse(xhr.responseText);
         
-        // Phase 3: Post-processing - Generate thumbnails
+        // Phase 3: Post-processing - Generate thumbnails & previews
         setUploadProgress(prevProgress => 
           prevProgress.map(p => ({
           ...p, 
           progress: 100, 
           status: 'post-processing',
-          name: `Processing ${p.totalImages} image${p.totalImages > 1 ? 's' : ''} (generating thumbnails...)`
+          name: `Processing ${p.totalImages} image${p.totalImages > 1 ? 's' : ''} (generating thumbnails & previews...)`
         }))
       );
       
@@ -187,21 +187,35 @@ const PhotoUpload = ({ projectFolder, onPhotosUploaded }) => {
       try {
         const thumbnailResult = await apiGenerateThumbnails(projectFolder);
         console.log('Thumbnail generation result:', thumbnailResult);
+        // Call preview generation endpoint
+        try {
+          const previewResult = await apiGeneratePreviews(projectFolder);
+          console.log('Preview generation result:', previewResult);
+          setUploadProgress(
+            prevProgress => prevProgress.map(p => ({ 
+              ...p, 
+              status: 'completed',
+              name: `Successfully uploaded ${p.totalImages} image${p.totalImages > 1 ? 's' : ''} (${p.totalFiles} files)! Generated ${thumbnailResult.processed} thumbnails and ${previewResult.processed} previews.`
+            }))
+          );
+        } catch (err) {
+          console.warn('Preview generation failed:', err);
+          setUploadProgress(
+            prevProgress => prevProgress.map(p => ({ 
+              ...p, 
+              status: 'completed',
+              name: `Successfully uploaded ${p.totalImages} image${p.totalImages > 1 ? 's' : ''} (${p.totalFiles} files)! Generated ${thumbnailResult.processed} thumbnails. (Preview generation failed)`
+            }))
+          );
+        }
         
-        setUploadProgress(
-          prevProgress => prevProgress.map(p => ({ 
-            ...p, 
-            status: 'completed',
-            name: `Successfully uploaded ${p.totalImages} image${p.totalImages > 1 ? 's' : ''} (${p.totalFiles} files)! Generated ${thumbnailResult.processed} thumbnails.`
-          }))
-        );
       } catch (err) {
         console.warn('Thumbnail generation failed:', err);
         setUploadProgress(
           prevProgress => prevProgress.map(p => ({ 
             ...p, 
             status: 'completed',
-            name: `Successfully uploaded ${p.totalImages} image${p.totalImages > 1 ? 's' : ''} (${p.totalFiles} files)! (Thumbnail generation failed)`
+            name: `Successfully uploaded ${p.totalImages} image${p.totalImages > 1 ? 's' : ''} (${p.totalFiles} files)! (Thumbnail/Preview generation failed)`
           }))
         );
       }

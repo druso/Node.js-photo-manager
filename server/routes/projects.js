@@ -66,6 +66,7 @@ router.post('/', async (req, res) => {
 
     await fs.ensureDir(projectPath);
     await fs.ensureDir(path.join(projectPath, '.thumb'));
+    await fs.ensureDir(path.join(projectPath, '.preview'));
 
     const manifest = createManifest(name);
     await saveManifest(projectPath, manifest);

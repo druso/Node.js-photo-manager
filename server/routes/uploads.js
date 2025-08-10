@@ -4,6 +4,8 @@ const fs = require('fs-extra');
 const sharp = require('sharp');
 const exifParser = require('exif-parser');
 const multer = require('multer');
+const { getConfig } = require('../services/config');
+const { generateDerivative } = require('../utils/imageProcessing');
 
 const router = express.Router();
 
@@ -94,6 +96,7 @@ router.post('/:folder/upload', upload.array('photos'), async (req, res) => {
 
       // Thumbnail status
       const thumbnailStatus = isRawFile ? 'not_supported' : 'pending';
+      const previewStatus = isRawFile ? 'not_supported' : 'pending';
 
       // Update or create manifest entry
       let entry = manifest.entries.find(e => e.filename === originalName);
@@ -110,9 +113,12 @@ router.post('/:folder/upload', upload.array('photos'), async (req, res) => {
           }
         }
 
-        // thumbnail status
+        // thumbnail/preview status
         if (fileType === 'jpg' || entry.thumbnail_status === 'failed') {
           entry.thumbnail_status = thumbnailStatus;
+        }
+        if (fileType === 'jpg' || entry.preview_status === 'failed') {
+          entry.preview_status = previewStatus;
         }
 
         entry.updated_at = getCurrentTimestamp();
@@ -121,6 +127,7 @@ router.post('/:folder/upload', upload.array('photos'), async (req, res) => {
       } else {
         entry = createDefaultPhotoEntry(originalName, fileType, metadata);
         entry.thumbnail_status = thumbnailStatus;
+        entry.preview_status = previewStatus;
         const validation = validatePhotoEntry(entry);
         if (!validation.valid) {
           console.error(`New photo entry validation failed for ${originalName}:`, validation.errors);
@@ -216,7 +223,12 @@ router.post('/:folder/generate-thumbnails', async (req, res) => {
     const manifest = await loadManifest(projectPath);
     if (!manifest) return res.status(404).json({ error: 'Project manifest not found' });
 
-    const pendingEntries = manifest.entries.filter(entry => entry.thumbnail_status === 'pending' || entry.thumbnail_status === 'failed' || !entry.thumbnail_status);
+    const cfg = getConfig();
+    const thumbCfg = (cfg.processing && cfg.processing.thumbnail) || { maxDim: 200, quality: 80 };
+    const force = String(req.query.force || '').toLowerCase() === 'true';
+    const pendingEntries = force
+      ? manifest.entries.filter(entry => entry.thumbnail_status !== 'not_supported')
+      : manifest.entries.filter(entry => entry.thumbnail_status === 'pending' || entry.thumbnail_status === 'failed' || !entry.thumbnail_status);
     console.log(`Generating thumbnails for ${pendingEntries.length} images`);
 
     let processedCount = 0;
@@ -243,9 +255,7 @@ router.post('/:folder/generate-thumbnails', async (req, res) => {
         }
 
         const thumbPath = path.join(projectPath, '.thumb', `${entry.filename}.jpg`);
-        await fs.ensureDir(path.dirname(thumbPath));
-        const sharpImage = sharp(sourceFile);
-        await sharpImage.rotate().resize(200, 200, { fit: 'inside', withoutEnlargement: true }).jpeg({ quality: 80 }).toFile(thumbPath);
+        await generateDerivative(sourceFile, thumbPath, { maxDim: Number(thumbCfg.maxDim) || 200, quality: Number(thumbCfg.quality) || 80 });
 
         entry.thumbnail_status = 'generated';
         processedCount++;
@@ -262,6 +272,68 @@ router.post('/:folder/generate-thumbnails', async (req, res) => {
   } catch (err) {
     console.error('Error generating thumbnails:', err);
     res.status(500).json({ error: 'Failed to generate thumbnails' });
+  }
+});
+
+// POST /api/projects/:folder/generate-previews
+router.post('/:folder/generate-previews', async (req, res) => {
+  try {
+    const { folder } = req.params;
+    const projectPath = path.join(PROJECTS_DIR, folder);
+    if (!await fs.pathExists(projectPath)) return res.status(404).json({ error: 'Project not found' });
+
+    const manifest = await loadManifest(projectPath);
+    if (!manifest) return res.status(404).json({ error: 'Project manifest not found' });
+
+    const cfg = getConfig();
+    const prevCfg = (cfg.processing && cfg.processing.preview) || { maxDim: 6000, quality: 80 };
+    const force = String(req.query.force || '').toLowerCase() === 'true';
+    const pendingEntries = force
+      ? manifest.entries.filter(entry => entry.preview_status !== 'not_supported')
+      : manifest.entries.filter(entry => entry.preview_status === 'pending' || entry.preview_status === 'failed' || !entry.preview_status);
+    console.log(`Generating previews for ${pendingEntries.length} images`);
+
+    let processedCount = 0;
+    const results = [];
+
+    for (const entry of pendingEntries) {
+      try {
+        // Find a supported file format for this entry
+        const supportedExtensionsLower = ['.jpg', '.jpeg', '.png', '.tiff', '.webp'];
+        let sourceFile = null;
+        const possibleFiles = supportedExtensionsLower.flatMap(ext => [
+          `${entry.filename}${ext}`,
+          `${entry.filename}${ext.toUpperCase()}`
+        ]);
+        for (const fileName of possibleFiles) {
+          const filePath = path.join(projectPath, fileName);
+          if (fs.existsSync(filePath)) { sourceFile = filePath; break; }
+        }
+        if (!sourceFile) {
+          console.log(`No supported source file found for ${entry.filename}`);
+          entry.preview_status = 'failed';
+          results.push({ filename: entry.filename, status: 'failed', reason: 'No supported source file' });
+          continue;
+        }
+
+        const previewPath = path.join(projectPath, '.preview', `${entry.filename}.jpg`);
+        await generateDerivative(sourceFile, previewPath, { maxDim: Number(prevCfg.maxDim) || 6000, quality: Number(prevCfg.quality) || 80 });
+
+        entry.preview_status = 'generated';
+        processedCount++;
+        results.push({ filename: entry.filename, status: 'generated' });
+      } catch (err) {
+        console.error(`Failed to generate preview for ${entry.filename}:`, err);
+        entry.preview_status = 'failed';
+        results.push({ filename: entry.filename, status: 'failed', reason: err.message });
+      }
+    }
+
+    await saveManifest(projectPath, manifest);
+    res.json({ message: `Generated ${processedCount} previews`, processed: processedCount, total: pendingEntries.length, results });
+  } catch (err) {
+    console.error('Error generating previews:', err);
+    res.status(500).json({ error: 'Failed to generate previews' });
   }
 });
 

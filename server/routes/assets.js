@@ -61,6 +61,16 @@ router.get('/:folder/thumbnail/:filename', (req, res) => {
   return res.status(404).json({ error: 'Thumbnail not found' });
 });
 
+// GET /api/projects/:folder/preview/:filename
+router.get('/:folder/preview/:filename', (req, res) => {
+  const { folder, filename } = req.params;
+  const prevPath = path.join(PROJECTS_DIR, folder, '.preview', `${filename}.jpg`);
+  if (fs.existsSync(prevPath)) {
+    return res.sendFile(path.resolve(prevPath));
+  }
+  return res.status(404).json({ error: 'Preview not found' });
+});
+
 // GET /api/projects/:folder/file/:type/:filename -> force specific type (raw|jpg)
 router.get('/:folder/file/:type/:filename', requireValidToken, async (req, res) => {
   const { folder, type } = req.params;

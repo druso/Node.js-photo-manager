@@ -167,6 +167,17 @@ const PHOTO_ENTRY_SCHEMA = {
         description: 'Image orientation value (Orientation from EXIF, 1-8)'
       }
     }
+  },
+  // Processing statuses for generated assets
+  thumbnail_status: {
+    type: 'string',
+    required: false,
+    description: "Thumbnail generation status: 'pending' | 'generated' | 'failed' | 'not_supported'"
+  },
+  preview_status: {
+    type: 'string',
+    required: false,
+    description: "Preview generation status: 'pending' | 'generated' | 'failed' | 'not_supported'"
   }
 };
 
@@ -294,6 +305,19 @@ function validatePhotoEntry(entry) {
     }
     if (entry.metadata.exif_image_height !== undefined && entry.metadata.exif_image_height <= 0) {
       errors.push('metadata.exif_image_height must be a positive number if provided');
+    }
+  }
+
+  // Optional derivative statuses
+  const allowedStatus = ['pending', 'generated', 'failed', 'not_supported'];
+  if (entry.thumbnail_status !== undefined) {
+    if (typeof entry.thumbnail_status !== 'string' || !allowedStatus.includes(entry.thumbnail_status)) {
+      errors.push("thumbnail_status must be one of 'pending'|'generated'|'failed'|'not_supported' if provided");
+    }
+  }
+  if (entry.preview_status !== undefined) {
+    if (typeof entry.preview_status !== 'string' || !allowedStatus.includes(entry.preview_status)) {
+      errors.push("preview_status must be one of 'pending'|'generated'|'failed'|'not_supported' if provided");
     }
   }
   

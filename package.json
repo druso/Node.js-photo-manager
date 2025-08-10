@@ -13,14 +13,20 @@
   "author": "",
   "license": "MIT",
   "dependencies": {
-    "express": "~4.17.3",
+    "express": "^4.21.2",
     "multer": "^1.4.5-lts.1",
-    "sharp": "~0.29.3",
+    "sharp": "^0.34.3",
     "cors": "^2.8.5",
-    "path": "^0.12.7",
-    "fs-extra": "~10.1.0",
+    "fs-extra": "^10.1.0",
     "exif-parser": "^0.1.12",
     "archiver": "^5.3.1"
+  },
+  "overrides": {
+    "body-parser": "^1.20.3",
+    "cookie": "^0.7.0",
+    "send": "^0.19.0",
+    "serve-static": "^1.16.0",
+    "path-to-regexp": "^0.1.12"
   },
   "devDependencies": {
     "nodemon": "~2.0.22"
