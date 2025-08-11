@@ -13,21 +13,32 @@
     "select_all": "a",
     "toggle_select": "s",
     "close_viewer": "Escape",
-    "toggle_info": "i"
+    "toggle_info": "i",
+    "cancel_keep": "Delete",
+    "keep_jpg_only": "j",
+    "keep_raw_and_jpg": "r"
   },
   "ui": {
     "default_view_mode": "grid",
     "filters_collapsed_default": true,
-    "remember_last_project": true
+    "remember_last_project": true,
+    "preview_mode_default": false
+  },
+  "viewer": {
+    "preload_count": 1
   },
   "processing": {
     "thumbnail": {
-      "maxDim": 400,
-      "quality": 50
+      "maxDim": 800,
+      "quality": 30
     },
     "preview": {
       "maxDim": 6000,
-      "quality": 50
+      "quality": 30
     }
+  },
+  "keep_defaults": {
+    "jpg": true,
+    "raw": false
   }
 }

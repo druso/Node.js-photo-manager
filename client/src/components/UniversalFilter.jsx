@@ -6,7 +6,7 @@ const UniversalFilter = ({
   filters = {
     textSearch: '',
     dateRange: { start: '', end: '' }, // Only date_time_original field is used
-    rawAvailable: false,
+    fileType: 'any', // any | jpg_only | raw_only | both
     orientation: 'any'
   },
   onFilterChange, 
@@ -85,24 +85,39 @@ const UniversalFilter = ({
     updateFilters({
       textSearch: '',
       dateRange: { start: '', end: '' },
-      rawAvailable: false,
-      orientation: 'any'
+      fileType: 'any',
+      orientation: 'any',
+      previewMode: false
     });
   };
 
   const hasActiveFilters = filters.textSearch || 
     filters.dateRange.start || 
     filters.dateRange.end || 
-    filters.rawAvailable === true || 
-    filters.orientation !== 'any';
+    (filters.fileType && filters.fileType !== 'any') || 
+    filters.orientation !== 'any' ||
+    !!filters.previewMode;
 
   return (
     <div className={`${disabled ? 'bg-gray-50' : 'bg-white'}`}>
       <div className="w-full p-4 space-y-6">
+        {/* Preview Mode Toggle */}
+        <div className="flex items-center justify-between">
+          <label className="flex items-center gap-2 text-sm text-gray-800">
+            <input
+              type="checkbox"
+              className="h-4 w-4"
+              checked={!!filters.previewMode}
+              onChange={(e) => onFilterChange({ ...filters, previewMode: e.target.checked })}
+              disabled={disabled}
+            />
+            <span>Preview mode (hide cancelled)</span>
+          </label>
+        </div>
         {/* All Filters in organized layout */}
-        <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
           {/* Text Search with Suggestions */}
-          <div className="relative lg:col-span-2">
+          <div className="relative col-span-2 lg:col-span-2">
             <label htmlFor="textSearch" className="block text-sm font-medium text-gray-700 mb-1">
               Filter by filename or tag
             </label>
@@ -135,36 +150,23 @@ const UniversalFilter = ({
             )}
           </div>
 
-          {/* RAW Available Switch */}
+          {/* File Types Dropdown */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Only photos with RAW
+            <label htmlFor="fileType" className="block text-sm font-medium text-gray-700 mb-1">
+              File types
             </label>
-            <div className="flex items-center space-x-3 py-2">
-              <span className={`text-sm ${filters.rawAvailable === false ? 'text-gray-900 font-medium' : 'text-gray-500'}`}>No</span>
-              <button
-                type="button"
-                onClick={() => updateFilters({ 
-                  ...filters, 
-                  rawAvailable: !filters.rawAvailable 
-                })}
-                disabled={disabled}
-                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 ${
-                  filters.rawAvailable === true 
-                    ? 'bg-blue-600' 
-                    : 'bg-gray-300'
-                }`}
-              >
-                <span
-                  className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                    filters.rawAvailable === true 
-                      ? 'translate-x-6' 
-                      : 'translate-x-1'
-                  }`}
-                />
-              </button>
-              <span className={`text-sm ${filters.rawAvailable === true ? 'text-gray-900 font-medium' : 'text-gray-500'}`}>Yes</span>
-            </div>
+            <select
+              id="fileType"
+              value={filters.fileType}
+              onChange={(e) => updateFilters({ ...filters, fileType: e.target.value })}
+              className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+              disabled={disabled}
+            >
+              <option value="any">Any</option>
+              <option value="jpg_only">JPG only</option>
+              <option value="raw_only">RAW only</option>
+              <option value="both">Both</option>
+            </select>
           </div>
 
           {/* Orientation */}

@@ -13,12 +13,20 @@
     "select_all": "a",
     "toggle_select": "s",
     "close_viewer": "Escape",
-    "toggle_info": "i"
+    "toggle_info": "i",
+    "cancel_keep": "Delete",
+    "keep_jpg_only": "j",
+    "keep_raw_and_jpg": "r"
   },
   "ui": {
     "default_view_mode": "grid",
     "filters_collapsed_default": true,
-    "remember_last_project": true
+    "remember_last_project": true,
+    "preview_mode_default": false
+  },
+  "keep_defaults": {
+    "jpg": true,
+    "raw": false
   },
   "processing": {
     "thumbnail": { "maxDim": 200, "quality": 80 },

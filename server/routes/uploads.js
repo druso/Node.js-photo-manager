@@ -126,6 +126,16 @@ router.post('/:folder/upload', upload.array('photos'), async (req, res) => {
         if (!validation.valid) console.error(`Updated photo entry validation failed for ${originalName}:`, validation.errors);
       } else {
         entry = createDefaultPhotoEntry(originalName, fileType, metadata);
+        // Apply config keep defaults for new entries
+        try {
+          const cfg = getConfig();
+          const kd = (cfg && cfg.keep_defaults) || { jpg: true, raw: false };
+          entry.keep_jpg = !!kd.jpg;
+          entry.keep_raw = !!kd.raw;
+        } catch (e) {
+          // Fallbacks already set by defaults; non-fatal
+          console.warn('Warning: failed to read keep_defaults from config:', e.message);
+        }
         entry.thumbnail_status = thumbnailStatus;
         entry.preview_status = previewStatus;
         const validation = validatePhotoEntry(entry);

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { listProjects, getProject, createProject } from './api/projectsApi';
 import ProjectSelector from './components/ProjectSelector';
 import PhotoUpload from './components/PhotoUpload';
@@ -25,9 +25,154 @@ function App() {
   const [activeFilters, setActiveFilters] = useState({
     textSearch: '',
     dateRange: { start: '', end: '' }, // Only date_time_original field is used
-    rawAvailable: false,
-    orientation: 'any'
+    fileType: 'any', // any | jpg_only | raw_only | both
+    orientation: 'any',
+    previewMode: false
   });
+  // Sorting state: key: 'date' | 'name' | other (for table)
+  const [sortKey, setSortKey] = useState('date');
+  const [sortDir, setSortDir] = useState('desc'); // 'asc' | 'desc' (date newest first by default)
+  // Grid/table preview size: 's' | 'm' | 'l'
+  const [sizeLevel, setSizeLevel] = useState('m');
+
+  // Refs
+  const mainRef = useRef(null);
+  const initialSavedYRef = useRef(null);
+  const prefsLoadedOnceRef = useRef(false);
+  const viewerRestoredRef = useRef(false);
+  const DEBUG_PERSIST = false; // set true to see console logs
+
+  // Track if UI prefs were loaded so config defaults don't overwrite them
+  const uiPrefsLoadedRef = useRef(false);
+  // Track readiness to persist, to avoid saving defaults before load completes
+  const uiPrefsReadyRef = useRef(false);
+  const [uiPrefsReady, setUiPrefsReady] = useState(false);
+
+  // Load UI prefs from localStorage on mount
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem('ui_prefs');
+      if (!raw) { if (DEBUG_PERSIST) console.debug('[persist] no ui_prefs found'); uiPrefsReadyRef.current = true; setUiPrefsReady(true); return; }
+      const prefs = JSON.parse(raw);
+      if (prefs.viewMode) { if (DEBUG_PERSIST) console.debug('[persist] load viewMode', prefs.viewMode); setViewMode(prefs.viewMode); }
+      if (prefs.sizeLevel) { if (DEBUG_PERSIST) console.debug('[persist] load sizeLevel', prefs.sizeLevel); setSizeLevel(prefs.sizeLevel); }
+      if (typeof prefs.filtersCollapsed === 'boolean') setFiltersCollapsed(prefs.filtersCollapsed);
+      if (prefs.activeFilters && typeof prefs.activeFilters === 'object') {
+        if (DEBUG_PERSIST) console.debug('[persist] load activeFilters', prefs.activeFilters);
+        setActiveFilters(prev => ({ ...prev, ...prefs.activeFilters }));
+      }
+      if (prefs.activeTab === 'view' || prefs.activeTab === 'upload') { if (DEBUG_PERSIST) console.debug('[persist] load activeTab', prefs.activeTab); setActiveTab(prefs.activeTab); }
+      uiPrefsLoadedRef.current = true;
+      uiPrefsReadyRef.current = true;
+      setUiPrefsReady(true);
+    } catch (e) {
+      console.warn('Failed to load ui_prefs', e);
+      uiPrefsReadyRef.current = true;
+      setUiPrefsReady(true);
+    }
+  }, []);
+
+  // Persist UI prefs when they change
+  useEffect(() => {
+    if (!uiPrefsReadyRef.current || !uiPrefsReady) return; // wait until load attempt completes
+    try {
+      const toSave = {
+        viewMode,
+        sizeLevel,
+        filtersCollapsed,
+        activeFilters,
+        activeTab,
+      };
+      if (DEBUG_PERSIST) console.debug('[persist] save ui_prefs', toSave);
+      localStorage.setItem('ui_prefs', JSON.stringify(toSave));
+    } catch (e) {
+      console.warn('Failed to save ui_prefs', e);
+    }
+  }, [uiPrefsReady, viewMode, sizeLevel, filtersCollapsed, activeFilters, activeTab]);
+
+  // Ensure we save once after readiness even if no user changes yet
+  useEffect(() => {
+    if (!uiPrefsReady) return;
+    if (prefsLoadedOnceRef.current) return;
+    prefsLoadedOnceRef.current = true;
+    try {
+      const exists = localStorage.getItem('ui_prefs');
+      if (!exists) {
+        const toSave = { viewMode, sizeLevel, filtersCollapsed, activeFilters, activeTab };
+        if (DEBUG_PERSIST) console.debug('[persist] initial write ui_prefs', toSave);
+        localStorage.setItem('ui_prefs', JSON.stringify(toSave));
+      }
+    } catch (e) {
+      console.warn('Failed initial save ui_prefs', e);
+    }
+  }, [uiPrefsReady]);
+
+  // Persist and restore window scroll position (single-tab session)
+  useEffect(() => {
+    const savedY = sessionStorage.getItem('window_scroll_y');
+    if (savedY) {
+      initialSavedYRef.current = parseInt(savedY, 10) || 0;
+    }
+    const onScroll = () => {
+      sessionStorage.setItem('window_scroll_y', String(window.scrollY || window.pageYOffset || 0));
+    };
+    window.addEventListener('scroll', onScroll, { passive: true });
+    const onLoad = () => {
+      if (initialSavedYRef.current != null) {
+        try { window.scrollTo(0, initialSavedYRef.current); } catch {}
+      }
+    };
+    window.addEventListener('load', onLoad, { passive: true });
+    return () => window.removeEventListener('scroll', onScroll);
+  }, []);
+
+  // Re-apply saved window scroll after content renders (e.g., photos list ready)
+  useEffect(() => {
+    if (initialSavedYRef.current == null) return;
+    if (activeTab !== 'view') return;
+    // defer to next paint to ensure layout is ready
+    const y = initialSavedYRef.current;
+    let raf1 = requestAnimationFrame(() => {
+      let raf2 = requestAnimationFrame(() => {
+        try { window.scrollTo(0, y); } catch {}
+      });
+      // store id so cleanup can cancel
+      (window.__raf2 ||= []).push(raf2);
+    });
+    (window.__raf1 ||= []).push(raf1);
+    return () => {
+      if (window.__raf1) { window.__raf1.forEach(id => cancelAnimationFrame(id)); window.__raf1 = []; }
+      if (window.__raf2) { window.__raf2.forEach(id => cancelAnimationFrame(id)); window.__raf2 = []; }
+    };
+  }, [activeTab, projectData, config]);
+
+  // (moved below filteredProjectData declaration to avoid TDZ)
+  // Persist and restore main scroll position (single-tab session)
+  useEffect(() => {
+    const el = mainRef.current;
+    if (!el) return;
+    // restore
+    const saved = sessionStorage.getItem('main_scroll_top');
+    if (saved) {
+      try { el.scrollTop = parseInt(saved, 10) || 0; } catch {}
+    }
+    const onScroll = () => {
+      sessionStorage.setItem('main_scroll_top', String(el.scrollTop));
+    };
+    el.addEventListener('scroll', onScroll, { passive: true });
+    return () => el.removeEventListener('scroll', onScroll);
+  }, []);
+
+  const toggleSort = (key) => {
+    if (sortKey === key) {
+      // Flip direction when clicking the active sort
+      setSortDir((prev) => (prev === 'asc' ? 'desc' : 'asc'));
+    } else {
+      // Change key and set default direction
+      setSortKey(key);
+      setSortDir(key === 'date' ? 'desc' : 'asc');
+    }
+  };
 
   // Keyboard shortcuts moved below filteredProjectData definition to avoid TDZ
 
@@ -37,14 +182,19 @@ function App() {
     fetchConfig();
   }, []);
 
-  // Apply UI defaults on config load
+  // Apply UI defaults on config load (only if no saved UI prefs were found)
   useEffect(() => {
     if (!config) return;
-    if (config.ui?.default_view_mode === 'grid' || config.ui?.default_view_mode === 'table') {
-      setViewMode(config.ui.default_view_mode);
-    }
-    if (typeof config.ui?.filters_collapsed_default === 'boolean') {
-      setFiltersCollapsed(config.ui.filters_collapsed_default);
+    if (!uiPrefsLoadedRef.current) {
+      if (config.ui?.default_view_mode === 'grid' || config.ui?.default_view_mode === 'table') {
+        setViewMode(config.ui.default_view_mode);
+      }
+      if (typeof config.ui?.filters_collapsed_default === 'boolean') {
+        setFiltersCollapsed(config.ui.filters_collapsed_default);
+      }
+      if (typeof config.ui?.preview_mode_default === 'boolean') {
+        setActiveFilters(prev => ({ ...prev, previewMode: config.ui.preview_mode_default }));
+      }
     }
   }, [config]);
 
@@ -142,19 +292,45 @@ function App() {
   const handlePhotoSelect = (photo, photoContext = null) => {
     if (!projectData?.photos) return;
     
-    const photos = photoContext || projectData.photos;
+    const photos = photoContext || filteredProjectData?.photos || projectData.photos;
     const photoIndex = photos.findIndex(p => p.filename === photo.filename);
     
     setViewerState({
       isOpen: true,
-      startIndex: photoIndex >= 0 ? photoIndex : 0,
-      photoContext: photoContext
+      startIndex: photoIndex >= 0 ? photoIndex : 0
     });
+    try {
+      sessionStorage.setItem('viewer_open', '1');
+      if (photo?.filename) sessionStorage.setItem('viewer_filename', photo.filename);
+      sessionStorage.setItem('viewer_index', String(photoIndex >= 0 ? photoIndex : 0));
+    } catch {}
   };
 
   const handleCloseViewer = () => {
     setViewerState({ isOpen: false, startIndex: 0 });
+    try { sessionStorage.setItem('viewer_open', '0'); } catch {}
   };
+
+  // Update in-memory keep flags when viewer changes them
+  const handleKeepUpdated = ({ filename, keep_jpg, keep_raw }) => {
+    setProjectData(prev => {
+      if (!prev) return prev;
+      const updated = {
+        ...prev,
+        photos: prev.photos.map(p => p.filename === filename ? { ...p, keep_jpg, keep_raw } : p)
+      };
+      return updated;
+    });
+  };
+
+  // Stable callback to persist current viewer index/filename during navigation
+  const handleViewerIndexChange = useCallback((idx, photo) => {
+    try {
+      sessionStorage.setItem('viewer_index', String(idx));
+      if (photo?.filename) sessionStorage.setItem('viewer_filename', photo.filename);
+      sessionStorage.setItem('viewer_open', '1');
+    } catch {}
+  }, []);
 
   const handleToggleSelection = (photo) => {
     setSelectedPhotos(prev => {
@@ -187,6 +363,12 @@ function App() {
     if (!projectData?.photos) return [];
     
     return projectData.photos.filter((photo, index) => {
+      // Preview mode: hide cancelled items where both keeps are false
+      if (activeFilters.previewMode) {
+        const kj = photo.keep_jpg !== false; // treat missing as true by default unless explicitly false
+        const kr = photo.keep_raw === true;  // treat missing as false by default unless explicitly true
+        if (!kj && !kr) return false;
+      }
       // Text search filter
       if (activeFilters.textSearch) {
         const searchTerm = activeFilters.textSearch.toLowerCase();
@@ -217,11 +399,13 @@ function App() {
         }
       }
       
-      // Raw available filter (boolean only - no "Any" state)
-      if (activeFilters.rawAvailable === true) {
-        if (!photo.raw_available) {
-          return false;
-        }
+      // File type filter
+      if (activeFilters.fileType && activeFilters.fileType !== 'any') {
+        const hasJpg = !!photo.jpg_available;
+        const hasRaw = !!photo.raw_available;
+        if (activeFilters.fileType === 'jpg_only' && !(hasJpg && !hasRaw)) return false;
+        if (activeFilters.fileType === 'raw_only' && !(hasRaw && !hasJpg)) return false;
+        if (activeFilters.fileType === 'both' && !(hasJpg && hasRaw)) return false;
       }
       
       // Orientation filter
@@ -273,26 +457,87 @@ function App() {
 
   // Get filtered photos for display
   const filteredPhotos = getFilteredPhotos();
+
+  // Sort filtered photos (stable) with useMemo for performance
+  const sortedPhotos = useMemo(() => {
+    const arr = [...filteredPhotos];
+    const compare = (a, b) => {
+      const dir = sortDir === 'asc' ? 1 : -1;
+      if (sortKey === 'name') {
+        return a.filename.localeCompare(b.filename) * dir;
+      }
+      if (sortKey === 'date') {
+        const ad = a.metadata?.date_time_original || a.date_time_original || '';
+        const bd = b.metadata?.date_time_original || b.date_time_original || '';
+        // Compare ISO-like strings; fallback to filename to stabilize
+        const cmp = (ad === bd ? 0 : (ad > bd ? 1 : -1)) * dir;
+        if (cmp !== 0) return cmp;
+        return a.filename.localeCompare(b.filename) * dir;
+      }
+      // Table-specific keys
+      if (sortKey === 'filetypes') {
+        const aval = (a.raw_available ? 2 : 0) + (a.jpg_available ? 1 : 0);
+        const bval = (b.raw_available ? 2 : 0) + (b.jpg_available ? 1 : 0);
+        if (aval !== bval) return (aval - bval) * (sortDir === 'asc' ? 1 : -1);
+        return a.filename.localeCompare(b.filename) * dir;
+      }
+      if (sortKey === 'tags') {
+        const at = a.tags?.length || 0;
+        const bt = b.tags?.length || 0;
+        if (at !== bt) return (at - bt) * (sortDir === 'asc' ? 1 : -1);
+        return a.filename.localeCompare(b.filename) * dir;
+      }
+      return 0;
+    };
+    arr.sort(compare);
+    return arr;
+  }, [filteredPhotos, sortKey, sortDir]);
   const filteredProjectData = projectData ? {
     ...projectData,
-    photos: filteredPhotos
+    photos: sortedPhotos
   } : null;
+
+  // Restore viewer state (open and index/filename) once filtered photos are ready
+  useEffect(() => {
+    if (activeTab !== 'view') return;
+    const photos = filteredProjectData?.photos || projectData?.photos;
+    if (!photos || photos.length === 0) return;
+    if (viewerRestoredRef.current) return;
+    let shouldOpen = false;
+    try { shouldOpen = sessionStorage.getItem('viewer_open') === '1'; } catch {}
+    if (!shouldOpen) return;
+    let idx = 0;
+    let fname = null;
+    try { fname = sessionStorage.getItem('viewer_filename') || null; } catch {}
+    if (fname) {
+      const found = photos.findIndex(p => p.filename === fname);
+      if (found >= 0) idx = found; else {
+        try { const storedIdx = parseInt(sessionStorage.getItem('viewer_index') || '0', 10); idx = isNaN(storedIdx) ? 0 : Math.min(Math.max(storedIdx, 0), photos.length - 1); } catch {}
+      }
+    } else {
+      try { const storedIdx = parseInt(sessionStorage.getItem('viewer_index') || '0', 10); idx = isNaN(storedIdx) ? 0 : Math.min(Math.max(storedIdx, 0), photos.length - 1); } catch {}
+    }
+    viewerRestoredRef.current = true;
+    setViewerState({ isOpen: true, startIndex: idx });
+  }, [activeTab, filteredProjectData, projectData]);
 
   // Active filter count for badge
   const activeFilterCount = (
     (activeFilters.textSearch ? 1 : 0) +
     (activeFilters.dateRange?.start ? 1 : 0) +
     (activeFilters.dateRange?.end ? 1 : 0) +
-    (activeFilters.rawAvailable === true ? 1 : 0) +
-    (activeFilters.orientation && activeFilters.orientation !== 'any' ? 1 : 0)
+    (activeFilters.fileType && activeFilters.fileType !== 'any' ? 1 : 0) +
+    (activeFilters.orientation && activeFilters.orientation !== 'any' ? 1 : 0) +
+    (activeFilters.previewMode ? 1 : 0)
   );
 
   const hasActiveFilters = !!(
     (activeFilters.textSearch && activeFilters.textSearch.trim()) ||
     activeFilters.dateRange?.start ||
     activeFilters.dateRange?.end ||
-    activeFilters.rawAvailable === true ||
-    (activeFilters.orientation && activeFilters.orientation !== 'any')
+    (activeFilters.fileType && activeFilters.fileType !== 'any') ||
+    (activeFilters.orientation && activeFilters.orientation !== 'any') ||
+    activeFilters.previewMode
   );
 
   // Keyboard shortcuts: use config.keyboard_shortcuts with sensible defaults
@@ -331,7 +576,7 @@ function App() {
   }, [selectedProject, activeTab, filteredProjectData, setViewMode, setSelectedPhotos, setFiltersCollapsed, config]);
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-gray-50" ref={mainRef}>
       {/* Sticky Header Container */}
       <div className="sticky top-0 z-20 bg-gray-50">
         {/* Header */}
@@ -404,12 +649,13 @@ function App() {
                     >
                       <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 616 0z" />
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
                       </svg>
                       <span>Project Settings</span>
                     </button>
                   )}
                 </div>
+                {/* Mobile controls (size cycle) moved to grid toolbar below */}
               </div>
             </div>
           )}
@@ -429,7 +675,7 @@ function App() {
                         : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
                     }`}
                   >
-                    View Photos
+                    View
                   </button>
                   <button
                     onClick={() => setActiveTab('upload')}
@@ -439,52 +685,74 @@ function App() {
                         : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
                     }`}
                   >
-                    Import Photos
+                    Import
                   </button>
                   {/* Tag tab removed: tagging is now in Operations dropdown on the View tab */}
                 </nav>
                 
-                {/* Filter Button */}
-                <button
-                  onClick={() => setFiltersCollapsed(!filtersCollapsed)}
-                  disabled={activeTab === 'upload'}
-                  className={`flex items-center space-x-2 py-4 px-3 text-sm font-medium transition-colors ${
-                    activeTab === 'upload'
-                      ? 'text-gray-400 cursor-not-allowed'
-                      : 'text-gray-700 hover:text-gray-900'
-                  }`}
-                >
-                  {/* Desktop Filter Button */}
-                  <span className="hidden sm:inline">Filters</span>
-                  {/* Mobile Filter Icon */}
-                  <svg className="h-5 w-5 sm:hidden" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
-                  </svg>
-                  {/* Active Filter Count Badge */}
-                  {activeFilterCount > 0 && (
-                    <span className="inline-flex items-center justify-center min-w-[1.25rem] h-5 px-1 text-xs font-semibold rounded-full bg-blue-100 text-blue-800">
-                      {activeFilterCount}
-                    </span>
+                {/* Filters cluster: toggle + counts + clear */}
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={() => setFiltersCollapsed(!filtersCollapsed)}
+                    disabled={activeTab === 'upload'}
+                    className={`flex items-center space-x-2 py-4 px-3 text-sm font-medium transition-colors ${
+                      activeTab === 'upload'
+                        ? 'text-gray-400 cursor-not-allowed'
+                        : 'text-gray-700 hover:text-gray-900'
+                    }`}
+                  >
+                    {/* Desktop Filter Button */}
+                    <span className="hidden sm:inline">Filters</span>
+                    {/* Mobile Filter Icon */}
+                    <svg className="h-5 w-5 sm:hidden" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
+                    </svg>
+                    {/* Active Filter Count Badge */}
+                    {activeFilterCount > 0 && (
+                      <span className="inline-flex items-center justify-center min-w-[1.25rem] h-5 px-1 text-xs font-semibold rounded-full bg-blue-100 text-blue-800">
+                        {activeFilterCount}
+                      </span>
+                    )}
+                    {/* Chevron */}
+                    <svg className={`h-4 w-4 transition-transform ${filtersCollapsed ? '' : 'rotate-180'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                    </svg>
+                  </button>
+                  {/* Count next to Filters: e.g., 8 of 65 */}
+                  <span className="text-sm text-gray-600 whitespace-nowrap">
+                    {hasActiveFilters ? (
+                      <>
+                        <span className="font-medium">{filteredPhotos.length}</span> of {projectData?.photos?.length || 0}
+                      </>
+                    ) : (
+                      <>
+                        {projectData?.photos?.length || 0} images
+                      </>
+                    )}
+                  </span>
+                  {/* Clear all filters link */}
+                  {hasActiveFilters && (
+                    <button
+                      onClick={() => setActiveFilters({
+                        textSearch: '',
+                        dateRange: { start: '', end: '' },
+                        fileType: 'any',
+                        orientation: 'any',
+                        previewMode: false
+                      })}
+                      className="px-2 py-1 text-xs rounded-md border border-red-300 text-red-600 hover:bg-red-50 leading-tight text-center"
+                      title="Clear all filters"
+                      aria-label="Clear all filters"
+                    >
+                      <span className="block">Clear all</span>
+                      <span className="block">filters</span>
+                    </button>
                   )}
-                  {/* Chevron */}
-                  <svg className={`h-4 w-4 transition-transform ${filtersCollapsed ? '' : 'rotate-180'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                  </svg>
-                </button>
+                </div>
               </div>
               
-              {/* Photo Count */}
-              <div className="px-4 pb-2 flex justify-end">
-                <p className="text-xs text-gray-500">
-                  {filteredPhotos.length === (projectData?.photos?.length || 0) ? (
-                    `${projectData?.photos?.length || 0} photos`
-                  ) : (
-                    <>
-                      <span className="font-bold">{filteredPhotos.length}</span> of {projectData?.photos?.length || 0} photos
-                    </>
-                  )}
-                </p>
-              </div>
+              {/* Photo Count moved next to Filters */}
+              <div className="px-4 pb-2" />
             </div>
 
             {/* Unified Controls Bar (part of sticky header) */}
@@ -507,42 +775,78 @@ function App() {
                       {selectedPhotos.size === filteredProjectData?.photos?.length ? 'Deselect All' : 'Select All'}
                     </button>
                     <span className="text-sm text-gray-600">{selectedPhotos.size} selected</span>
-                    <span className="text-xs text-gray-400">• {filteredPhotos.length} of {projectData?.photos?.length || 0} shown</span>
-                    {hasActiveFilters && (
-                      <button
-                        onClick={() => setActiveFilters({
-                          textSearch: '',
-                          dateRange: { start: '', end: '' },
-                          rawAvailable: false,
-                          orientation: 'any'
-                        })}
-                        className="text-xs text-red-600 hover:text-red-700 underline ml-1"
-                        title="Clear all filters"
-                      >
-                        Clear all filters
-                      </button>
-                    )}
                   </div>
 
                   {/* Right: View toggle + Operations */}
                   <div className="flex items-center gap-2">
                     <div className="flex space-x-2">
+                      {/* Gallery (grid) icon */}
                       <button
                         onClick={() => setViewMode('grid')}
-                        className={`px-3 py-1.5 text-sm rounded-md ${
+                        className={`px-2.5 py-1.5 rounded-md ${
                           viewMode === 'grid' ? 'bg-blue-500 text-white' : 'bg-gray-200 text-gray-700'
                         }`}
+                        title="Gallery view"
+                        aria-label="Gallery view"
                       >
-                        Grid
+                        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                          <path d="M3 3h6v6H3V3zm8 0h6v6h-6V3zM3 11h6v6H3v-6zm8 6v-6h6v6h-6z" />
+                        </svg>
                       </button>
+                      {/* Details (table/list) icon */}
                       <button
                         onClick={() => setViewMode('table')}
-                        className={`px-3 py-1.5 text-sm rounded-md ${
+                        className={`px-2.5 py-1.5 rounded-md ${
                           viewMode === 'table' ? 'bg-blue-500 text-white' : 'bg-gray-200 text-gray-700'
                         }`}
+                        title="Details view"
+                        aria-label="Details view"
                       >
-                        Table
+                        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                          <path d="M3 5h14v2H3V5zm0 4h14v2H3V9zm0 4h14v2H3v-2z" />
+                        </svg>
                       </button>
+
+                      {/* Size control: s/m/l */}
+                      {selectedProject && (
+                        <div className="ml-2 hidden md:inline-flex rounded-md overflow-hidden border">
+                          <button
+                            className={`px-2 py-1 text-sm ${sizeLevel === 's' ? 'bg-gray-900 text-white' : 'bg-white text-gray-700 hover:bg-gray-100'}`}
+                            onClick={() => setSizeLevel('s')}
+                            title="Small previews"
+                            aria-label="Small previews"
+                          >
+                            S
+                          </button>
+                          <button
+                            className={`px-2 py-1 text-sm border-l ${sizeLevel === 'm' ? 'bg-gray-900 text-white' : 'bg-white text-gray-700 hover:bg-gray-100'}`}
+                            onClick={() => setSizeLevel('m')}
+                            title="Medium previews"
+                            aria-label="Medium previews"
+                          >
+                            M
+                          </button>
+                          <button
+                            className={`px-2 py-1 text-sm border-l ${sizeLevel === 'l' ? 'bg-gray-900 text-white' : 'bg-white text-gray-700 hover:bg-gray-100'}`}
+                            onClick={() => setSizeLevel('l')}
+                            title="Large previews"
+                            aria-label="Large previews"
+                          >
+                            L
+                          </button>
+                        </div>
+                      )}
+                      {/* Mobile: single size cycle button */}
+                      {selectedProject && (
+                        <button
+                          className="ml-2 md:hidden px-2.5 py-1 text-xs rounded-md bg-gray-200 text-gray-800 hover:bg-gray-300"
+                          onClick={() => setSizeLevel(prev => (prev === 's' ? 'm' : prev === 'm' ? 'l' : 's'))}
+                          title="Change preview size"
+                          aria-label="Change preview size"
+                        >
+                          Size {sizeLevel.toUpperCase()}
+                        </button>
+                      )}
                     </div>
                     <OperationsMenu
                       projectFolder={selectedProject.folder}
@@ -550,6 +854,8 @@ function App() {
                       selectedPhotos={selectedPhotos}
                       setSelectedPhotos={setSelectedPhotos}
                       onTagsUpdated={handleTagsUpdated}
+                      config={config}
+                      previewModeEnabled={!!activeFilters.previewMode}
                     />
                   </div>
                 </div>
@@ -559,12 +865,30 @@ function App() {
             {/* Universal Filter Dropdown (view tab only) */}
             {activeTab !== 'upload' && !filtersCollapsed && (
               <div className="absolute top-full left-0 right-0 bg-white border-b shadow-lg z-40">
-                <UniversalFilter
-                  projectData={projectData}
-                  filters={activeFilters}
-                  onFilterChange={setActiveFilters}
-                  disabled={false}
-                />
+                {/* Constrain height on small screens and allow scrolling of content while keeping footer visible */}
+                <div className="flex flex-col max-h-[70vh] sm:max-h-[60vh]">
+                  <div className="overflow-y-auto p-4">
+                    <UniversalFilter
+                      projectData={projectData}
+                      filters={activeFilters}
+                      onFilterChange={(newFilters) => {
+                        setActiveFilters(newFilters);
+                        if (newFilters.previewMode) {
+                          setProjectData(filteredProjectData);
+                        }
+                      }}
+                      disabled={false}
+                    />
+                  </div>
+                  <div className="border-t bg-white p-3">
+                    <button
+                      onClick={() => setFiltersCollapsed(true)}
+                      className="w-full py-2 px-3 text-sm rounded-md bg-gray-200 hover:bg-gray-300 text-gray-800"
+                    >
+                      Close
+                    </button>
+                  </div>
+                </div>
               </div>
             )}
           </div>
@@ -622,14 +946,38 @@ function App() {
 
             {activeTab === 'view' && (
               <div>
+                {/* Grid sorting controls */}
+                {viewMode === 'grid' && (
+                  <div className="flex items-center gap-2 mb-2 px-1">
+                    <span className="text-xs text-gray-500 mr-2">Sort:</span>
+                    <button
+                      onClick={() => toggleSort('date')}
+                      className={`text-sm px-2 py-1 rounded ${sortKey === 'date' ? 'font-semibold bg-gray-100' : 'text-gray-700 hover:bg-gray-100'}`}
+                      title="Sort by date"
+                    >
+                      Date {sortKey === 'date' && (sortDir === 'asc' ? '▲' : '▼')}
+                    </button>
+                    <button
+                      onClick={() => toggleSort('name')}
+                      className={`text-sm px-2 py-1 rounded ${sortKey === 'name' ? 'font-semibold bg-gray-100' : 'text-gray-700 hover:bg-gray-100'}`}
+                      title="Sort by name"
+                    >
+                      Name {sortKey === 'name' && (sortDir === 'asc' ? '▲' : '▼')}
+                    </button>
+                  </div>
+                )}
                 <PhotoDisplay 
                   viewMode={viewMode}
                   projectData={filteredProjectData}
                   projectFolder={selectedProject.folder}
-                  onPhotoSelect={(photo) => handlePhotoSelect(photo, filteredPhotos)}
+                  onPhotoSelect={(photo) => handlePhotoSelect(photo, sortedPhotos)}
                   onToggleSelection={handleToggleSelection}
                   selectedPhotos={selectedPhotos}
                   lazyLoadThreshold={config?.photo_grid?.lazy_load_threshold ?? 100}
+                  sortKey={sortKey}
+                  sortDir={sortDir}
+                  onSortChange={toggleSort}
+                  sizeLevel={sizeLevel}
                 />
               </div>
             )}
@@ -648,13 +996,16 @@ function App() {
 
       {viewerState.isOpen && (
         <PhotoViewer 
-          projectData={viewerState.photoContext ? { photos: viewerState.photoContext } : projectData}
-          projectFolder={selectedProject.folder}
+          projectData={filteredProjectData || projectData}
+          projectFolder={selectedProject?.folder}
           startIndex={viewerState.startIndex}
           onClose={handleCloseViewer}
           config={config}
           selectedPhotos={selectedPhotos}
           onToggleSelect={handleToggleSelection}
+          onKeepUpdated={handleKeepUpdated}
+          previewModeEnabled={activeFilters.previewMode}
+          onCurrentIndexChange={handleViewerIndexChange}
         />
       )}
 

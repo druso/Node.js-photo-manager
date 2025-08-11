@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { updateKeep } from '../api/keepApi';
 
-const PhotoViewer = ({ projectData, projectFolder, startIndex, onClose, config, selectedPhotos, onToggleSelect }) => {
+const PhotoViewer = ({ projectData, projectFolder, startIndex, onClose, config, selectedPhotos, onToggleSelect, onKeepUpdated, previewModeEnabled, onCurrentIndexChange }) => {
   // All hooks are called at the top level, unconditionally.
   const [currentIndex, setCurrentIndex] = useState(startIndex);
   const [zoomPercent, setZoomPercent] = useState(0); // 0 = Fit, 100 = Actual size
   const [position, setPosition] = useState({ x: 0, y: 0 });
-  const [showInfo, setShowInfo] = useState(false);
+  const [showInfo, setShowInfo] = useState(() => sessionStorage.getItem('viewer_show_info') === '1');
   const containerRef = useRef(null);
   const [naturalSize, setNaturalSize] = useState({ w: 0, h: 0 });
   const [usePreview, setUsePreview] = useState(true);
@@ -16,9 +17,18 @@ const PhotoViewer = ({ projectData, projectFolder, startIndex, onClose, config, 
   const pinchRef = useRef({ active: false, startDist: 0, startZoom: 0 });
   const pointerRef = useRef({ x: 0, y: 0 });
   const positionRef = useRef(position);
+  const [toast, setToast] = useState({ visible: false, text: '' });
+  const toastTimerRef = useRef(null);
 
   const photos = projectData?.photos || [];
   const currentPhoto = photos[currentIndex];
+
+  // Notify parent of current index and photo changes for persistence
+  useEffect(() => {
+    if (typeof onCurrentIndexChange === 'function') {
+      onCurrentIndexChange(currentIndex, currentPhoto);
+    }
+  }, [currentIndex, currentPhoto, onCurrentIndexChange]);
 
   // Whenever the photo index or preview/full-res mode changes, show loading until onLoad
   useEffect(() => {
@@ -82,6 +92,62 @@ const PhotoViewer = ({ projectData, projectFolder, startIndex, onClose, config, 
     fallbackTriedRef.current = false;
   }, [photos.length]);
 
+  const showToast = useCallback((text) => {
+    if (toastTimerRef.current) {
+      clearTimeout(toastTimerRef.current);
+      toastTimerRef.current = null;
+    }
+    setToast({ visible: true, text });
+    toastTimerRef.current = setTimeout(() => {
+      setToast(prev => ({ ...prev, visible: false }));
+      toastTimerRef.current = null;
+    }, 1200);
+  }, []);
+
+  useEffect(() => () => { if (toastTimerRef.current) clearTimeout(toastTimerRef.current); }, []);
+  
+  // Persist Details panel visibility for single-tab session
+  useEffect(() => {
+    sessionStorage.setItem('viewer_show_info', showInfo ? '1' : '0');
+  }, [showInfo]);
+
+  const applyKeep = useCallback(async (mode) => {
+    console.log('applyKeep invoked with mode:', mode);
+    if (!currentPhoto || !projectFolder) return;
+    let target;
+    let msg;
+    if (mode === 'none') {
+      target = { keep_jpg: false, keep_raw: false };
+      msg = `${currentPhoto.filename} planned for delete`;
+    } else if (mode === 'jpg_only') {
+      target = { keep_jpg: true, keep_raw: false };
+      msg = `Planned to keep only JPG for ${currentPhoto.filename}`;
+    } else if (mode === 'raw_jpg') {
+      target = { keep_jpg: true, keep_raw: true };
+      msg = `Planned to keep JPG + RAW for ${currentPhoto.filename}`;
+    } else {
+      return;
+    }
+    try {
+      const total = (projectData?.photos?.length || photos.length || 1);
+      msg += ` • 1 of ${total}`;
+      if (previewModeEnabled) msg += ' • Preview mode ON';
+      showToast(msg);
+      console.log('Sending keep update for', currentPhoto.filename, target);
+      await updateKeep(projectFolder, [{ filename: currentPhoto.filename, ...target }]);
+      // notify parent to update in-memory data so lists/grid refresh without full reload
+      onKeepUpdated && onKeepUpdated({ filename: currentPhoto.filename, ...target });
+      console.log('Keep update success');
+      // In preview mode, if we cancelled (both false), advance so the current disappears and we keep navigating
+      if (previewModeEnabled && target.keep_jpg === false && target.keep_raw === false) {
+        nextPhoto();
+      }
+    } catch (e) {
+      console.error('Viewer keep error:', e);
+      alert(e.message || 'Failed to update keep flags');
+    }
+  }, [currentPhoto, projectFolder, showToast, onKeepUpdated, previewModeEnabled, nextPhoto]);
+
   const prevPhoto = useCallback(() => {
     if (photos.length === 0) return;
     setCurrentIndex(prevIndex => (prevIndex - 1 + photos.length) % photos.length);
@@ -101,6 +167,9 @@ const PhotoViewer = ({ projectData, projectFolder, startIndex, onClose, config, 
       const keyToggleInfo = ks.toggle_info || 'i';
       const keyZoomIn = ks.zoom_in || '='; // '+' often reports as '=' without shift
       const keyZoomOut = ks.zoom_out || '-';
+      const keyCancelKeep = ks.cancel_keep || 'Delete';
+      const keyKeepJpg = ks.keep_jpg_only || 'j';
+      const keyKeepRawJpg = ks.keep_raw_and_jpg || 'r';
 
       if (e.key === keyNext) {
         nextPhoto();
@@ -118,6 +187,15 @@ const PhotoViewer = ({ projectData, projectFolder, startIndex, onClose, config, 
       } else if (e.key === keyZoomOut) {
         setZoomPercent((z) => Math.max(0, z - 5));
         if (zoomPercent - 5 <= 0) setPosition({ x: 0, y: 0 });
+      } else if (e.key === keyCancelKeep) {
+        e.preventDefault();
+        applyKeep('none');
+      } else if (e.key && e.key.toLowerCase() === String(keyKeepJpg).toLowerCase()) {
+        e.preventDefault();
+        applyKeep('jpg_only');
+      } else if (e.key && e.key.toLowerCase() === String(keyKeepRawJpg).toLowerCase()) {
+        e.preventDefault();
+        applyKeep('raw_jpg');
       }
     };
 
@@ -307,74 +385,70 @@ const PhotoViewer = ({ projectData, projectFolder, startIndex, onClose, config, 
     ? `/api/projects/${encodeURIComponent(projectFolder)}/preview/${encodeURIComponent(currentPhoto.filename)}`
     : `/api/projects/${encodeURIComponent(projectFolder)}/image/${encodeURIComponent(currentPhoto.filename)}`;
 
+  // Preload adjacent images according to config.viewer.preload_count (default 1)
+  useEffect(() => {
+    if (!photos.length) return;
+    const preloadCount = Math.max(0, config?.viewer?.preload_count ?? 1);
+    if (preloadCount === 0) return;
+    const created = [];
+    const makeUrl = (p) => {
+      const isRaw = /(\.(arw|cr2|nef|dng|raw))$/i.test(p.filename);
+      if (isRaw) return null; // nothing to preload for RAW placeholder
+      return usePreview
+        ? `/api/projects/${encodeURIComponent(projectFolder)}/preview/${encodeURIComponent(p.filename)}`
+        : `/api/projects/${encodeURIComponent(projectFolder)}/image/${encodeURIComponent(p.filename)}`;
+    };
+    for (let offset = 1; offset <= preloadCount; offset++) {
+      const nextIdx = (currentIndex + offset) % photos.length;
+      const prevIdx = (currentIndex - offset + photos.length) % photos.length;
+      const toPreload = [photos[nextIdx], photos[prevIdx]];
+      for (const p of toPreload) {
+        if (!p) continue;
+        const url = makeUrl(p);
+        if (!url) continue;
+        const img = new Image();
+        img.decoding = 'async';
+        img.src = url;
+        created.push(img);
+      }
+    }
+    // Cleanup: abort any in-flight by clearing src
+    return () => {
+      for (const img of created) {
+        try { img.src = ''; } catch (_) {}
+      }
+    };
+  }, [currentIndex, photos, projectFolder, usePreview, config?.viewer?.preload_count]);
 
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-90 z-50 flex" onClick={handleBackdropClick} style={{ overscrollBehavior: 'contain', touchAction: 'none' }}>
-      {/* Toolbar */}
-      <div className="absolute top-3 left-3 right-3 z-50 flex items-center justify-between pointer-events-none" onMouseDown={(e)=>e.stopPropagation()} onClick={(e)=>e.stopPropagation()}>
+      {/* Toolbar (right-aligned) */}
+      <div className="absolute top-3 left-3 right-3 z-50 flex items-center justify-end pointer-events-none" onMouseDown={(e)=>e.stopPropagation()} onClick={(e)=>e.stopPropagation()}>
         <div className="flex items-center gap-2 pointer-events-auto">
-          <button onClick={onClose} className="px-3 py-1.5 text-sm rounded-md bg-red-600 text-white shadow hover:bg-red-700" title="Close">Close</button>
-          <button onClick={() => setShowInfo(v => !v)} title="Info" className="px-3 py-1.5 text-sm rounded-md bg-white text-gray-900 shadow hover:bg-gray-100">Info</button>
-          <button onClick={() => onToggleSelect && onToggleSelect(currentPhoto)} title="Toggle selected (S)" className={`px-3 py-1.5 text-sm rounded-md shadow ${isSelected ? 'bg-blue-600 text-white hover:bg-blue-700' : 'bg-white text-gray-900 hover:bg-gray-100'}`}>{isSelected ? 'Selected' : 'Select'}</button>
-          {!isRawFile && (
-            <div className="flex items-center gap-3 select-none bg-white text-gray-900 rounded-md shadow px-3 py-1.5">
-              <span className="text-sm">High Res</span>
-              <button
-                type="button"
-                role="switch"
-                aria-checked={!usePreview}
-                onClick={() => { setUsePreview(prev => !prev); setImageLoading(true); fallbackTriedRef.current = false; }}
-                onMouseDown={(e)=>e.stopPropagation()}
-                title="Toggle High Resolution"
-                className={`relative inline-flex h-6 w-12 items-center rounded-full transition-colors focus:outline-none ${!usePreview ? 'bg-blue-600' : 'bg-gray-300'}`}
-              >
-                <span
-                  className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform ${!usePreview ? 'translate-x-6' : 'translate-x-1'}`}
-                />
-              </button>
-              {imageLoading && (
-                <svg className="animate-spin h-4 w-4 text-gray-600" viewBox="0 0 24 24">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path>
-                </svg>
-              )}
-            </div>
+          {/* Detail toggle (same height as close) */}
+          <button
+            onClick={() => setShowInfo(v => !v)}
+            title="Detail"
+            className={`h-9 px-3 inline-flex items-center text-sm rounded-md shadow bg-white text-gray-900 hover:bg-gray-100 border ${showInfo ? 'font-semibold ring-2 ring-blue-500 border-blue-500' : 'border-transparent'}`}
+          >
+            Detail
+          </button>
+          {/* Close icon at far right. If details open, this closes details; otherwise closes viewer */}
+          {showInfo ? (
+            <button onClick={() => setShowInfo(false)} className="h-9 w-9 inline-flex items-center justify-center rounded-md bg-gray-200 text-gray-800 shadow hover:bg-gray-300" title="Close details">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5">
+                <path fillRule="evenodd" d="M5.47 5.47a.75.75 0 011.06 0L12 10.94l5.47-5.47a.75.75 0 111.06 1.06L13.06 12l5.47 5.47a.75.75 0 11-1.06 1.06L12 13.06l-5.47 5.47a.75.75 0 11-1.06-1.06L10.94 12 5.47 6.53a.75.75 0 010-1.06z" clipRule="evenodd" />
+              </svg>
+            </button>
+          ) : (
+            <button onClick={onClose} className="h-9 w-9 inline-flex items-center justify-center rounded-md bg-red-600 text-white shadow hover:bg-red-700" title="Close">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5">
+                <path fillRule="evenodd" d="M5.47 5.47a.75.75 0 011.06 0L12 10.94l5.47-5.47a.75.75 0 111.06 1.06L13.06 12l5.47 5.47a.75.75 0 11-1.06 1.06L12 13.06l-5.47 5.47a.75.75 0 11-1.06-1.06L10.94 12 5.47 6.53a.75.75 0 010-1.06z" clipRule="evenodd" />
+              </svg>
+            </button>
           )}
-          {/* Download dropdown */}
-          <div className="relative">
-            <details className="group">
-              <summary className="list-none px-3 py-1.5 text-sm rounded-md bg-white text-gray-900 shadow hover:bg-gray-100 cursor-pointer select-none">Download ▾</summary>
-              <div className="absolute mt-1 bg-white text-gray-900 rounded-md shadow border z-50 min-w-[12rem]">
-                <button className="block w-full text-left px-3 py-2 hover:bg-gray-100" onClick={async () => {
-                  const r = await fetch(`/api/projects/${encodeURIComponent(projectFolder)}/download-url`, {
-                    method: 'POST', headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ filename: currentPhoto.filename, type: 'jpg' })
-                  });
-                  const { url } = await r.json();
-                  await fetchAndSave(url);
-                }}>JPG</button>
-                <button className="block w-full text-left px-3 py-2 hover:bg-gray-100" onClick={async () => {
-                  const r = await fetch(`/api/projects/${encodeURIComponent(projectFolder)}/download-url`, {
-                    method: 'POST', headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ filename: currentPhoto.filename, type: 'raw' })
-                  });
-                  const { url } = await r.json();
-                  await fetchAndSave(url);
-                }}>RAW</button>
-                <button className="block w-full text-left px-3 py-2 hover:bg-gray-100" onClick={async () => {
-                  const r = await fetch(`/api/projects/${encodeURIComponent(projectFolder)}/download-url`, {
-                    method: 'POST', headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ filename: currentPhoto.filename, type: 'zip' })
-                  });
-                  const { url } = await r.json();
-                  await fetchAndSave(url);
-                }}>All files (ZIP)</button>
-              </div>
-            </details>
-          </div>
         </div>
-        <div className="pointer-events-auto"></div>
       </div>
 
       <div ref={containerRef} className={`flex-1 h-full flex items-center justify-center overflow-hidden relative ${isPanning ? 'cursor-grabbing' : (zoomPercent > 0 ? 'cursor-grab' : '')}`} onMouseDown={onMouseDown} onMouseMove={onMouseMove} onMouseUp={onMouseUp} onMouseLeave={onMouseUp} onClick={(e)=>{ if (e.target === e.currentTarget) onClose(); }}>
@@ -430,6 +504,14 @@ const PhotoViewer = ({ projectData, projectFolder, startIndex, onClose, config, 
           </>
         )}
       </div>
+      {/* Toast notification */}
+      <div
+        className={`pointer-events-none fixed bottom-6 right-6 transition-all duration-200 z-50 ${toast.visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-3'}`}
+      >
+        <div className="px-4 py-3 rounded-lg bg-black bg-opacity-85 text-white text-base shadow-lg border-2 border-blue-400">
+          {toast.text}
+        </div>
+      </div>
       {/* Bottom controls: zoom slider + percent */}
       <div className="absolute bottom-4 left-1/2 -translate-x-1/2 text-white bg-black bg-opacity-60 backdrop-blur px-3 py-2 rounded-md flex items-center gap-3 shadow-lg" onMouseDown={(e)=>e.stopPropagation()} onClick={(e)=>e.stopPropagation()}>
         <button className="px-2 py-1 text-xs rounded bg-white bg-opacity-90 text-gray-800" onClick={() => { setZoomPercent(0); setPosition({x:0,y:0}); }} title="Fit to screen">Fit</button>
@@ -437,9 +519,94 @@ const PhotoViewer = ({ projectData, projectFolder, startIndex, onClose, config, 
         <span className="text-xs">{zoomPercent}%</span>
       </div>
 
-      {/* Info sidebar */}
+      {/* Detail sidebar (mobile + desktop) */}
       {showInfo && (
-        <div className="hidden md:block w-80 h-full bg-white bg-opacity-95 text-gray-800 pt-16 px-4 pb-4 overflow-auto border-l" onMouseDown={(e)=>e.stopPropagation()} onClick={(e)=>e.stopPropagation()}>
+        <div className="absolute right-0 top-0 h-full w-full sm:w-96 md:w-80 bg-white text-gray-800 pt-4 md:pt-16 px-4 pb-4 overflow-auto border-l shadow-xl" onMouseDown={(e)=>e.stopPropagation()} onClick={(e)=>e.stopPropagation()}>
+          {/* Panel spacer top (no header or title now) */}
+          <div className="mb-2"></div>
+          {/* Keep actions expander (above Quality) */}
+          <details className="mb-4" open>
+            <summary className="cursor-pointer text-sm font-semibold select-none">Plan</summary>
+            <div className="mt-2 grid grid-cols-3 gap-2">
+              {(() => {
+                const hasJpg = !!currentPhoto?.jpg_available;
+                const hasRaw = !!currentPhoto?.raw_available;
+                const keepJ = currentPhoto?.keep_jpg !== false; // default true unless explicitly false
+                const keepR = currentPhoto?.keep_raw === true;   // default false unless explicitly true
+                const activeMode = (!keepJ && !keepR) ? 'none' : (keepJ && keepR ? 'raw_jpg' : 'jpg_only');
+
+                const baseBtn = 'px-3 py-1.5 text-sm rounded-md border w-full';
+
+                const delActive = activeMode === 'none';
+                const delClass = `${baseBtn} ${delActive ? 'bg-white border-red-500 ring-2 ring-red-500 text-red-700' : 'bg-red-100 hover:bg-red-200 border-red-200'}`;
+
+                const jpgDisabled = !hasJpg && hasRaw; // only RAW present
+                const jpgActive = activeMode === 'jpg_only';
+                const jpgClass = `${baseBtn} ${jpgActive ? 'bg-white border-blue-500 ring-2 ring-blue-500' : 'bg-gray-100 hover:bg-gray-200 border-gray-200'} ${jpgDisabled ? 'opacity-50 cursor-not-allowed' : ''}`;
+
+                const bothDisabled = hasJpg && !hasRaw ? true : false; // only JPG present
+                const bothActive = activeMode === 'raw_jpg';
+                const bothClass = `${baseBtn} ${bothActive ? 'bg-white border-blue-500 ring-2 ring-blue-500' : 'bg-gray-100 hover:bg-gray-200 border-gray-200'} ${bothDisabled ? 'opacity-50 cursor-not-allowed' : ''}`;
+
+                return (
+                  <>
+                    <button
+                      onClick={() => applyKeep('none')}
+                      className={delClass}
+                      title="Plan: Delete (hide in preview mode)"
+                    >Delete</button>
+                    <button
+                      onClick={() => { if (!jpgDisabled) applyKeep('jpg_only'); }}
+                      disabled={jpgDisabled}
+                      className={jpgClass}
+                      title={jpgDisabled ? 'Not available: only RAW present' : 'Plan: Keep JPG only'}
+                    >JPG</button>
+                    <button
+                      onClick={() => { if (!bothDisabled) applyKeep('raw_jpg'); }}
+                      disabled={bothDisabled}
+                      className={bothClass}
+                      title={bothDisabled ? 'Not available: only JPG present' : 'Plan: Keep JPG + RAW'}
+                    >JPG+RAW</button>
+                  </>
+                );
+              })()}
+              
+              <div className="col-span-3 text-xs text-gray-500">
+                {(() => {
+                  const ks = config?.keyboard_shortcuts || {};
+                  const del = ks.cancel_keep || 'Delete';
+                  const j = ks.keep_jpg_only || 'j';
+                  const r = ks.keep_raw_and_jpg || 'r';
+                  return `Shortcuts: ${del} = Delete, ${j} = JPG, ${r} = JPG+RAW`;
+                })()}
+              </div>
+            </div>
+          </details>
+          {/* Quality section */}
+          {!isRawFile && (
+            <div className="mb-4">
+              <h3 className="text-sm font-semibold mb-2">Quality</h3>
+              <div className="flex items-center gap-3 select-none bg-gray-50 rounded-md border px-3 py-2">
+                <span className="text-sm">High Quality</span>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={!usePreview}
+                  onClick={() => { setUsePreview(prev => !prev); setImageLoading(true); fallbackTriedRef.current = false; }}
+                  title="Toggle High Quality"
+                  className={`relative inline-flex h-6 w-12 items-center rounded-full transition-colors focus:outline-none ${!usePreview ? 'bg-blue-600' : 'bg-gray-300'}`}
+                >
+                  <span className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform ${!usePreview ? 'translate-x-6' : 'translate-x-1'}`} />
+                </button>
+                {imageLoading && (
+                  <svg className="animate-spin h-4 w-4 text-gray-600" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path>
+                  </svg>
+                )}
+              </div>
+            </div>
+          )}
           {/* Tags as labels */}
           {Array.isArray(currentPhoto.tags) && currentPhoto.tags.length > 0 && (
             <div className="mb-4 flex flex-wrap gap-1">
@@ -481,7 +648,7 @@ const PhotoViewer = ({ projectData, projectFolder, startIndex, onClose, config, 
           </div>
           {/* Other details collapsed */}
           <details className="mt-2">
-            <summary className="cursor-pointer text-sm font-semibold select-none">Details</summary>
+            <summary className="cursor-pointer text-sm font-semibold select-none">More details</summary>
             <div className="mt-2 text-xs space-y-1">
               {Object.entries(currentPhoto).filter(([k]) => !['tags','metadata','exif','filename','created_at','updated_at'].includes(k)).map(([k, v]) => (
                 <div key={k} className="flex justify-between gap-2">
@@ -491,10 +658,56 @@ const PhotoViewer = ({ projectData, projectFolder, startIndex, onClose, config, 
               ))}
             </div>
           </details>
+          {/* Download collapsed expander with clear CTAs */}
+          <details className="mt-3">
+            <summary className="cursor-pointer text-sm font-semibold select-none">Download</summary>
+            <div className="mt-2 flex flex-col gap-2">
+              <button className="w-full px-4 py-2 rounded-md bg-blue-600 text-white hover:bg-blue-700" onClick={async () => {
+                const r = await fetch(`/api/projects/${encodeURIComponent(projectFolder)}/download-url`, {
+                  method: 'POST', headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ filename: currentPhoto.filename, type: 'jpg' })
+                });
+                const { url } = await r.json();
+                await fetchAndSave(url);
+              }}>Download JPG</button>
+              <button className="w-full px-4 py-2 rounded-md bg-gray-900 text-white hover:bg-black" onClick={async () => {
+                const r = await fetch(`/api/projects/${encodeURIComponent(projectFolder)}/download-url`, {
+                  method: 'POST', headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ filename: currentPhoto.filename, type: 'raw' })
+                });
+                const { url } = await r.json();
+                await fetchAndSave(url);
+              }}>Download RAW</button>
+              <button className="w-full px-4 py-2 rounded-md border bg-white hover:bg-gray-50" onClick={async () => {
+                const r = await fetch(`/api/projects/${encodeURIComponent(projectFolder)}/download-url`, {
+                  method: 'POST', headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ filename: currentPhoto.filename, type: 'zip' })
+                });
+                const { url } = await r.json();
+                await fetchAndSave(url);
+              }}>Download All (ZIP)</button>
+            </div>
+          </details>
         </div>
       )}
-      {/* Filename badge */}
-      <div className="absolute bottom-4 right-4 text-white bg-black bg-opacity-50 px-3 py-2 rounded-md text-xs">{currentPhoto.filename}</div>
+      {/* Filename area: chip + clickable filename badge (toggle selection) */}
+      <div className="absolute bottom-4 right-4 flex items-center gap-2" onMouseDown={(e)=>e.stopPropagation()} onClick={(e)=>e.stopPropagation()}>
+        {isSelected && (
+          <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-[10px] leading-none bg-blue-100 text-blue-800 border border-blue-200 select-none shadow">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-3.5 h-3.5">
+              <path fillRule="evenodd" d="M2.25 12a9.75 9.75 0 1119.5 0 9.75 9.75 0 01-19.5 0zm14.03-2.28a.75.75 0 10-1.06-1.06l-4.72 4.72-1.69-1.69a.75.75 0 10-1.06 1.06l2.22 2.22c.3.3.79.3 1.06 0l5.25-5.25z" clipRule="evenodd" />
+            </svg>
+            Selected
+          </span>
+        )}
+        <button
+          className={`text-white bg-black bg-opacity-60 px-4 py-2 rounded-md text-xs select-none cursor-pointer border ${isSelected ? 'border-blue-500' : 'border-transparent'} shadow-lg`}
+          onClick={(e)=>{ e.stopPropagation(); if (onToggleSelect) onToggleSelect(currentPhoto); }}
+          title={isSelected ? 'Click to unselect' : 'Click to select'}
+        >
+          {currentPhoto.filename}
+        </button>
+      </div>
     </div>
   );
 };

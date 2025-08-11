@@ -23,6 +23,8 @@ const assetsRouter = require('./server/routes/assets');
 app.use('/api/projects', assetsRouter);
 const tagsRouter = require('./server/routes/tags');
 app.use('/api/projects', tagsRouter);
+const keepRouter = require('./server/routes/keep');
+app.use('/api/projects', keepRouter);
 
 // Ensure projects directory exists
 const PROJECTS_DIR = path.join(__dirname, '.projects');

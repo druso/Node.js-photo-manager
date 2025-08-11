@@ -109,7 +109,7 @@ const PHOTO_ENTRY_SCHEMA = {
   keep_raw: {
     type: 'boolean',
     required: true,
-    default: true,
+    default: false,
     description: 'User preference: whether to keep the RAW version'
   },
   tags: {
@@ -365,7 +365,7 @@ function createDefaultPhotoEntry(filename, fileType, metadata = {}) {
     raw_available: fileType === 'raw',
     other_available: fileType === 'other',
     keep_jpg: true,
-    keep_raw: true,
+    keep_raw: false,
     tags: [],
     metadata: metadata || {}
   };
