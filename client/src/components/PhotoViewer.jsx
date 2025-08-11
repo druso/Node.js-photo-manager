@@ -4,7 +4,7 @@ import { updateKeep } from '../api/keepApi';
 const PhotoViewer = ({ projectData, projectFolder, startIndex, onClose, config, selectedPhotos, onToggleSelect, onKeepUpdated, previewModeEnabled, onCurrentIndexChange }) => {
   // All hooks are called at the top level, unconditionally.
   const [currentIndex, setCurrentIndex] = useState(startIndex);
-  const [zoomPercent, setZoomPercent] = useState(0); // 0 = Fit, 100 = Actual size
+  const [zoomPercent, setZoomPercent] = useState(0); // 0 = Fit, 100 = Actual size, 200 = 2x
   const [position, setPosition] = useState({ x: 0, y: 0 });
   const [showInfo, setShowInfo] = useState(() => sessionStorage.getItem('viewer_show_info') === '1');
   const containerRef = useRef(null);
@@ -15,6 +15,7 @@ const PhotoViewer = ({ projectData, projectFolder, startIndex, onClose, config, 
   const [isPanning, setIsPanning] = useState(false);
   const panRef = useRef({ startX: 0, startY: 0, origX: 0, origY: 0 });
   const pinchRef = useRef({ active: false, startDist: 0, startZoom: 0 });
+  // Removed image transition animations per request
   const pointerRef = useRef({ x: 0, y: 0 });
   const positionRef = useRef(position);
   const [toast, setToast] = useState({ visible: false, text: '' });
@@ -44,7 +45,8 @@ const PhotoViewer = ({ projectData, projectFolder, startIndex, onClose, config, 
     if (!el || !naturalSize.w || !naturalSize.h) return { x, y };
     const rect = el.getBoundingClientRect();
     const fit = getFitScale();
-    const s = scaleOverride ?? (fit + (1 - fit) * (zoomPercent / 100));
+    // interpolate from fit (0%) up to 2x (200%)
+    const s = scaleOverride ?? (fit + (2 - fit) * (zoomPercent / 200));
     const imgW = naturalSize.w * s;
     const imgH = naturalSize.h * s;
     const halfW = Math.max(0, (imgW - rect.width) / 2);
@@ -183,7 +185,7 @@ const PhotoViewer = ({ projectData, projectFolder, startIndex, onClose, config, 
       } else if (e.key && e.key.toLowerCase() === String(keyToggleInfo).toLowerCase()) {
         setShowInfo(v => !v);
       } else if (e.key === keyZoomIn) {
-        setZoomPercent((z) => Math.min(100, z + 5));
+        setZoomPercent((z) => Math.min(200, z + 5));
       } else if (e.key === keyZoomOut) {
         setZoomPercent((z) => Math.max(0, z - 5));
         if (zoomPercent - 5 <= 0) setPosition({ x: 0, y: 0 });
@@ -238,8 +240,8 @@ const PhotoViewer = ({ projectData, projectFolder, startIndex, onClose, config, 
   };
   const getEffectiveScale = () => {
     const fit = getFitScale();
-    // interpolate from fit (0%) to actual 1.0 (100%)
-    return fit + (1 - fit) * (zoomPercent / 100);
+    // interpolate from fit (0%) to 2.0 (200%)
+    return fit + (2 - fit) * (zoomPercent / 200);
   };
 
   const handleWheel = (e) => {
@@ -254,12 +256,12 @@ const PhotoViewer = ({ projectData, projectFolder, startIndex, onClose, config, 
     pointerRef.current = { x: px, y: py };
     const delta = e.deltaY > 0 ? -5 : 5; // 5% per step
     setZoomPercent(prevZoom => {
-      const next = Math.max(0, Math.min(100, prevZoom + delta));
+      const next = Math.max(0, Math.min(200, prevZoom + delta));
       if (next === 0) { setPosition({ x: 0, y: 0 }); return 0; }
       // Reposition so zoom is focused on pointer using previous zoom and current positionRef
       const fit = getFitScale();
-      const s1 = fit + (1 - fit) * (prevZoom / 100);
-      const s2 = fit + (1 - fit) * (next / 100);
+      const s1 = fit + (2 - fit) * (prevZoom / 200);
+      const s2 = fit + (2 - fit) * (next / 200);
       const { x: posX, y: posY } = positionRef.current;
       const cx = rect.width / 2, cy = rect.height / 2;
       const imgX = (px - cx - posX) / s1;
@@ -296,12 +298,12 @@ const PhotoViewer = ({ projectData, projectFolder, startIndex, onClose, config, 
         const target = Math.round(pinchRef.current.startZoom * scale);
         const px = pointerRef.current.x;
         const py = pointerRef.current.y;
-        const next = Math.max(0, Math.min(100, target));
+        const next = Math.max(0, Math.min(200, target));
         if (next === 0) { setZoomPercent(0); setPosition({ x: 0, y: 0 }); return; }
         const fit = getFitScale();
         const { x: posX, y: posY } = positionRef.current;
-        const s1 = fit + (1 - fit) * (zoomPercent / 100);
-        const s2 = fit + (1 - fit) * (next / 100);
+        const s1 = fit + (2 - fit) * (zoomPercent / 200);
+        const s2 = fit + (2 - fit) * (next / 200);
         const rect = el.getBoundingClientRect();
         const cx = rect.width / 2, cy = rect.height / 2;
         const imgX = (px - cx - posX) / s1;
@@ -384,6 +386,19 @@ const PhotoViewer = ({ projectData, projectFolder, startIndex, onClose, config, 
   const imageSrc = usePreview
     ? `/api/projects/${encodeURIComponent(projectFolder)}/preview/${encodeURIComponent(currentPhoto.filename)}`
     : `/api/projects/${encodeURIComponent(projectFolder)}/image/${encodeURIComponent(currentPhoto.filename)}`;
+
+  // Ensure 0% zoom stays centered when toggling details: recenter now and after the panel slide completes
+  useEffect(() => {
+    if (zoomPercent === 0) {
+      // immediate recenter
+      setPosition(clampPosition(0, 0));
+      // recenter again after the sidebar transition (~100ms) to account for new container size
+      const t = setTimeout(() => {
+        setPosition(clampPosition(0, 0));
+      }, 140);
+      return () => clearTimeout(t);
+    }
+  }, [showInfo, zoomPercent, clampPosition]);
 
   // Preload adjacent images according to config.viewer.preload_count (default 1)
   useEffect(() => {
@@ -489,7 +504,8 @@ const PhotoViewer = ({ projectData, projectFolder, startIndex, onClose, config, 
                 }
                 // Fallback if image still fails to load
                 e.target.style.display = 'none';
-                e.target.nextSibling.style.display = 'flex';
+                const fallback = e.target.parentElement?.nextElementSibling;
+                if (fallback) fallback.style.display = 'flex';
               }}
             />
             <div className="flex flex-col items-center justify-center text-white" style={{display: 'none'}}>
@@ -503,6 +519,15 @@ const PhotoViewer = ({ projectData, projectFolder, startIndex, onClose, config, 
             </div>
           </>
         )}
+
+        {/* Bottom controls: moved inside image container so they stay centered over the image area */}
+        <div className="absolute bottom-4 inset-x-0 flex justify-center text-white" onMouseDown={(e)=>e.stopPropagation()} onClick={(e)=>e.stopPropagation()}>
+          <div className="bg-black bg-opacity-60 backdrop-blur px-3 py-2 rounded-md flex items-center gap-3 shadow-lg">
+          <button className="px-2 py-1 text-xs rounded bg-white bg-opacity-90 text-gray-800" onClick={() => { setZoomPercent(0); setPosition({x:0,y:0}); }} title="Fit to screen">Fit</button>
+          <input type="range" min={0} max={200} step={1} value={zoomPercent} onChange={(e) => setZoomPercent(parseInt(e.target.value, 10))} />
+          <span className="text-xs">{zoomPercent}%</span>
+          </div>
+        </div>
       </div>
       {/* Toast notification */}
       <div
@@ -512,16 +537,16 @@ const PhotoViewer = ({ projectData, projectFolder, startIndex, onClose, config, 
           {toast.text}
         </div>
       </div>
-      {/* Bottom controls: zoom slider + percent */}
-      <div className="absolute bottom-4 left-1/2 -translate-x-1/2 text-white bg-black bg-opacity-60 backdrop-blur px-3 py-2 rounded-md flex items-center gap-3 shadow-lg" onMouseDown={(e)=>e.stopPropagation()} onClick={(e)=>e.stopPropagation()}>
-        <button className="px-2 py-1 text-xs rounded bg-white bg-opacity-90 text-gray-800" onClick={() => { setZoomPercent(0); setPosition({x:0,y:0}); }} title="Fit to screen">Fit</button>
-        <input type="range" min={0} max={100} step={1} value={zoomPercent} onChange={(e) => setZoomPercent(parseInt(e.target.value, 10))} />
-        <span className="text-xs">{zoomPercent}%</span>
-      </div>
 
       {/* Detail sidebar (mobile + desktop) */}
-      {showInfo && (
-        <div className="absolute right-0 top-0 h-full w-full sm:w-96 md:w-80 bg-white text-gray-800 pt-4 md:pt-16 px-4 pb-4 overflow-auto border-l shadow-xl" onMouseDown={(e)=>e.stopPropagation()} onClick={(e)=>e.stopPropagation()}>
+      <div
+        className={
+          `h-full ${showInfo ? 'w-full sm:w-96 md:w-80 bg-white text-gray-800 px-4 border-l shadow-xl translate-x-0 pointer-events-auto' : 'w-0 sm:w-0 md:w-0 bg-transparent text-transparent px-0 translate-x-full pointer-events-none'} pt-4 md:pt-16 pb-4 overflow-auto transform transition-all duration-100 ease-out`
+        }
+        aria-hidden={!showInfo}
+        onMouseDown={(e)=>e.stopPropagation()}
+        onClick={(e)=>e.stopPropagation()}
+      >
           {/* Panel spacer top (no header or title now) */}
           <div className="mb-2"></div>
           {/* Keep actions expander (above Quality) */}
@@ -689,7 +714,6 @@ const PhotoViewer = ({ projectData, projectFolder, startIndex, onClose, config, 
             </div>
           </details>
         </div>
-      )}
       {/* Filename area: chip + clickable filename badge (toggle selection) */}
       <div className="absolute bottom-4 right-4 flex items-center gap-2" onMouseDown={(e)=>e.stopPropagation()} onClick={(e)=>e.stopPropagation()}>
         {isSelected && (
