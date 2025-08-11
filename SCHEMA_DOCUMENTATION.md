@@ -1,10 +1,47 @@
-# Manifest.json Schema Documentation
+# Data Schema Documentation
+
+This project has migrated from a file-based `manifest.json` to a normalized SQLite database. The SQLite schema is the source of truth. The former manifest schema is documented below for legacy reference.
+
+## SQLite Schema Overview (Current)
+
+Tables and relationships:
+
+- `projects`
+  - Columns: `id`, `folder` (unique), `created_at`, `updated_at`
+
+- `photos`
+  - Columns (selected): `id`, `project_id` (FK), `filename`, `basename`, `ext`, `created_at`, `updated_at`,
+    `date_time_original`, `jpg_available`, `raw_available`, `other_available`, `keep_jpg`, `keep_raw`,
+    `thumbnail_status`, `preview_status`, `orientation`, `meta_json`
+  - Indexes: filename, basename, ext, date, raw_available, orientation
+
+- `tags`
+  - Columns: `id`, `name` (unique)
+
+- `photo_tags` (many-to-many)
+  - Columns: `photo_id` (FK), `tag_id` (FK), PK(photo_id, tag_id)
+
+Data access is through repository modules:
+
+- `server/services/repositories/projectsRepo.js`
+- `server/services/repositories/photosRepo.js`
+- `server/services/repositories/tagsRepo.js`
+- `server/services/repositories/photoTagsRepo.js`
+
+Notes:
+
+- Foreign keys and WAL are enabled in `server/services/db.js`.
+- Routes (`projects.js`, `uploads.js`, `assets.js`, `tags.js`, `keep.js`) exclusively use repositories.
+
+---
+
+# Manifest.json Schema Documentation (Legacy)
 
 ## Overview
 
 The photo management application uses a formal schema system to ensure data consistency and reliability across the entire codebase. This document explains how the schema is structured, enforced, and how to safely extend it.
 
-## 🏗️ Schema Architecture
+## 🏗️ Schema Architecture (Legacy)
 
 ### Core Components
 
@@ -14,14 +51,14 @@ The photo management application uses a formal schema system to ensure data cons
    - Includes default value generators
    - Handles schema migration for future versions
 
-2. **Enforcement Points** (Throughout codebase)
+2. **Enforcement Points** (Legacy — no longer used at runtime)
    - All locations marked with `// SCHEMA_ENFORCEMENT:` comments
    - Automatic validation during data creation, loading, and saving
    - Runtime validation of user inputs
 
-## 📋 Schema Structure
+## 📋 Schema Structure (Legacy)
 
-### Manifest Base Structure
+### Manifest Base Structure (Legacy)
 ```json
 {
   "project_name": "string (required)",
@@ -32,7 +69,7 @@ The photo management application uses a formal schema system to ensure data cons
 }
 ```
 
-### Derivative Status Fields
+### Derivative Status Fields (Legacy)
 
 - **thumbnail_status** and **preview_status** track background processing of derived assets.
   - Values:
@@ -41,7 +78,7 @@ The photo management application uses a formal schema system to ensure data cons
     - `failed`: attempted but failed; retryable via force endpoints
     - `not_supported`: derivative not applicable (e.g., RAW-only without supported converter)
 
-### On‑Disk Layout for Derivatives
+### On‑Disk Layout for Derivatives (Still used for files on disk)
 
 - Thumbnails: `<project>/.thumb/<filename>.jpg`
 - Previews: `<project>/.preview/<filename>.jpg`
@@ -55,7 +92,7 @@ The photo management application uses a formal schema system to ensure data cons
 
 See implementations in `server/routes/uploads.js` and `server/routes/assets.js`.
 
-### Photo Entry Structure
+### Photo Entry Structure (Legacy)
 ```json
 {
   "id": "string (required) - unique identifier",
@@ -83,9 +120,9 @@ See implementations in `server/routes/uploads.js` and `server/routes/assets.js`.
 }
 ```
 
-## 🔧 Schema Enforcement Points
+## 🔧 Schema Enforcement Points (Legacy)
 
-### Backend (server.js)
+### Backend (server.js) — Legacy manifest helpers have been removed from `server.js` in favor of repositories.
 
 1. **Manifest Creation** (Line ~65)
    ```javascript
@@ -129,7 +166,7 @@ See implementations in `server/routes/uploads.js` and `server/routes/assets.js`.
 
 The frontend receives transformed data (`entries` → `photos`) but should be updated to include validation when the schema is extended to frontend operations.
 
-## 🚀 Adding New Fields to the Schema
+## 🚀 Adding New Fields to the Manifest Schema (Legacy)
 
 ### Step-by-Step Process
 
@@ -202,7 +239,7 @@ The frontend receives transformed data (`entries` → `photos`) but should be up
 - ❌ Don't remove required fields without migration logic
 - ❌ Don't ignore validation errors in production
 
-## 🧪 Testing Schema Changes
+## 🧪 Testing Manifest Schema Changes (Legacy)
 
 ### Validation Testing
 ```javascript

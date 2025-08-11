@@ -2,12 +2,10 @@ const express = require('express');
 const path = require('path');
 const fs = require('fs-extra');
 
-const {
-  loadManifest,
-  saveManifest,
-  validatePhotoEntry,
-  getCurrentTimestamp
-} = require('../services/manifest');
+const projectsRepo = require('../services/repositories/projectsRepo');
+const photosRepo = require('../services/repositories/photosRepo');
+const tagsRepo = require('../services/repositories/tagsRepo');
+const photoTagsRepo = require('../services/repositories/photoTagsRepo');
 
 const router = express.Router();
 
@@ -25,17 +23,17 @@ router.put('/:folder/tags', async (req, res) => {
     if (!await fs.pathExists(projectPath)) {
       return res.status(404).json({ error: 'Project not found' });
     }
-
-    const manifest = await loadManifest(projectPath);
-    if (!manifest) {
-      return res.status(404).json({ error: 'Project manifest not found' });
+    const project = projectsRepo.getByFolder(folder);
+    if (!project) {
+      return res.status(404).json({ error: 'Project not found' });
     }
 
     let updatedCount = 0;
 
     for (const update of updates || []) {
-      const entry = manifest.entries.find(e => e.filename === update.filename);
-      if (!entry) continue;
+      if (!update || typeof update.filename !== 'string') continue;
+      const photo = photosRepo.getByProjectAndFilename(project.id, update.filename);
+      if (!photo) continue;
 
       if (!Array.isArray(update.tags)) {
         console.error(`Invalid tags for ${update.filename}: tags must be an array`);
@@ -48,17 +46,29 @@ router.put('/:folder/tags', async (req, res) => {
         continue;
       }
 
-      entry.tags = update.tags;
-      entry.updated_at = getCurrentTimestamp();
+      // Normalize and de-duplicate tag names
+      const desiredNames = Array.from(new Set(update.tags.map(t => t.trim()).filter(Boolean)));
+      // Resolve or create tags, get IDs
+      const desiredTags = desiredNames.map(name => tagsRepo.getOrCreateTag(project.id, name));
+      const desiredTagIds = new Set(desiredTags.map(t => t.id));
 
-      const validation = validatePhotoEntry(entry);
-      if (!validation.valid) {
-        console.error(`Photo entry validation failed after tag update for ${update.filename}:`, validation.errors);
+      // Current tags for photo
+      const currentTags = photoTagsRepo.listTagsForPhoto(photo.id);
+      const currentTagIds = new Set(currentTags.map(t => t.id));
+
+      // Compute additions and removals
+      for (const tag of desiredTags) {
+        if (!currentTagIds.has(tag.id)) {
+          photoTagsRepo.addTagToPhoto(photo.id, tag.id);
+        }
+      }
+      for (const tag of currentTags) {
+        if (!desiredTagIds.has(tag.id)) {
+          photoTagsRepo.removeTagFromPhoto(photo.id, tag.id);
+        }
       }
       updatedCount++;
     }
-
-    await saveManifest(projectPath, manifest);
     res.json({ message: `Updated tags for ${updatedCount} photos`, updated_count: updatedCount });
   } catch (err) {
     console.error('Tags router: error updating tags:', err);

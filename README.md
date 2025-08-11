@@ -49,6 +49,18 @@ You need to have two terminals open to run both the backend and frontend servers
     ```
     The Vite dev server proxies `/api/*` to `http://localhost:5000` as configured in `client/vite.config.js`.
 
+## Data Storage (SQLite)
+
+- The backend now uses SQLite via `better-sqlite3` instead of manifest.json.
+- DB file location: `server/services/db.js` controls initialization; the DB is created in the project data directory (see that file for details).
+- Repositories:
+  - `server/services/repositories/projectsRepo.js`
+  - `server/services/repositories/photosRepo.js`
+  - `server/services/repositories/tagsRepo.js`
+  - `server/services/repositories/photoTagsRepo.js`
+- WAL and foreign keys are enabled. Tables: `projects`, `photos`, `tags`, `photo_tags` with appropriate indexes and FKs.
+- For schema details and API usage, see `SQL MIGRATION PLAN.md` and the repository modules above.
+
 ## Security
 
 This project uses short‑lived signed URLs for downloads by default. For details, configuration, and future hardening guidance (auth and packaging), see [`SECURITY.md`](SECURITY.md).
@@ -72,7 +84,7 @@ This project uses short‑lived signed URLs for downloads by default. For detail
 
 ## Schema Documentation
 
-See [`SCHEMA_DOCUMENTATION.md`](SCHEMA_DOCUMENTATION.md) for the project data/manifest schema and field definitions.
+The legacy manifest.json schema is retained in [`SCHEMA_DOCUMENTATION.md`](SCHEMA_DOCUMENTATION.md) for reference, but the application now uses a normalized SQLite schema. See the new "SQLite Schema Overview" section in that document and `SQL MIGRATION PLAN.md`.
 
 ## Troubleshooting
 
@@ -87,3 +99,13 @@ See [`SCHEMA_DOCUMENTATION.md`](SCHEMA_DOCUMENTATION.md) for the project data/ma
   rm -rf client/node_modules/.vite
   (cd client && npm run dev)
   ```
+
+## Frontend Manual Test Checklist
+
+- __Projects list__: can list, create, select, and delete projects.
+- __Upload__: select JPG/RAW files and upload; list updates without reload.
+- __Derivatives__: after upload, click process (if present) and verify thumbnails/previews load.
+- __Tags__: add/remove tags and check they persist on refresh.
+- __Keep flags__: toggle keep_jpg/keep_raw and verify state persists.
+
+If the frontend dev server is running on `http://localhost:3000` and backend on `http://localhost:5000`, the UI should function end-to-end without extra configuration.

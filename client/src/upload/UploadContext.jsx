@@ -160,7 +160,7 @@ export function UploadProvider({ children, projectFolder, onCompleted }) {
 
   // Start processing via unified per-image endpoint.
   // Note: thumbnails/previews flags are ignored; kept for compatibility with callers.
-  const startProcess = async ({ thumbnails = true, previews = true, force = false } = {}) => {
+  const startProcess = async ({ thumbnails = true, previews = true, force = false, filenames } = {}) => {
     if (!projectFolder) {
       setOperation({ type: 'process', phase: 'error', label: 'Select a project first', percent: null });
       return;
@@ -169,7 +169,7 @@ export function UploadProvider({ children, projectFolder, onCompleted }) {
     setOperation({ type: 'process', phase: 'post-processing', label: 'Processing images…', percent: 0 });
     startProgressPolling();
     try {
-      const procRes = await processPerImage(projectFolder, { force });
+      const procRes = await processPerImage(projectFolder, { force, filenames });
       setOperation(prev => prev ? { ...prev, percent: 100 } : null);
       finishSuccess({ processed: procRes?.processed ?? null, total: procRes?.total ?? null });
     } catch (err) {

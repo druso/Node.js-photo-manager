@@ -55,15 +55,7 @@ const upload = multer({
   }
 });
 
-// SCHEMA_ENFORCEMENT: Import manifest schema for validation and default value generation
-const {
-  validateManifest,
-  validatePhotoEntry,
-  createDefaultManifest,
-  createDefaultPhotoEntry,
-  getCurrentTimestamp,
-  migrateManifest
-} = require('./schema/manifest-schema');
+// Manifest schema helpers are deprecated after SQL migration
 
 // Utility functions
 const getFileType = (filename) => {
@@ -73,62 +65,7 @@ const getFileType = (filename) => {
   return 'other';
 };
 
-// SCHEMA_ENFORCEMENT: Use schema-compliant manifest creation
-const createManifest = (projectName) => {
-  const manifest = createDefaultManifest(projectName);
-  
-  // Validate the created manifest
-  const validation = validateManifest(manifest);
-  if (!validation.valid) {
-    console.error('Created manifest failed validation:', validation.errors);
-    throw new Error('Failed to create valid manifest: ' + validation.errors.join(', '));
-  }
-  
-  return manifest;
-};
-
-// SCHEMA_ENFORCEMENT: Load manifest with validation and migration
-const loadManifest = async (projectPath) => {
-  const manifestPath = path.join(projectPath, 'manifest.json');
-  try {
-    const data = await fs.readFile(manifestPath, 'utf8');
-    let manifest = JSON.parse(data);
-    
-    // Migrate manifest if needed (handles schema evolution)
-    manifest = migrateManifest(manifest);
-    
-    // Validate the loaded manifest
-    const validation = validateManifest(manifest);
-    if (!validation.valid) {
-      console.error(`Manifest validation failed for ${projectPath}:`, validation.errors);
-      // Log but don't throw - allow app to continue with potentially corrupted data
-      // In production, you might want to create a backup and attempt repair
-    }
-    
-    return manifest;
-  } catch (error) {
-    console.error(`Failed to load manifest from ${projectPath}:`, error.message);
-    return null;
-  }
-};
-
-// SCHEMA_ENFORCEMENT: Save manifest with validation
-const saveManifest = async (projectPath, manifest) => {
-  const manifestPath = path.join(projectPath, 'manifest.json');
-  
-  // Update timestamp before validation
-  manifest.updated_at = getCurrentTimestamp();
-  
-  // Validate manifest before saving
-  const validation = validateManifest(manifest);
-  if (!validation.valid) {
-    console.error('Manifest validation failed before save:', validation.errors);
-    throw new Error('Cannot save invalid manifest: ' + validation.errors.join(', '));
-  }
-  
-  await fs.writeFile(manifestPath, JSON.stringify(manifest, null, 2));
-  console.log(`Manifest saved and validated for project: ${manifest.project_name}`);
-};
+// Deprecated manifest helpers removed after SQL migration
 
 // Routes
 

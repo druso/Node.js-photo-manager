@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { updateTags } from '../api/tagsApi';
 import { updateKeep } from '../api/keepApi';
 import { useUpload } from '../upload/UploadContext';
@@ -17,10 +17,26 @@ export default function OperationsMenu({
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState({ visible: false, text: '' });
   const { actions: uploadActions } = useUpload();
+  const rootRef = useRef(null);
   const showToast = (text) => {
     setToast({ visible: true, text });
     setTimeout(() => setToast({ visible: false, text: '' }), 1800);
   };
+
+  // Close when clicking outside the menu
+  useEffect(() => {
+    const handleDocMouseDown = (e) => {
+      if (!rootRef.current) return;
+      if (!rootRef.current.contains(e.target)) setOpen(false);
+    };
+    document.addEventListener('mousedown', handleDocMouseDown);
+    return () => document.removeEventListener('mousedown', handleDocMouseDown);
+  }, []);
+
+  // Close menu if selection becomes empty
+  useEffect(() => {
+    if (selectedPhotos?.size === 0 && open) setOpen(false);
+  }, [selectedPhotos, open]);
 
   const applyTags = async (mode) => {
     const input = tagInput.trim();
@@ -85,12 +101,18 @@ export default function OperationsMenu({
   };
 
   return (
-    <div className="relative inline-block text-left">
+    <div ref={rootRef} className="relative inline-block text-left">
       <div>
         <button
           type="button"
-          onClick={() => setOpen(!open)}
-          className="inline-flex justify-center w-full rounded-md border border-gray-300 shadow-sm px-3 py-2 bg-white text-sm font-medium text-gray-700 hover:bg-gray-50"
+          onClick={() => { if (selectedPhotos.size > 0 && !busy) setOpen(!open); }}
+          disabled={busy || selectedPhotos.size === 0}
+          aria-disabled={busy || selectedPhotos.size === 0}
+          className={`inline-flex justify-center w-full rounded-md border shadow-sm px-3 py-2 text-sm font-medium ${
+            (busy || selectedPhotos.size === 0)
+              ? 'bg-gray-200 text-gray-500 border-gray-300 cursor-not-allowed'
+              : 'bg-white text-gray-700 hover:bg-gray-50 border-gray-300'
+          }`}
         >
           Actions
           <svg className="-mr-1 ml-2 h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -129,11 +151,12 @@ export default function OperationsMenu({
           <div className="mt-3 pt-3 border-t">
             <div className="text-xs text-gray-500 mb-2">Maintenance</div>
             <button
-              onClick={() => uploadActions.startProcess({ thumbnails: true, previews: true, force: false })}
-              className="w-full px-3 py-2 text-sm rounded-md bg-gray-100 hover:bg-gray-200 border border-gray-300 text-gray-800"
-              title="Regenerate thumbnails and previews"
+              onClick={() => uploadActions.startProcess({ thumbnails: true, previews: true, force: false, filenames: Array.from(selectedPhotos) })}
+              disabled={selectedPhotos.size === 0}
+              className={`w-full px-3 py-2 text-sm rounded-md border ${selectedPhotos.size === 0 ? 'bg-gray-200 text-gray-500 cursor-not-allowed border-gray-300' : 'bg-gray-100 hover:bg-gray-200 border-gray-300 text-gray-800'}`}
+              title="Regenerate thumbnails and previews for selected"
             >
-              Regenerate thumbnails & previews
+              Regenerate thumbnails & previews (selected)
             </button>
           </div>
 

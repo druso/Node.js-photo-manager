@@ -687,30 +687,45 @@ const PhotoViewer = ({ projectData, projectFolder, startIndex, onClose, config, 
           <details className="mt-3">
             <summary className="cursor-pointer text-sm font-semibold select-none">Download</summary>
             <div className="mt-2 flex flex-col gap-2">
-              <button className="w-full px-4 py-2 rounded-md bg-blue-600 text-white hover:bg-blue-700" onClick={async () => {
+              <button
+                className={`w-full px-4 py-2 rounded-md text-white ${currentPhoto.jpg_available ? 'bg-blue-600 hover:bg-blue-700' : 'bg-gray-300 cursor-not-allowed'}`}
+                disabled={!currentPhoto.jpg_available}
+                title={currentPhoto.jpg_available ? 'Download JPG' : 'JPG not available'}
+                onClick={async () => {
                 const r = await fetch(`/api/projects/${encodeURIComponent(projectFolder)}/download-url`, {
                   method: 'POST', headers: { 'Content-Type': 'application/json' },
                   body: JSON.stringify({ filename: currentPhoto.filename, type: 'jpg' })
                 });
                 const { url } = await r.json();
                 await fetchAndSave(url);
-              }}>Download JPG</button>
-              <button className="w-full px-4 py-2 rounded-md bg-gray-900 text-white hover:bg-black" onClick={async () => {
+              }}
+              >Download JPG</button>
+              <button
+                className={`w-full px-4 py-2 rounded-md text-white ${currentPhoto.raw_available ? 'bg-gray-900 hover:bg-black' : 'bg-gray-300 cursor-not-allowed'}`}
+                disabled={!currentPhoto.raw_available}
+                title={currentPhoto.raw_available ? 'Download RAW' : 'RAW not available'}
+                onClick={async () => {
                 const r = await fetch(`/api/projects/${encodeURIComponent(projectFolder)}/download-url`, {
                   method: 'POST', headers: { 'Content-Type': 'application/json' },
                   body: JSON.stringify({ filename: currentPhoto.filename, type: 'raw' })
                 });
                 const { url } = await r.json();
                 await fetchAndSave(url);
-              }}>Download RAW</button>
-              <button className="w-full px-4 py-2 rounded-md border bg-white hover:bg-gray-50" onClick={async () => {
+              }}
+              >Download RAW</button>
+              <button
+                className={`w-full px-4 py-2 rounded-md border ${ (currentPhoto.jpg_available || currentPhoto.raw_available) ? 'bg-white hover:bg-gray-50' : 'bg-gray-100 cursor-not-allowed'}`}
+                disabled={!(currentPhoto.jpg_available || currentPhoto.raw_available)}
+                title={(currentPhoto.jpg_available || currentPhoto.raw_available) ? 'Download all available as ZIP' : 'No files available to download'}
+                onClick={async () => {
                 const r = await fetch(`/api/projects/${encodeURIComponent(projectFolder)}/download-url`, {
                   method: 'POST', headers: { 'Content-Type': 'application/json' },
                   body: JSON.stringify({ filename: currentPhoto.filename, type: 'zip' })
                 });
                 const { url } = await r.json();
                 await fetchAndSave(url);
-              }}>Download All (ZIP)</button>
+              }}
+              >Download All (ZIP)</button>
             </div>
           </details>
         </div>

@@ -31,9 +31,14 @@ export async function getProgress(folder) {
   return res.json();
 }
 
-export async function processPerImage(folder, { force } = {}) {
+export async function processPerImage(folder, { force, filenames } = {}) {
   const q = force ? '?force=true' : '';
-  const res = await fetch(`/api/projects/${encodeURIComponent(folder)}/process${q}`, { method: 'POST' });
+  const hasSubset = Array.isArray(filenames) && filenames.length > 0;
+  const res = await fetch(`/api/projects/${encodeURIComponent(folder)}/process${q}`, {
+    method: 'POST',
+    headers: hasSubset ? { 'Content-Type': 'application/json' } : undefined,
+    body: hasSubset ? JSON.stringify({ filenames }) : undefined,
+  });
   if (!res.ok) throw new Error(`processPerImage failed: ${res.status}`);
   return res.json();
 }

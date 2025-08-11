@@ -111,7 +111,7 @@ const PhotoTableView = ({ projectData, projectFolder, onPhotoSelect, selectedPho
                 {photo.metadata?.date_time_original ? new Date(photo.metadata.date_time_original).toLocaleDateString() : 'N/A'}
               </td>
               <td className={`${tcfg.cellPadX} ${tcfg.cellPadY} whitespace-nowrap text-sm text-gray-500`}>
-                {photo.tags.map(tag => (
+                {(photo.tags ?? []).map(tag => (
                   <span key={tag} className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-blue-100 text-blue-800 mr-1 mb-1">
                     {tag}
                   </span>

@@ -3,12 +3,9 @@ const path = require('path');
 const fs = require('fs-extra');
 const router = express.Router();
 
-// Services
-const {
-  createManifest,
-  loadManifest,
-  saveManifest
-} = require('../services/manifest');
+// DB repositories
+const projectsRepo = require('../services/repositories/projectsRepo');
+const photosRepo = require('../services/repositories/photosRepo');
 
 // Resolve project directories relative to project root
 // __dirname => <projectRoot>/server/routes
@@ -19,29 +16,30 @@ const PROJECTS_DIR = path.join(PROJECT_ROOT, '.projects');
 // Ensure base directories exist when router loads
 fs.ensureDirSync(PROJECTS_DIR);
 
+// Helpers
+function sanitizeFolderName(name) {
+  return name.replace(/[^a-zA-Z0-9\s-_]/g, '').replace(/\s+/g, '_');
+}
+
+async function ensureProjectDirs(folderName) {
+  const projectPath = path.join(PROJECTS_DIR, folderName);
+  await fs.ensureDir(projectPath);
+  await fs.ensureDir(path.join(projectPath, '.thumb'));
+  await fs.ensureDir(path.join(projectPath, '.preview'));
+  return projectPath;
+}
+
 // GET /api/projects - list projects
 router.get('/', async (req, res) => {
   try {
-    const projects = [];
-    const projectDirs = await fs.readdir(PROJECTS_DIR);
-
-    for (const dir of projectDirs) {
-      const projectPath = path.join(PROJECTS_DIR, dir);
-      const stat = await fs.stat(projectPath);
-      if (!stat.isDirectory()) continue;
-
-      const manifest = await loadManifest(projectPath);
-      if (manifest) {
-        projects.push({
-          name: manifest.project_name,
-          folder: dir,
-          created_at: manifest.created_at,
-          updated_at: manifest.updated_at,
-          photo_count: (manifest.entries || []).length
-        });
-      }
-    }
-
+    const rows = projectsRepo.list();
+    const projects = rows.map(p => ({
+      name: p.project_name,
+      folder: p.project_folder,
+      created_at: p.created_at,
+      updated_at: p.updated_at,
+      photo_count: photosRepo.countByProject(p.id)
+    }));
     res.json(projects);
   } catch (err) {
     console.error('Projects router: list failed', err);
@@ -57,27 +55,23 @@ router.post('/', async (req, res) => {
       return res.status(400).json({ error: 'Project name is required' });
     }
 
-    const folderName = name.replace(/[^a-zA-Z0-9\s-_]/g, '').replace(/\s+/g, '_');
-    const projectPath = path.join(PROJECTS_DIR, folderName);
-
-    if (await fs.pathExists(projectPath)) {
+    const folderName = sanitizeFolderName(name);
+    const existing = projectsRepo.getByFolder(folderName);
+    if (existing) {
       return res.status(400).json({ error: 'Project already exists' });
     }
 
-    await fs.ensureDir(projectPath);
-    await fs.ensureDir(path.join(projectPath, '.thumb'));
-    await fs.ensureDir(path.join(projectPath, '.preview'));
+    await ensureProjectDirs(folderName);
 
-    const manifest = createManifest(name);
-    await saveManifest(projectPath, manifest);
+    const created = projectsRepo.createProject({ project_folder: folderName, project_name: name, schema_version: '1' });
 
     res.json({
       message: 'Project created successfully',
       project: {
-        name: manifest.project_name,
-        folder: folderName,
-        created_at: manifest.created_at,
-        updated_at: manifest.updated_at,
+        name: created.project_name,
+        folder: created.project_folder,
+        created_at: created.created_at,
+        updated_at: created.updated_at,
         photo_count: 0
       }
     });
@@ -91,22 +85,40 @@ router.post('/', async (req, res) => {
 router.get('/:folder', async (req, res) => {
   try {
     const { folder } = req.params;
-    const projectPath = path.join(PROJECTS_DIR, folder);
-
-    if (!await fs.pathExists(projectPath)) {
+    const project = projectsRepo.getByFolder(folder);
+    if (!project) {
       return res.status(404).json({ error: 'Project not found' });
     }
 
-    const manifest = await loadManifest(projectPath);
-    if (!manifest) {
-      return res.status(404).json({ error: 'Project manifest not found' });
-    }
+    // Map photos rows to legacy manifest-like shape expected by client
+    const page = photosRepo.listPaged({ project_id: project.id, limit: 100000, sort: 'filename', dir: 'ASC', cursor: null });
+    const photos = (page.items || []).map(r => ({
+      id: r.id,
+      manifest_id: r.manifest_id,
+      filename: r.filename,
+      basename: r.basename || undefined,
+      ext: r.ext || undefined,
+      created_at: r.created_at,
+      updated_at: r.updated_at,
+      date_time_original: r.date_time_original || undefined,
+      jpg_available: !!r.jpg_available,
+      raw_available: !!r.raw_available,
+      other_available: !!r.other_available,
+      keep_jpg: !!r.keep_jpg,
+      keep_raw: !!r.keep_raw,
+      thumbnail_status: r.thumbnail_status || undefined,
+      preview_status: r.preview_status || undefined,
+      orientation: r.orientation ?? undefined,
+      metadata: r.meta_json ? JSON.parse(r.meta_json) : undefined,
+    }));
 
     const projectData = {
-      ...manifest,
-      photos: manifest.entries || []
+      project_name: project.project_name,
+      project_folder: project.project_folder,
+      created_at: project.created_at,
+      updated_at: project.updated_at,
+      photos,
     };
-    delete projectData.entries;
 
     res.json(projectData);
   } catch (err) {
@@ -119,13 +131,17 @@ router.get('/:folder', async (req, res) => {
 router.delete('/:folder', async (req, res) => {
   try {
     const { folder } = req.params;
-    const projectPath = path.join(PROJECTS_DIR, folder);
-
-    if (!await fs.pathExists(projectPath)) {
+    const project = projectsRepo.getByFolder(folder);
+    if (!project) {
       return res.status(404).json({ error: 'Project not found' });
     }
-
-    await fs.remove(projectPath);
+    // Remove from DB (photos cascade)
+    projectsRepo.remove(project.id);
+    // Remove folder from disk
+    const projectPath = path.join(PROJECTS_DIR, folder);
+    if (await fs.pathExists(projectPath)) {
+      await fs.remove(projectPath);
+    }
     res.json({ message: 'Project deleted successfully', folder });
   } catch (err) {
     console.error('Projects router: delete failed', err);

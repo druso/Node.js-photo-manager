@@ -2,7 +2,7 @@
 
 ## Chapter 1 — Scalable Sorting and Pagination
 
-To keep the UI snappy as projects grow, we will move from in-memory `manifest.json` sorting to a small embedded database and page results from the backend.
+To keep the UI snappy as projects grow, we page and sort results from the backend using SQLite.
 
 ### Goals
 
@@ -12,13 +12,13 @@ To keep the UI snappy as projects grow, we will move from in-memory `manifest.js
 
 ### Database Choice
 
-- Use SQLite (bundled with Node.js via a library such as `better-sqlite3` or `sqlite3`).
-- One table `photos` (and optional `tags`, `photo_tags`). Data is derived from `manifest.json` during import/refresh.
+- SQLite via `better-sqlite3`.
+- Tables: `projects`, `photos`, `tags`, `photo_tags`. Data is written directly by routes during upload/import and updated during processing.
 
 Example schema (simplified):
 
 ```sql
--- Fields mirror SCHEMA_DOCUMENTATION.md (manifest.json) where applicable
+-- Fields mirror `SCHEMA_DOCUMENTATION.md` (SQLite section) where applicable
 CREATE TABLE photos (
   id INTEGER PRIMARY KEY,
   manifest_id TEXT UNIQUE,                -- manifest entry id (string)
@@ -101,10 +101,9 @@ Response shape (example):
 
 ### Migration path
 
-1. Continue reading `manifest.json` to build or refresh the SQLite DB on project import/update.
-2. Implement the new paging endpoint.
-3. Switch the client to use the endpoint for data instead of loading full manifests into memory.
-4. Keep a compatibility code path that falls back to in-memory sorting if DB is unavailable.
+1. (Done) Replace manifest.json usage with SQLite repositories in all routes.
+2. Implement and expose paging endpoint on the backend for large datasets.
+3. Switch client listing to use paging endpoint (infinite scroll or load-more).
 
 ### Why this helps performance
 

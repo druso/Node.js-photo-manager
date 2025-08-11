@@ -2,12 +2,8 @@ const express = require('express');
 const path = require('path');
 const fs = require('fs-extra');
 
-const {
-  loadManifest,
-  saveManifest,
-  validatePhotoEntry,
-  getCurrentTimestamp
-} = require('../services/manifest');
+const projectsRepo = require('../services/repositories/projectsRepo');
+const photosRepo = require('../services/repositories/photosRepo');
 
 const router = express.Router();
 
@@ -30,31 +26,26 @@ router.put('/:folder/keep', async (req, res) => {
     if (!await fs.pathExists(projectPath)) {
       return res.status(404).json({ error: 'Project not found' });
     }
-
-    const manifest = await loadManifest(projectPath);
-    if (!manifest) {
-      return res.status(404).json({ error: 'Project manifest not found' });
+    const project = projectsRepo.getByFolder(folder);
+    if (!project) {
+      return res.status(404).json({ error: 'Project not found' });
     }
 
     let updatedCount = 0;
 
     for (const upd of updates) {
       if (!upd || typeof upd.filename !== 'string') continue;
-      const entry = manifest.entries.find(e => e.filename === upd.filename);
-      if (!entry) continue;
+      const photo = photosRepo.getByProjectAndFilename(project.id, upd.filename);
+      if (!photo) continue;
 
-      if (typeof upd.keep_jpg === 'boolean') entry.keep_jpg = upd.keep_jpg;
-      if (typeof upd.keep_raw === 'boolean') entry.keep_raw = upd.keep_raw;
-      entry.updated_at = getCurrentTimestamp();
-
-      const validation = validatePhotoEntry(entry);
-      if (!validation.valid) {
-        console.error(`Photo entry validation failed after keep update for ${upd.filename}:`, validation.errors);
+      const patch = {};
+      if (typeof upd.keep_jpg === 'boolean') patch.keep_jpg = upd.keep_jpg;
+      if (typeof upd.keep_raw === 'boolean') patch.keep_raw = upd.keep_raw;
+      if (Object.keys(patch).length > 0) {
+        photosRepo.updateKeepFlags(photo.id, patch);
       }
       updatedCount++;
     }
-
-    await saveManifest(projectPath, manifest);
     res.json({ message: `Updated keep flags for ${updatedCount} photos`, updated_count: updatedCount });
   } catch (err) {
     console.error('Keep router: error updating keep flags:', err);

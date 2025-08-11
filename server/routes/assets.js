@@ -2,9 +2,9 @@ const express = require('express');
 const path = require('path');
 const fs = require('fs-extra');
 const crypto = require('crypto');
-
-const { loadManifest } = require('../services/manifest');
 const { signPayload, verifyToken } = require('../utils/signedUrl');
+const projectsRepo = require('../services/repositories/projectsRepo');
+const photosRepo = require('../services/repositories/photosRepo');
 
 const router = express.Router();
 
@@ -77,11 +77,11 @@ router.get('/:folder/file/:type/:filename', requireValidToken, async (req, res) 
   const filenameParam = req.params.filename;
   const projectPath = path.join(PROJECTS_DIR, folder);
   try {
-    const manifest = await loadManifest(projectPath);
-    if (!manifest) return res.status(404).json({ error: 'Project manifest not found' });
+    const project = projectsRepo.getByFolder(folder);
+    if (!project) return res.status(404).json({ error: 'Project not found' });
     const base = path.parse(filenameParam).name; // normalize
-    const entry = manifest.entries.find(e => path.parse(e.filename).name === base);
-    if (!entry) return res.status(404).json({ error: 'Photo not found in manifest' });
+    const entry = photosRepo.getByProjectAndFilename(project.id, base);
+    if (!entry) return res.status(404).json({ error: 'Photo not found' });
 
     const files = await fs.readdir(projectPath);
     let chosenFile = null;
@@ -114,11 +114,11 @@ router.post('/:folder/download-url', express.json(), async (req, res) => {
     }
     // Optionally verify the file exists in manifest for safety
     const projectPath = path.join(PROJECTS_DIR, folder);
-    const manifest = await loadManifest(projectPath);
-    if (!manifest) return res.status(404).json({ error: 'Project manifest not found' });
+    const project = projectsRepo.getByFolder(folder);
+    if (!project) return res.status(404).json({ error: 'Project not found' });
     const base = path.parse(filename).name;
-    const entry = manifest.entries.find(e => path.parse(e.filename).name === base);
-    if (!entry) return res.status(404).json({ error: 'Photo not found in manifest' });
+    const entry = photosRepo.getByProjectAndFilename(project.id, base);
+    if (!entry) return res.status(404).json({ error: 'Photo not found' });
     const url = buildSignedUrl(folder, type, filename, typeof ttlMs === 'number' ? ttlMs : undefined);
     return res.json({ url });
   } catch (err) {
@@ -133,11 +133,11 @@ router.get('/:folder/files-zip/:filename', requireValidToken, async (req, res) =
   const filenameParam = req.params.filename;
   const projectPath = path.join(PROJECTS_DIR, folder);
   try {
-    const manifest = await loadManifest(projectPath);
-    if (!manifest) return res.status(404).json({ error: 'Project manifest not found' });
+    const project = projectsRepo.getByFolder(folder);
+    if (!project) return res.status(404).json({ error: 'Project not found' });
     const base = path.parse(filenameParam).name; // normalize
-    const entry = manifest.entries.find(e => path.parse(e.filename).name === base);
-    if (!entry) return res.status(404).json({ error: 'Photo not found in manifest' });
+    const entry = photosRepo.getByProjectAndFilename(project.id, base);
+    if (!entry) return res.status(404).json({ error: 'Photo not found' });
 
     const files = await fs.readdir(projectPath);
     const candidates = files.filter(f => path.parse(f).name === base && ['jpg', 'raw'].includes(getFileType(f)));
@@ -166,15 +166,10 @@ router.get('/:folder/image/:filename', async (req, res) => {
   const projectPath = path.join(PROJECTS_DIR, folder);
 
   try {
-    const manifest = await loadManifest(projectPath);
-    if (!manifest) {
-      return res.status(404).json({ error: 'Project manifest not found' });
-    }
-
-    const photoEntry = manifest.entries.find(e => e.filename === filename);
-    if (!photoEntry) {
-      return res.status(404).json({ error: 'Photo not found in manifest' });
-    }
+    const project = projectsRepo.getByFolder(folder);
+    if (!project) return res.status(404).json({ error: 'Project not found' });
+    const photoEntry = photosRepo.getByProjectAndFilename(project.id, filename);
+    if (!photoEntry) return res.status(404).json({ error: 'Photo not found' });
 
     let imagePath = null;
     const files = await fs.readdir(projectPath);

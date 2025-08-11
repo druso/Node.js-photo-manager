@@ -53,6 +53,8 @@ function App() {
   // Track readiness to persist, to avoid saving defaults before load completes
   const uiPrefsReadyRef = useRef(false);
   const [uiPrefsReady, setUiPrefsReady] = useState(false);
+  // When creating a new project, remember which one to auto-select after the projects list refreshes
+  const pendingSelectProjectRef = useRef(null);
 
   // Load UI prefs from localStorage on mount
   useEffect(() => {
@@ -211,6 +213,16 @@ function App() {
   // Remember last project (configurable)
   useEffect(() => {
     if (projects.length > 0 && !selectedProject) {
+      // Prefer pending selection set by creation flow
+      const pendingFolder = pendingSelectProjectRef.current;
+      if (pendingFolder) {
+        const pending = projects.find(p => p.folder === pendingFolder);
+        if (pending) {
+          handleProjectSelect(pending);
+          pendingSelectProjectRef.current = null;
+          return;
+        }
+      }
       const remember = config?.ui?.remember_last_project !== false;
       if (remember) {
         const lastProjectFolder = localStorage.getItem('druso-last-project');
@@ -275,13 +287,21 @@ function App() {
   const handleProjectCreate = async (projectName) => {
     try {
       const created = await createProject(projectName);
+      const createdFolder = created?.project?.folder || created?.folder || created?.project_folder;
+      if (createdFolder) {
+        // set BEFORE updating projects to beat the effect race
+        pendingSelectProjectRef.current = createdFolder;
+        // also persist immediately so remember-last-project points to the new one
+        try { localStorage.setItem('druso-last-project', createdFolder); } catch {}
+      }
       // Refresh and select the created project from the latest list
       const latest = await listProjects();
       setProjects(latest);
-      const toSelect = created?.folder ? latest.find(p => p.folder === created.folder) : null;
+      const toSelect = createdFolder ? latest.find(p => p.folder === createdFolder) : null;
       if (toSelect) {
         handleProjectSelect(toSelect);
       } else if (latest.length > 0) {
+        // fallback: try last in list
         handleProjectSelect(latest[latest.length - 1]);
       }
     } catch (error) {
@@ -1026,7 +1046,9 @@ function App() {
                 const name = newProjectName.trim();
                 if (!name) return;
                 await handleProjectCreate(name);
+                setActiveTab('view');
                 setShowCreateProject(false);
+                setShowSettings(false);
                 setNewProjectName('');
               }}
             >

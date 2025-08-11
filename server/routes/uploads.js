@@ -7,7 +7,13 @@ const multer = require('multer');
 const { getConfig } = require('../services/config');
 const { generateDerivative } = require('../utils/imageProcessing');
 
+// SQLite repositories (migration from manifest.json)
+const projectsRepo = require('../services/repositories/projectsRepo');
+const photosRepo = require('../services/repositories/photosRepo');
+
 const router = express.Router();
+// Ensure JSON bodies are parsed for this router (for subset processing requests)
+router.use(express.json());
 
 // In-memory progress store: { [folder]: { op: 'thumbnails'|'previews', total: number, processed: number, status: 'idle'|'running'|'completed'|'error', updatedAt: number } }
 const progressStore = Object.create(null);
@@ -20,14 +26,7 @@ function clearProgress(folder) {
   progressStore[folder] = { op: null, total: 0, processed: 0, status: 'idle', updatedAt: Date.now() };
 }
 
-// Services
-const {
-  loadManifest,
-  saveManifest,
-  validatePhotoEntry,
-  createDefaultPhotoEntry,
-  getCurrentTimestamp
-} = require('../services/manifest');
+// Manifest service removed by SQL migration; routes now use repositories
 
 // Resolve project directories relative to project root
 const PROJECT_ROOT = path.join(__dirname, '..', '..');
@@ -53,22 +52,30 @@ router.post('/:folder/process', async (req, res) => {
   try {
     const { folder } = req.params;
     const force = String(req.query.force || '').toLowerCase() === 'true';
+    const requested = (req.body && Array.isArray(req.body.filenames) && req.body.filenames.length > 0)
+      ? new Set(req.body.filenames)
+      : null;
+    // Build a case-insensitive lookup for requested filenames (schema stores base name in `filename`)
+    const requestedLC = requested ? new Set(Array.from(requested).map(s => String(s).toLowerCase())) : null;
     const projectPath = path.join(PROJECTS_DIR, folder);
     if (!await fs.pathExists(projectPath)) return res.status(404).json({ error: 'Project not found' });
-
-    const manifest = await loadManifest(projectPath);
-    if (!manifest) return res.status(404).json({ error: 'Project manifest not found' });
+    const project = projectsRepo.getByFolder(folder);
+    if (!project) return res.status(404).json({ error: 'Project not found' });
 
     const cfg = getConfig();
     const thumbCfg = (cfg.processing && cfg.processing.thumbnail) || { maxDim: 200, quality: 80 };
     const prevCfg = (cfg.processing && cfg.processing.preview) || { maxDim: 6000, quality: 80 };
 
-    // Decide pending set
-    const candidates = force
-      ? manifest.entries.filter(e => e.thumbnail_status !== 'not_supported' || e.preview_status !== 'not_supported')
-      : manifest.entries.filter(e => (e.thumbnail_status === 'pending' || e.thumbnail_status === 'failed' || !e.thumbnail_status) || (e.preview_status === 'pending' || e.preview_status === 'failed' || !e.preview_status));
+    // Decide pending set from DB
+    const all = photosRepo.listPaged({ project_id: project.id, limit: 100000, sort: 'filename', dir: 'ASC', cursor: null }).items;
+    // If a subset is explicitly requested, process those regardless of current statuses (treat as force for the subset)
+    const effectiveForce = force || !!requested;
+    let baseCandidates = effectiveForce
+      ? all.filter(e => e.thumbnail_status !== 'not_supported' || e.preview_status !== 'not_supported')
+      : all.filter(e => (e.thumbnail_status === 'pending' || e.thumbnail_status === 'failed' || !e.thumbnail_status) || (e.preview_status === 'pending' || e.preview_status === 'failed' || !e.preview_status));
+    const candidates = requestedLC ? all.filter(e => requestedLC.has(String(e.filename).toLowerCase())) : baseCandidates;
 
-    console.log(`Per-image processing for ${candidates.length} images`);
+    console.log(`Per-image processing for ${candidates.length} images${requested ? ' (subset)' : ''}`);
     clearProgress(folder);
     setProgress(folder, { op: 'per-image', total: candidates.length, processed: 0, status: 'running' });
 
@@ -91,33 +98,35 @@ router.post('/:folder/process', async (req, res) => {
         }
         if (!sourceFile) {
           console.log(`No supported source file found for ${entry.filename}`);
-          entry.thumbnail_status = entry.thumbnail_status || 'failed';
-          entry.preview_status = entry.preview_status || 'failed';
+          photosRepo.updateDerivativeStatus(entry.id, {
+            thumbnail_status: entry.thumbnail_status || 'failed',
+            preview_status: entry.preview_status || 'failed',
+          });
           results.push({ filename: entry.filename, status: 'skipped_no_source' });
           continue;
         }
 
         // Thumbnail
-        if (force || entry.thumbnail_status === 'pending' || entry.thumbnail_status === 'failed' || !entry.thumbnail_status) {
+        if (effectiveForce || entry.thumbnail_status === 'pending' || entry.thumbnail_status === 'failed' || !entry.thumbnail_status) {
           try {
             const thumbPath = path.join(projectPath, '.thumb', `${entry.filename}.jpg`);
             await generateDerivative(sourceFile, thumbPath, { maxDim: Number(thumbCfg.maxDim) || 200, quality: Number(thumbCfg.quality) || 80 });
-            entry.thumbnail_status = 'generated';
+            photosRepo.updateDerivativeStatus(entry.id, { thumbnail_status: 'generated' });
           } catch (te) {
             console.error(`Failed to generate thumbnail for ${entry.filename}:`, te);
-            entry.thumbnail_status = 'failed';
+            photosRepo.updateDerivativeStatus(entry.id, { thumbnail_status: 'failed' });
           }
         }
 
         // Preview
-        if (force || entry.preview_status === 'pending' || entry.preview_status === 'failed' || !entry.preview_status) {
+        if (effectiveForce || entry.preview_status === 'pending' || entry.preview_status === 'failed' || !entry.preview_status) {
           try {
             const previewPath = path.join(projectPath, '.preview', `${entry.filename}.jpg`);
             await generateDerivative(sourceFile, previewPath, { maxDim: Number(prevCfg.maxDim) || 6000, quality: Number(prevCfg.quality) || 80 });
-            entry.preview_status = 'generated';
+            photosRepo.updateDerivativeStatus(entry.id, { preview_status: 'generated' });
           } catch (pe) {
             console.error(`Failed to generate preview for ${entry.filename}:`, pe);
-            entry.preview_status = 'failed';
+            photosRepo.updateDerivativeStatus(entry.id, { preview_status: 'failed' });
           }
         }
 
@@ -130,7 +139,6 @@ router.post('/:folder/process', async (req, res) => {
       }
     }
 
-    await saveManifest(projectPath, manifest);
     setProgress(folder, { status: 'completed' });
     res.json({ message: `Processed ${processedCount} images`, processed: processedCount, total: candidates.length, results });
   } catch (err) {
@@ -155,9 +163,8 @@ router.post('/:folder/upload', upload.array('photos'), async (req, res) => {
     const { folder } = req.params;
     const projectPath = path.join(PROJECTS_DIR, folder);
     if (!await fs.pathExists(projectPath)) return res.status(404).json({ error: 'Project not found' });
-
-    const manifest = await loadManifest(projectPath);
-    if (!manifest) return res.status(404).json({ error: 'Project manifest not found' });
+    const project = projectsRepo.getByFolder(folder);
+    if (!project) return res.status(404).json({ error: 'Project not found' });
 
     const uploadedFiles = [];
 
@@ -202,58 +209,33 @@ router.post('/:folder/upload', upload.array('photos'), async (req, res) => {
       const thumbnailStatus = isRawFile ? 'not_supported' : 'pending';
       const previewStatus = isRawFile ? 'not_supported' : 'pending';
 
-      // Update or create manifest entry
-      let entry = manifest.entries.find(e => e.filename === originalName);
-      if (entry) {
-        // flags
-        if (fileType === 'jpg') entry.jpg_available = true;
-        else if (fileType === 'raw') entry.raw_available = true;
-        else entry.other_available = true;
+      // Upsert into SQLite repository
+      const existing = photosRepo.getByProjectAndFilename(project.id, originalName);
+      const keepDefaults = (() => {
+        try { const cfg = getConfig(); return (cfg && cfg.keep_defaults) || { jpg: true, raw: false }; } catch (_) { return { jpg: true, raw: false }; }
+      })();
 
-        // metadata precedence
-        if (Object.keys(metadata).length > 0) {
-          if (fileType === 'jpg' || !entry.metadata || Object.keys(entry.metadata).length === 0) {
-            entry.metadata = { ...entry.metadata, ...metadata };
-          }
-        }
-
-        // thumbnail/preview status
-        if (fileType === 'jpg' || entry.thumbnail_status === 'failed') {
-          entry.thumbnail_status = thumbnailStatus;
-        }
-        if (fileType === 'jpg' || entry.preview_status === 'failed') {
-          entry.preview_status = previewStatus;
-        }
-
-        entry.updated_at = getCurrentTimestamp();
-        const validation = validatePhotoEntry(entry);
-        if (!validation.valid) console.error(`Updated photo entry validation failed for ${originalName}:`, validation.errors);
-      } else {
-        entry = createDefaultPhotoEntry(originalName, fileType, metadata);
-        // Apply config keep defaults for new entries
-        try {
-          const cfg = getConfig();
-          const kd = (cfg && cfg.keep_defaults) || { jpg: true, raw: false };
-          entry.keep_jpg = !!kd.jpg;
-          entry.keep_raw = !!kd.raw;
-        } catch (e) {
-          // Fallbacks already set by defaults; non-fatal
-          console.warn('Warning: failed to read keep_defaults from config:', e.message);
-        }
-        entry.thumbnail_status = thumbnailStatus;
-        entry.preview_status = previewStatus;
-        const validation = validatePhotoEntry(entry);
-        if (!validation.valid) {
-          console.error(`New photo entry validation failed for ${originalName}:`, validation.errors);
-          throw new Error(`Cannot create invalid photo entry: ${validation.errors.join(', ')}`);
-        }
-        manifest.entries.push(entry);
-      }
+      const photoPayload = {
+        manifest_id: existing?.manifest_id || undefined,
+        filename: originalName,
+        basename: originalName,
+        ext: ext ? ext.replace(/^\./, '') : null,
+        date_time_original: metadata.date_time_original || existing?.date_time_original || null,
+        jpg_available: existing ? (existing.jpg_available || fileType === 'jpg') : (fileType === 'jpg'),
+        raw_available: existing ? (existing.raw_available || fileType === 'raw') : (fileType === 'raw'),
+        other_available: existing ? (existing.other_available || fileType === 'other') : (fileType === 'other'),
+        keep_jpg: existing ? !!existing.keep_jpg : !!keepDefaults.jpg,
+        keep_raw: existing ? !!existing.keep_raw : !!keepDefaults.raw,
+        thumbnail_status: (fileType === 'jpg' || (existing && existing.thumbnail_status === 'failed')) ? thumbnailStatus : (existing?.thumbnail_status || null),
+        preview_status: (fileType === 'jpg' || (existing && existing.preview_status === 'failed')) ? previewStatus : (existing?.preview_status || null),
+        orientation: metadata.orientation ?? existing?.orientation ?? null,
+        meta_json: Object.keys(metadata).length ? JSON.stringify(metadata) : (existing?.meta_json || null),
+      };
+      photosRepo.upsertPhoto(project.id, photoPayload);
 
       uploadedFiles.push({ filename: file.originalname, size: file.size, type: fileType });
     }
 
-    await saveManifest(projectPath, manifest);
     res.json({ message: `Successfully uploaded ${uploadedFiles.length} files`, files: uploadedFiles });
   } catch (err) {
     console.error('Error uploading files:', err);
@@ -268,9 +250,8 @@ router.post('/:folder/analyze-files', async (req, res) => {
     const { files } = req.body;
     const projectPath = path.join(PROJECTS_DIR, folder);
     if (!await fs.pathExists(projectPath)) return res.status(404).json({ error: 'Project not found' });
-
-    const manifest = await loadManifest(projectPath);
-    if (!manifest) return res.status(404).json({ error: 'Project manifest not found' });
+    const project = projectsRepo.getByFolder(folder);
+    if (!project) return res.status(404).json({ error: 'Project not found' });
 
     const imageGroups = {};
 
@@ -290,7 +271,7 @@ router.post('/:folder/analyze-files', async (req, res) => {
       if (/\.(jpe?g)$/i.test(ext)) imageGroups[baseName].hasJpg = true;
       if (/\.(arw|cr2|nef|dng|raw)$/i.test(ext)) imageGroups[baseName].hasRaw = true;
 
-      const existing = manifest.entries.find(e => e.filename === baseName);
+      const existing = photosRepo.getByProjectAndFilename(project.id, baseName);
       if (existing) {
         const hasCompletion = (existing.raw_available && /\.(jpe?g)$/i.test(ext)) || (existing.jpg_available && /\.(arw|cr2|nef|dng|raw)$/i.test(ext));
         if (hasCompletion) {
