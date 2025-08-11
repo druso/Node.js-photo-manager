@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useMemo, useRef, useState, useEffect } from 'react';
-import { analyzeFiles as apiAnalyzeFiles, generateThumbnails, generatePreviews, getProgress, processPerImage } from '../api/uploadsApi';
+import { analyzeFiles as apiAnalyzeFiles, getProgress, processPerImage } from '../api/uploadsApi';
 
 // Public shape
 // operation: null | {
