@@ -20,6 +20,8 @@ function App() {
   const [loading, setLoading] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showMobileMenu, setShowMobileMenu] = useState(false);
+  const [showCreateProject, setShowCreateProject] = useState(false);
+  const [newProjectName, setNewProjectName] = useState('');
   const [config, setConfig] = useState(null);
   const [viewerState, setViewerState] = useState({ isOpen: false, startIndex: 0 });
   const [viewMode, setViewMode] = useState('grid'); // 'grid' or 'table'
@@ -272,9 +274,16 @@ function App() {
 
   const handleProjectCreate = async (projectName) => {
     try {
-      const newProject = await createProject(projectName);
-      await fetchProjects();
-      handleProjectSelect(newProject);
+      const created = await createProject(projectName);
+      // Refresh and select the created project from the latest list
+      const latest = await listProjects();
+      setProjects(latest);
+      const toSelect = created?.folder ? latest.find(p => p.folder === created.folder) : null;
+      if (toSelect) {
+        handleProjectSelect(toSelect);
+      } else if (latest.length > 0) {
+        handleProjectSelect(latest[latest.length - 1]);
+      }
     } catch (error) {
       console.error('Error creating project:', error);
     }
@@ -593,7 +602,7 @@ function App() {
           <div className="w-full px-4 sm:px-6 lg:px-8">
             <div className="flex justify-between items-center py-4">
               <h1 className="text-2xl font-bold text-gray-900">
-                Druso photo manager
+                Druso Photo Manager
               </h1>
               
               {/* Desktop Project Controls - Right Aligned */}
@@ -602,7 +611,6 @@ function App() {
                   projects={projects}
                   selectedProject={selectedProject}
                   onProjectSelect={handleProjectSelect}
-                  onProjectCreate={handleProjectCreate}
                 />
                 
                 {/* Settings Button */}
@@ -644,7 +652,6 @@ function App() {
                     projects={projects}
                     selectedProject={selectedProject}
                     onProjectSelect={handleProjectSelect}
-                    onProjectCreate={handleProjectCreate}
                   />
                   
                   {/* Mobile Settings Button */}
@@ -897,21 +904,19 @@ function App() {
             <div className="text-center max-w-md mx-auto px-4">
               <div className="text-6xl mb-6">📸</div>
               <h2 className="text-xl font-semibold text-gray-900 mb-4">
-                Welcome to Photo Importer & Tagger
+                Welcome to Druso Photo Manager
               </h2>
               {projects.length === 0 ? (
                 <div className="space-y-6">
                   <p className="text-gray-600 mb-6">
                     Get started by creating your first project
                   </p>
-                  <div className="flex justify-center">
-                    <ProjectSelector 
-                      projects={projects}
-                      selectedProject={selectedProject}
-                      onProjectSelect={handleProjectSelect}
-                      onProjectCreate={handleProjectCreate}
-                    />
-                  </div>
+                  <button
+                    onClick={() => setShowCreateProject(true)}
+                    className="inline-flex items-center justify-center px-6 py-3 bg-blue-600 text-white rounded-md hover:bg-blue-700"
+                  >
+                    create a new project
+                  </button>
                 </div>
               ) : (
                 <div className="space-y-6">
@@ -923,7 +928,6 @@ function App() {
                       projects={projects}
                       selectedProject={selectedProject}
                       onProjectSelect={handleProjectSelect}
-                      onProjectCreate={handleProjectCreate}
                     />
                   </div>
                 </div>
@@ -1007,7 +1011,60 @@ function App() {
             handleProjectDeleted();
           }}
           onClose={() => setShowSettings(false)} 
+          onOpenCreateProject={() => setShowCreateProject(true)}
         />
+      )}
+
+      {/* Create Project Modal */}
+      {showCreateProject && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/40" onClick={() => setShowCreateProject(false)} />
+          <div className="relative bg-white rounded-lg shadow-xl w-full max-w-md mx-4">
+            <form
+              onSubmit={async (e) => {
+                e.preventDefault();
+                const name = newProjectName.trim();
+                if (!name) return;
+                await handleProjectCreate(name);
+                setShowCreateProject(false);
+                setNewProjectName('');
+              }}
+            >
+              <div className="px-6 py-4 border-b">
+                <h3 className="text-lg font-semibold">Create new project</h3>
+              </div>
+              <div className="px-6 py-4 space-y-3">
+                <label className="block">
+                  <span className="text-gray-700">Project name</span>
+                  <input
+                    type="text"
+                    value={newProjectName}
+                    onChange={(e) => setNewProjectName(e.target.value)}
+                    className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-md"
+                    placeholder="e.g. Family Trip 2025"
+                    autoFocus
+                  />
+                </label>
+              </div>
+              <div className="px-6 py-4 border-t flex justify-end gap-2">
+                <button
+                  type="button"
+                  className="px-4 py-2 rounded-md bg-gray-200 text-gray-800 hover:bg-gray-300"
+                  onClick={() => { setShowCreateProject(false); setNewProjectName(''); }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 rounded-md bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
+                  disabled={!newProjectName.trim()}
+                >
+                  Create
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
       )}
 
       {/* Global upload UI */}

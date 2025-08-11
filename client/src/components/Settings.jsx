@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { deleteProject } from '../api/projectsApi';
 import { useUpload } from '../upload/UploadContext';
 
-const Settings = ({ project, config, onConfigUpdate, onProjectDelete, onClose }) => {
+const Settings = ({ project, config, onConfigUpdate, onProjectDelete, onClose, onOpenCreateProject }) => {
   const [deleteConfirmText, setDeleteConfirmText] = useState('');
   const [localConfig, setLocalConfig] = useState(null);
   const [openSection, setOpenSection] = useState('delete'); // only one open at a time
@@ -182,37 +182,18 @@ const Settings = ({ project, config, onConfigUpdate, onProjectDelete, onClose })
         {/* Body */}
         <div className="flex-1 overflow-y-auto">
           <div className="divide-y">
-            {/* Keep Defaults */}
-            <section>
+            {/* Create new project button */}
+            <div className="px-4 py-3">
               <button
-                className={`w-full flex items-center justify-between px-4 py-3 text-left ${openSection==='keep_defaults' ? 'bg-gray-50' : ''}`}
-                onClick={() => setOpenSection(prev => prev === 'keep_defaults' ? null : 'keep_defaults')}
+                className="w-full px-4 py-3 rounded-md bg-blue-600 text-white hover:bg-blue-700 text-center"
+                onClick={() => {
+                  if (typeof onOpenCreateProject === 'function') onOpenCreateProject();
+                }}
               >
-                <span className="font-medium">Keep Defaults</span>
-                <span className="text-sm text-gray-500">{openSection==='keep_defaults' ? '▲' : '▼'}</span>
+                Create new project
               </button>
-              {openSection === 'keep_defaults' && (
-                <div className="px-4 pb-4 space-y-3">
-                  <label className="flex items-center gap-2">
-                    <input
-                      type="checkbox"
-                      checked={!!localConfig.keep_defaults?.jpg}
-                      onChange={(e) => handleConfigChange('keep_defaults', 'jpg', e.target.checked)}
-                    />
-                    <span className="text-gray-700">Keep JPG by default</span>
-                  </label>
-                  <label className="flex items-center gap-2">
-                    <input
-                      type="checkbox"
-                      checked={!!localConfig.keep_defaults?.raw}
-                      onChange={(e) => handleConfigChange('keep_defaults', 'raw', e.target.checked)}
-                    />
-                    <span className="text-gray-700">Keep RAW by default</span>
-                  </label>
-                  <p className="text-xs text-gray-500">Defaults used for newly added photos during ingestion.</p>
-                </div>
-              )}
-            </section>
+            </div>
+
             {/* Delete Project - first */}
             {project && (
               <section>
@@ -315,38 +296,62 @@ const Settings = ({ project, config, onConfigUpdate, onProjectDelete, onClose })
 
             {/* Maintenance removed: merged into Image Preprocessing */}
 
-            {/* General */}
+            {/* Other (moved Keep Defaults here and placed at end) */}
             <section>
               <button
-                className={`w-full flex items-center justify-between px-4 py-3 text-left ${openSection==='general' ? 'bg-gray-50' : ''}`}
-                onClick={() => setOpenSection(prev => prev === 'general' ? null : 'general')}
+                className={`w-full flex items-center justify-between px-4 py-3 text-left ${openSection==='other' ? 'bg-gray-50' : ''}`}
+                onClick={() => setOpenSection(prev => prev === 'other' ? null : 'other')}
               >
-                <span className="font-medium">General</span>
-                <span className="text-sm text-gray-500">{openSection==='general' ? '▲' : '▼'}</span>
+                <span className="font-medium">Other</span>
+                <span className="text-sm text-gray-500">{openSection==='other' ? '▲' : '▼'}</span>
               </button>
-              {openSection === 'general' && (
-                <div className="px-4 pb-4 space-y-2">
-                  <label className="block">
-                    <span className="text-gray-700">Lazy Load Threshold</span>
-                    <input
-                      type="number"
-                      value={localConfig.photo_grid.lazy_load_threshold}
-                      onChange={(e) => handleConfigChange('photo_grid', 'lazy_load_threshold', parseInt(e.target.value, 10) || 0)}
-                      className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-md"
-                    />
-                  </label>
-                  <label className="block">
-                    <span className="text-gray-700">Viewer Preload Count</span>
-                    <input
-                      type="number"
-                      min={0}
-                      max={10}
-                      value={localConfig.viewer?.preload_count ?? 1}
-                      onChange={(e) => handleConfigChange('viewer', 'preload_count', Math.max(0, parseInt(e.target.value, 10) || 0))}
-                      className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-md"
-                    />
-                    <span className="block text-xs text-gray-500 mt-1">Number of next/previous images to preload in the fullscreen viewer.</span>
-                  </label>
+              {openSection === 'other' && (
+                <div className="px-4 pb-4 space-y-4">
+                  <div className="space-y-3">
+                    <h3 className="text-sm font-semibold">Keep Defaults</h3>
+                    <label className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={!!localConfig.keep_defaults?.jpg}
+                        onChange={(e) => handleConfigChange('keep_defaults', 'jpg', e.target.checked)}
+                      />
+                      <span className="text-gray-700">Keep JPG by default</span>
+                    </label>
+                    <label className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={!!localConfig.keep_defaults?.raw}
+                        onChange={(e) => handleConfigChange('keep_defaults', 'raw', e.target.checked)}
+                      />
+                      <span className="text-gray-700">Keep RAW by default</span>
+                    </label>
+                    <p className="text-xs text-gray-500">Defaults used for newly added photos during ingestion.</p>
+                  </div>
+
+                  <div className="space-y-2">
+                    <h3 className="text-sm font-semibold">General</h3>
+                    <label className="block">
+                      <span className="text-gray-700">Lazy Load Threshold</span>
+                      <input
+                        type="number"
+                        value={localConfig.photo_grid.lazy_load_threshold}
+                        onChange={(e) => handleConfigChange('photo_grid', 'lazy_load_threshold', parseInt(e.target.value, 10) || 0)}
+                        className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-md"
+                      />
+                    </label>
+                    <label className="block">
+                      <span className="text-gray-700">Viewer Preload Count</span>
+                      <input
+                        type="number"
+                        min={0}
+                        max={10}
+                        value={localConfig.viewer?.preload_count ?? 1}
+                        onChange={(e) => handleConfigChange('viewer', 'preload_count', Math.max(0, parseInt(e.target.value, 10) || 0))}
+                        className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-md"
+                      />
+                      <span className="block text-xs text-gray-500 mt-1">Number of next/previous images to preload in the fullscreen viewer.</span>
+                    </label>
+                  </div>
                 </div>
               )}
             </section>

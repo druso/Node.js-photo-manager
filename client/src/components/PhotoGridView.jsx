@@ -16,7 +16,22 @@ const PhotoGridView = ({ projectData, projectFolder, onPhotoSelect, selectedPhot
   };
 
   if (!projectData || !projectData.photos || projectData.photos.length === 0) {
-    return <p className="text-center text-gray-500 py-8">No photos in this project yet.</p>;
+    return (
+      <div className="flex flex-col items-center justify-center py-12 text-center text-gray-600">
+        <div className="mb-3 text-gray-400" aria-hidden="true">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="h-8 w-8">
+            <path fillRule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" clipRule="evenodd" />
+          </svg>
+        </div>
+        <p className="max-w-md">
+          <span className="font-medium text-gray-800">Drop images anywhere on this page</span> to add them to the current project, or click the{' '}
+          <span className="inline-flex items-center gap-1 align-middle" aria-label="plus icon">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="h-5 w-5"><path fillRule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" clipRule="evenodd" /></svg>
+            <span>+ icon</span>
+          </span>.
+        </p>
+      </div>
+    );
   }
 
   // Grid sizing using explicit cell size with 1:2:3 ratio
