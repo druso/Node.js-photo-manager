@@ -1,12 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { deleteProject } from '../api/projectsApi';
-import { generateThumbnails, generatePreviews } from '../api/uploadsApi';
+import { useUpload } from '../upload/UploadContext';
 
 const Settings = ({ project, config, onConfigUpdate, onProjectDelete, onClose }) => {
   const [deleteConfirmText, setDeleteConfirmText] = useState('');
   const [localConfig, setLocalConfig] = useState(null);
   const [openSection, setOpenSection] = useState('delete'); // only one open at a time
   const [regenLoading, setRegenLoading] = useState(false);
+  const { actions: uploadActions } = useUpload();
 
   useEffect(() => {
     // Deep copy config to local state to avoid direct mutation
@@ -63,9 +64,9 @@ const Settings = ({ project, config, onConfigUpdate, onProjectDelete, onClose })
     if (!window.confirm('Force regenerate thumbnails and previews for this project? This may take a while.')) return;
     try {
       setRegenLoading(true);
-      const thumb = await generateThumbnails(project.folder, { force: true });
-      const prev = await generatePreviews(project.folder, { force: true });
-      alert(`Regeneration complete. Thumbnails: ${thumb.processed}/${thumb.total}. Previews: ${prev.processed}/${prev.total}.`);
+      // Use per-image processing via global upload controller. This triggers the bottom progress bar.
+      await uploadActions.startProcess({ thumbnails: true, previews: true, force: true });
+      // Completion toast is handled by the bottom bar; optional alert removed.
     } catch (err) {
       console.error('Regeneration failed:', err);
       alert('Regeneration failed. See console for details.');

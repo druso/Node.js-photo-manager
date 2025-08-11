@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { updateTags } from '../api/tagsApi';
 import { updateKeep } from '../api/keepApi';
+import { useUpload } from '../upload/UploadContext';
 
 export default function OperationsMenu({
   projectFolder,
@@ -15,6 +16,7 @@ export default function OperationsMenu({
   const [tagInput, setTagInput] = useState('');
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState({ visible: false, text: '' });
+  const { actions: uploadActions } = useUpload();
   const showToast = (text) => {
     setToast({ visible: true, text });
     setTimeout(() => setToast({ visible: false, text: '' }), 1800);
@@ -122,6 +124,19 @@ export default function OperationsMenu({
               >JPG+RAW</button>
             </div>
           </div>
+
+          {/* Maintenance */}
+          <div className="mt-3 pt-3 border-t">
+            <div className="text-xs text-gray-500 mb-2">Maintenance</div>
+            <button
+              onClick={() => uploadActions.startProcess({ thumbnails: true, previews: true, force: false })}
+              className="w-full px-3 py-2 text-sm rounded-md bg-gray-100 hover:bg-gray-200 border border-gray-300 text-gray-800"
+              title="Regenerate thumbnails and previews"
+            >
+              Regenerate thumbnails & previews
+            </button>
+          </div>
+
           <div className="mb-2">
             <div className="text-xs text-gray-500 mb-2">Tagging</div>
             <div className="flex">

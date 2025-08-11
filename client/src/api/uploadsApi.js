@@ -10,7 +10,7 @@ export async function analyzeFiles(folder, files) {
   return res.json();
 }
 
-// Note: Upload with progress is still handled in PhotoUpload via XMLHttpRequest.
+// Note: Upload with progress is handled in the UploadContext via XMLHttpRequest.
 // This function is provided for future use if progress is not required.
 export async function uploadFiles(folder, fileList) {
   const formData = new FormData();
@@ -23,20 +23,17 @@ export async function uploadFiles(folder, fileList) {
   return res.json();
 }
 
-export async function generateThumbnails(folder, { force } = {}) {
-  const q = force ? '?force=true' : '';
-  const res = await fetch(`/api/projects/${encodeURIComponent(folder)}/generate-thumbnails${q}`, {
-    method: 'POST'
-  });
-  if (!res.ok) throw new Error(`generateThumbnails failed: ${res.status}`);
+// Removed deprecated generateThumbnails/generatePreviews. Use processPerImage() instead.
+
+export async function getProgress(folder) {
+  const res = await fetch(`/api/projects/${encodeURIComponent(folder)}/progress`);
+  if (!res.ok) throw new Error(`getProgress failed: ${res.status}`);
   return res.json();
 }
 
-export async function generatePreviews(folder, { force } = {}) {
+export async function processPerImage(folder, { force } = {}) {
   const q = force ? '?force=true' : '';
-  const res = await fetch(`/api/projects/${encodeURIComponent(folder)}/generate-previews${q}`, {
-    method: 'POST'
-  });
-  if (!res.ok) throw new Error(`generatePreviews failed: ${res.status}`);
+  const res = await fetch(`/api/projects/${encodeURIComponent(folder)}/process${q}`, { method: 'POST' });
+  if (!res.ok) throw new Error(`processPerImage failed: ${res.status}`);
   return res.json();
 }

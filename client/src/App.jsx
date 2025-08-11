@@ -1,12 +1,15 @@
 import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { listProjects, getProject, createProject } from './api/projectsApi';
 import ProjectSelector from './components/ProjectSelector';
-import PhotoUpload from './components/PhotoUpload';
 import PhotoDisplay from './components/PhotoDisplay';
 import OperationsMenu from './components/OperationsMenu';
 import PhotoViewer from './components/PhotoViewer';
 import Settings from './components/Settings';
 import UniversalFilter from './components/UniversalFilter';
+import { UploadProvider } from './upload/UploadContext';
+import UploadConfirmModal from './components/UploadConfirmModal';
+import BottomUploadBar from './components/BottomUploadBar';
+import GlobalDragDrop from './components/GlobalDragDrop';
 import './App.css';
 
 function App() {
@@ -35,6 +38,7 @@ function App() {
   // Grid/table preview size: 's' | 'm' | 'l'
   const [sizeLevel, setSizeLevel] = useState('m');
 
+
   // Refs
   const mainRef = useRef(null);
   const initialSavedYRef = useRef(null);
@@ -61,7 +65,10 @@ function App() {
         if (DEBUG_PERSIST) console.debug('[persist] load activeFilters', prefs.activeFilters);
         setActiveFilters(prev => ({ ...prev, ...prefs.activeFilters }));
       }
-      if (prefs.activeTab === 'view' || prefs.activeTab === 'upload') { if (DEBUG_PERSIST) console.debug('[persist] load activeTab', prefs.activeTab); setActiveTab(prefs.activeTab); }
+      if (prefs.activeTab) {
+        const coerced = prefs.activeTab === 'upload' ? 'view' : prefs.activeTab;
+        if (coerced === 'view') { if (DEBUG_PERSIST) console.debug('[persist] load activeTab', coerced); setActiveTab(coerced); }
+      }
       uiPrefsLoadedRef.current = true;
       uiPrefsReadyRef.current = true;
       setUiPrefsReady(true);
@@ -197,6 +204,7 @@ function App() {
       }
     }
   }, [config]);
+
 
   // Remember last project (configurable)
   useEffect(() => {
@@ -559,7 +567,7 @@ function App() {
       } else if (e.key === keyTable) {
         setViewMode('table');
       } else if (e.key === keyToggleFilters) {
-        if (activeTab !== 'upload') setFiltersCollapsed(prev => !prev);
+        setFiltersCollapsed(prev => !prev);
       } else if (e.key === keySelectAll) {
         // Toggle select all on filtered set
         if (activeTab === 'view' && filteredProjectData?.photos) {
@@ -576,6 +584,7 @@ function App() {
   }, [selectedProject, activeTab, filteredProjectData, setViewMode, setSelectedPhotos, setFiltersCollapsed, config]);
 
   return (
+    <UploadProvider projectFolder={selectedProject?.folder} onCompleted={handlePhotosUploaded}>
     <div className="min-h-screen bg-gray-50" ref={mainRef}>
       {/* Sticky Header Container */}
       <div className="sticky top-0 z-20 bg-gray-50">
@@ -661,11 +670,11 @@ function App() {
           )}
         </header>
 
-        {/* Navigation Tabs */}
+        {/* Navigation (View only) */}
         {selectedProject && (
           <div className="bg-white border-b relative">
             <div className="w-full px-4 sm:px-6 lg:px-8">
-              <div className="flex items-center justify-between py-3">
+              <div className="flex items-center justify-between py-2">
                 <nav className="flex space-x-8" aria-label="Tabs">
                   <button
                     onClick={() => setActiveTab('view')}
@@ -677,16 +686,6 @@ function App() {
                   >
                     View
                   </button>
-                  <button
-                    onClick={() => setActiveTab('upload')}
-                    className={`py-4 px-1 border-b-2 font-medium text-sm ${
-                      activeTab === 'upload'
-                        ? 'border-blue-500 text-blue-600'
-                        : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                    }`}
-                  >
-                    Import
-                  </button>
                   {/* Tag tab removed: tagging is now in Operations dropdown on the View tab */}
                 </nav>
                 
@@ -694,12 +693,8 @@ function App() {
                 <div className="flex items-center gap-3">
                   <button
                     onClick={() => setFiltersCollapsed(!filtersCollapsed)}
-                    disabled={activeTab === 'upload'}
-                    className={`flex items-center space-x-2 py-4 px-3 text-sm font-medium transition-colors ${
-                      activeTab === 'upload'
-                        ? 'text-gray-400 cursor-not-allowed'
-                        : 'text-gray-700 hover:text-gray-900'
-                    }`}
+                    className={`flex items-center space-x-2 py-3 px-3 text-sm font-medium transition-colors text-gray-700 hover:text-gray-900`}
+                    disabled={loading}
                   >
                     {/* Desktop Filter Button */}
                     <span className="hidden sm:inline">Filters</span>
@@ -863,7 +858,7 @@ function App() {
             )}
             
             {/* Universal Filter Dropdown (view tab only) */}
-            {activeTab !== 'upload' && !filtersCollapsed && (
+            {!filtersCollapsed && (
               <div className="absolute top-full left-0 right-0 bg-white border-b shadow-lg z-40">
                 {/* Constrain height on small screens and allow scrolling of content while keeping footer visible */}
                 <div className="flex flex-col max-h-[70vh] sm:max-h-[60vh]">
@@ -982,13 +977,6 @@ function App() {
               </div>
             )}
 
-            {activeTab === 'upload' && (
-              <PhotoUpload
-                projectFolder={selectedProject.folder}
-                onPhotosUploaded={handlePhotosUploaded}
-              />
-            )}
-
             {/* Tag tab removed; tagging via OperationsMenu */}
           </div>
         )}
@@ -1021,7 +1009,13 @@ function App() {
           onClose={() => setShowSettings(false)} 
         />
       )}
+
+      {/* Global upload UI */}
+      <UploadConfirmModal />
+      <BottomUploadBar />
+      {selectedProject?.folder && <GlobalDragDrop />}
     </div>
+    </UploadProvider>
   );
 }
 
