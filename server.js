@@ -58,7 +58,7 @@ const upload = multer({
   }
 });
 
-// Manifest schema helpers are deprecated after SQL migration
+
 
 // Utility functions
 const getFileType = (filename) => {
@@ -68,7 +68,7 @@ const getFileType = (filename) => {
   return 'other';
 };
 
-// Deprecated manifest helpers removed after SQL migration
+
 
 // Routes
 
