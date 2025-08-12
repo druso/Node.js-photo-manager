@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useMemo, useRef, useState, useEffect } from 'react';
-import { analyzeFiles as apiAnalyzeFiles, getProgress, processPerImage } from '../api/uploadsApi';
+import { analyzeFiles as apiAnalyzeFiles, processPerImage } from '../api/uploadsApi';
 
 // Public shape
 // operation: null | {
@@ -40,31 +40,7 @@ export function UploadProvider({ children, projectFolder, onCompleted }) {
     }
   };
 
-  const startProgressPolling = () => {
-    clearProgressTimer();
-    progressTimerRef.current = setInterval(async () => {
-      try {
-        if (!projectFolder) return;
-        const p = await getProgress(projectFolder);
-        setOperation(prev => {
-          if (!prev) return prev;
-          // Map BE progress to 0..100
-          let mapped = prev.percent ?? 0;
-          if (p && p.total >= 0) {
-            const ratio = p.total > 0 ? Math.min(1, Math.max(0, p.processed / p.total)) : 0;
-            if (p.op === 'thumbnails') mapped = Math.floor(ratio * 50);
-            else if (p.op === 'previews') mapped = 50 + Math.floor(ratio * 50);
-            else if (p.op === 'per-image') mapped = Math.round(ratio * 100);
-          }
-          return { ...prev, percent: mapped };
-        });
-        if (p && (p.status === 'completed' || p.status === 'error')) clearProgressTimer();
-      } catch (e) {
-        // stop polling on error to avoid spamming
-        clearProgressTimer();
-      }
-    }, 400);
-  };
+  // Progress polling removed: processing is now handled by background jobs with SSE/Processes panel
 
   const startAnalyze = async (files) => {
     if (!files || files.length === 0) return;
@@ -96,6 +72,15 @@ export function UploadProvider({ children, projectFolder, onCompleted }) {
         return withFiles;
       });
       setSummary(result.summary);
+      // If no valid files were accepted by the server, stop here and show a clear message
+      if (!result.summary || (result.summary.totalFiles || 0) === 0) {
+        const rejectedCount = Array.isArray(result.rejected) ? result.rejected.length : 0;
+        const msg = rejectedCount > 0
+          ? `No valid image files to upload. Rejected ${rejectedCount} file${rejectedCount === 1 ? '' : 's'}.`
+          : 'No valid image files to upload.';
+        setOperation({ type: 'upload', phase: 'error', label: msg, percent: null });
+        return;
+      }
       // Keep operation in idle; UI can open a confirmation modal using analysisResult/summary
       setOperation(prev => ({ ...(prev || { type: 'upload' }), phase: 'idle', label: 'Ready to upload', percent: null }));
     } catch (err) {
@@ -136,17 +121,8 @@ export function UploadProvider({ children, projectFolder, onCompleted }) {
 
     xhr.onload = async function () {
       if (xhr.status >= 200 && xhr.status < 300) {
-        // Phase: post-processing (per-image). Reset percent and show single step.
-        setOperation(prev => prev ? { ...prev, phase: 'post-processing', label: `Processing images…`, percent: 0 } : null);
-        startProgressPolling();
-        try {
-          const procRes = await processPerImage(projectFolder);
-          setOperation(prev => prev ? { ...prev, percent: 100 } : null);
-          finishSuccess({ processed: procRes?.processed ?? null, total: procRes?.total ?? null });
-        } catch (e) {
-          console.warn('Per-image processing failed:', e);
-          setOperation(prev => prev ? { ...prev, phase: 'error', label: 'Processing failed', percent: null } : null);
-        }
+        // Background job will process uploaded files. Mark upload complete.
+        finishSuccess({ note: 'Upload complete. Processing in background.' });
       } else {
         finishError(parseErrorText(xhr));
       }
@@ -158,7 +134,7 @@ export function UploadProvider({ children, projectFolder, onCompleted }) {
     xhr.send(formData);
   };
 
-  // Start processing via unified per-image endpoint.
+  // Start processing via unified per-image endpoint (now enqueues a background job).
   // Note: thumbnails/previews flags are ignored; kept for compatibility with callers.
   const startProcess = async ({ thumbnails = true, previews = true, force = false, filenames } = {}) => {
     if (!projectFolder) {
@@ -166,12 +142,10 @@ export function UploadProvider({ children, projectFolder, onCompleted }) {
       return;
     }
     clearLingerTimer();
-    setOperation({ type: 'process', phase: 'post-processing', label: 'Processing images…', percent: 0 });
-    startProgressPolling();
+    setOperation({ type: 'process', phase: 'post-processing', label: 'Queuing background process…', percent: null });
     try {
-      const procRes = await processPerImage(projectFolder, { force, filenames });
-      setOperation(prev => prev ? { ...prev, percent: 100 } : null);
-      finishSuccess({ processed: procRes?.processed ?? null, total: procRes?.total ?? null });
+      await processPerImage(projectFolder, { force, filenames });
+      finishSuccess({ note: 'Process queued. Running in background.' });
     } catch (err) {
       setOperation({ type: 'process', phase: 'error', label: 'Processing failed', percent: null, meta: { error: String(err) } });
     }

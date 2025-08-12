@@ -5,7 +5,8 @@ const sharp = require('sharp');
 const exifParser = require('exif-parser');
 const multer = require('multer');
 const { getConfig } = require('../services/config');
-const { generateDerivative } = require('../utils/imageProcessing');
+// const { generateDerivative } = require('../utils/imageProcessing');
+const jobsRepo = require('../services/repositories/jobsRepo');
 
 // SQLite repositories (migration from manifest.json)
 const projectsRepo = require('../services/repositories/projectsRepo');
@@ -15,16 +16,7 @@ const router = express.Router();
 // Ensure JSON bodies are parsed for this router (for subset processing requests)
 router.use(express.json());
 
-// In-memory progress store: { [folder]: { op: 'thumbnails'|'previews', total: number, processed: number, status: 'idle'|'running'|'completed'|'error', updatedAt: number } }
-const progressStore = Object.create(null);
-
-function setProgress(folder, payload) {
-  progressStore[folder] = { ...(progressStore[folder] || {}), ...payload, updatedAt: Date.now() };
-}
-
-function clearProgress(folder) {
-  progressStore[folder] = { op: null, total: 0, processed: 0, status: 'idle', updatedAt: Date.now() };
-}
+// In-memory progress is deprecated; durability via jobs table
 
 // Manifest service removed by SQL migration; routes now use repositories
 
@@ -33,16 +25,37 @@ const PROJECT_ROOT = path.join(__dirname, '..', '..');
 const PROJECTS_DIR = path.join(PROJECT_ROOT, '.projects');
 fs.ensureDirSync(PROJECTS_DIR);
 
-// Multer setup (mirror server.js)
+// Multer setup (mirror server.js) using configurable accept list
 const storage = multer.memoryStorage();
+function buildAcceptPredicate() {
+  try {
+    const cfg = getConfig();
+    const exts = (cfg?.uploader?.accepted_files?.extensions || []).map(e => String(e).toLowerCase());
+    const prefixes = (cfg?.uploader?.accepted_files?.mime_prefixes || []).map(p => String(p).toLowerCase());
+    return (filename, mimetype) => {
+      const ext = path.extname(filename).toLowerCase().replace(/^\./, '');
+      const extOk = exts.length === 0 ? true : exts.includes(ext);
+      const mt = (mimetype || '').toLowerCase();
+      const mimeOk = prefixes.length === 0 ? true : prefixes.some(p => mt.startsWith(p));
+      return extOk && (mimeOk || mt === '');
+    };
+  } catch (_) {
+    // Fallback to common image/RAW types
+    const fallback = new Set(['jpg','jpeg','png','tif','tiff','raw','cr2','nef','arw','dng']);
+    return (filename, mimetype) => {
+      const ext = path.extname(filename).toLowerCase().replace(/^\./, '');
+      return fallback.has(ext) || (mimetype && mimetype.toLowerCase().startsWith('image/'));
+    };
+  }
+}
+
 const upload = multer({
   storage: storage,
   fileFilter: (req, file, cb) => {
-    const allowedTypes = /jpeg|jpg|png|tiff|tif|raw|cr2|nef|arw|dng/;
-    const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
-    const mimetype = allowedTypes.test(file.mimetype) || (file.mimetype && file.mimetype.startsWith('image/'));
-    if (mimetype && extname) return cb(null, true);
-    return cb(new Error('Only image files are allowed'));
+    const accept = buildAcceptPredicate();
+    const ok = accept(file.originalname, file.mimetype);
+    if (ok) return cb(null, true);
+    return cb(new Error('Only accepted image files are allowed'));
   },
   limits: { fileSize: 100 * 1024 * 1024 }
 });
@@ -52,100 +65,18 @@ router.post('/:folder/process', async (req, res) => {
   try {
     const { folder } = req.params;
     const force = String(req.query.force || '').toLowerCase() === 'true';
-    const requested = (req.body && Array.isArray(req.body.filenames) && req.body.filenames.length > 0)
-      ? new Set(req.body.filenames)
-      : null;
-    // Build a case-insensitive lookup for requested filenames (schema stores base name in `filename`)
-    const requestedLC = requested ? new Set(Array.from(requested).map(s => String(s).toLowerCase())) : null;
     const projectPath = path.join(PROJECTS_DIR, folder);
     if (!await fs.pathExists(projectPath)) return res.status(404).json({ error: 'Project not found' });
     const project = projectsRepo.getByFolder(folder);
     if (!project) return res.status(404).json({ error: 'Project not found' });
 
-    const cfg = getConfig();
-    const thumbCfg = (cfg.processing && cfg.processing.thumbnail) || { maxDim: 200, quality: 80 };
-    const prevCfg = (cfg.processing && cfg.processing.preview) || { maxDim: 6000, quality: 80 };
-
-    // Decide pending set from DB
-    const all = photosRepo.listPaged({ project_id: project.id, limit: 100000, sort: 'filename', dir: 'ASC', cursor: null }).items;
-    // If a subset is explicitly requested, process those regardless of current statuses (treat as force for the subset)
-    const effectiveForce = force || !!requested;
-    let baseCandidates = effectiveForce
-      ? all.filter(e => e.thumbnail_status !== 'not_supported' || e.preview_status !== 'not_supported')
-      : all.filter(e => (e.thumbnail_status === 'pending' || e.thumbnail_status === 'failed' || !e.thumbnail_status) || (e.preview_status === 'pending' || e.preview_status === 'failed' || !e.preview_status));
-    const candidates = requestedLC ? all.filter(e => requestedLC.has(String(e.filename).toLowerCase())) : baseCandidates;
-
-    console.log(`Per-image processing for ${candidates.length} images${requested ? ' (subset)' : ''}`);
-    clearProgress(folder);
-    setProgress(folder, { op: 'per-image', total: candidates.length, processed: 0, status: 'running' });
-
-    let processedCount = 0;
-    const results = [];
-
-    const supportedExtensionsLower = ['.jpg', '.jpeg', '.png', '.tiff', '.webp'];
-
-    for (const entry of candidates) {
-      try {
-        // Resolve a source file for this entry
-        let sourceFile = null;
-        const possibleFiles = supportedExtensionsLower.flatMap(ext => [
-          `${entry.filename}${ext}`,
-          `${entry.filename}${ext.toUpperCase()}`
-        ]);
-        for (const fileName of possibleFiles) {
-          const filePath = path.join(projectPath, fileName);
-          if (fs.existsSync(filePath)) { sourceFile = filePath; break; }
-        }
-        if (!sourceFile) {
-          console.log(`No supported source file found for ${entry.filename}`);
-          photosRepo.updateDerivativeStatus(entry.id, {
-            thumbnail_status: entry.thumbnail_status || 'failed',
-            preview_status: entry.preview_status || 'failed',
-          });
-          results.push({ filename: entry.filename, status: 'skipped_no_source' });
-          continue;
-        }
-
-        // Thumbnail
-        if (effectiveForce || entry.thumbnail_status === 'pending' || entry.thumbnail_status === 'failed' || !entry.thumbnail_status) {
-          try {
-            const thumbPath = path.join(projectPath, '.thumb', `${entry.filename}.jpg`);
-            await generateDerivative(sourceFile, thumbPath, { maxDim: Number(thumbCfg.maxDim) || 200, quality: Number(thumbCfg.quality) || 80 });
-            photosRepo.updateDerivativeStatus(entry.id, { thumbnail_status: 'generated' });
-          } catch (te) {
-            console.error(`Failed to generate thumbnail for ${entry.filename}:`, te);
-            photosRepo.updateDerivativeStatus(entry.id, { thumbnail_status: 'failed' });
-          }
-        }
-
-        // Preview
-        if (effectiveForce || entry.preview_status === 'pending' || entry.preview_status === 'failed' || !entry.preview_status) {
-          try {
-            const previewPath = path.join(projectPath, '.preview', `${entry.filename}.jpg`);
-            await generateDerivative(sourceFile, previewPath, { maxDim: Number(prevCfg.maxDim) || 6000, quality: Number(prevCfg.quality) || 80 });
-            photosRepo.updateDerivativeStatus(entry.id, { preview_status: 'generated' });
-          } catch (pe) {
-            console.error(`Failed to generate preview for ${entry.filename}:`, pe);
-            photosRepo.updateDerivativeStatus(entry.id, { preview_status: 'failed' });
-          }
-        }
-
-        processedCount++;
-        setProgress(folder, { processed: processedCount });
-        results.push({ filename: entry.filename, status: 'processed' });
-      } catch (err) {
-        console.error(`Per-image processing failed for ${entry.filename}:`, err);
-        results.push({ filename: entry.filename, status: 'failed', reason: err.message });
-      }
-    }
-
-    setProgress(folder, { status: 'completed' });
-    res.json({ message: `Processed ${processedCount} images`, processed: processedCount, total: candidates.length, results });
+    const payload = { force, filenames: Array.isArray(req.body?.filenames) ? req.body.filenames : undefined };
+    const tenant_id = 'user_0';
+    const job = jobsRepo.enqueue({ tenant_id, project_id: project.id, type: 'generate_derivatives', payload, progress_total: null });
+    return res.status(202).json({ job });
   } catch (err) {
-    console.error('Error in per-image process:', err);
-    const { folder } = req.params || {};
-    if (folder) setProgress(folder, { status: 'error' });
-    res.status(500).json({ error: 'Failed to process images' });
+    console.error('Error enqueuing generate_derivatives:', err);
+    return res.status(500).json({ error: 'Failed to enqueue derivatives job' });
   }
 });
 
@@ -158,89 +89,151 @@ function getFileType(filename) {
 }
 
 // POST /api/projects/:folder/upload
-router.post('/:folder/upload', upload.array('photos'), async (req, res) => {
-  try {
-    const { folder } = req.params;
-    const projectPath = path.join(PROJECTS_DIR, folder);
-    if (!await fs.pathExists(projectPath)) return res.status(404).json({ error: 'Project not found' });
-    const project = projectsRepo.getByFolder(folder);
-    if (!project) return res.status(404).json({ error: 'Project not found' });
+router.post('/:folder/upload', async (req, res) => {
+  // Invoke multer programmatically to catch validation errors and respond 400
+  upload.array('photos')(req, res, async (err) => {
+    if (err) {
+      const msg = err.message || 'Only accepted image files are allowed';
+      return res.status(400).json({ error: msg });
+    }
+    try {
+      const { folder } = req.params;
+      const projectPath = path.join(PROJECTS_DIR, folder);
+      if (!await fs.pathExists(projectPath)) return res.status(404).json({ error: 'Project not found' });
+      const project = projectsRepo.getByFolder(folder);
+      if (!project) return res.status(404).json({ error: 'Project not found' });
 
-    const uploadedFiles = [];
+      const uploadedFiles = [];
+      const basenames = [];
+      const perFileErrors = [];
+      const accept = buildAcceptPredicate();
 
-    for (const file of req.files) {
-      const originalName = path.parse(file.originalname).name;
-      const ext = path.extname(file.originalname).toLowerCase();
-      const fileType = getFileType(file.originalname);
+      if (!req.files || req.files.length === 0) {
+        return res.status(400).json({ error: 'No files uploaded' });
+      }
 
-      // Save original file
-      const filePath = path.join(projectPath, file.originalname);
-      await fs.writeFile(filePath, file.buffer);
-
-      // Defer thumbnail generation
-      const isRawFile = /\.(arw|cr2|nef|dng|raw)$/i.test(ext);
-      console.log(`Deferring thumbnail generation for ${file.originalname} (RAW: ${isRawFile})`);
-
-      // Extract EXIF for non-RAW
-      let metadata = {};
-      if (!isRawFile) {
+      for (const file of req.files) {
         try {
-          const parser = exifParser.create(file.buffer);
-          const result = parser.parse();
-          if (result && result.tags) {
-            metadata = {
-              date_time_original: result.tags.DateTimeOriginal ? new Date(result.tags.DateTimeOriginal * 1000).toISOString() : null,
-              camera_model: result.tags.Model || null,
-              camera_make: result.tags.Make || null,
-              make: result.tags.Make || null,
-              model: result.tags.Model || null,
-              exif_image_width: result.tags.ExifImageWidth || null,
-              exif_image_height: result.tags.ExifImageHeight || null,
-              orientation: result.tags.Orientation || null
-            };
-            Object.keys(metadata).forEach(k => metadata[k] === null && delete metadata[k]);
+          // Sanitize filename to prevent path traversal
+          const sanitizedName = path.basename(file.originalname);
+          if (!sanitizedName || sanitizedName === '.' || sanitizedName === '..') {
+            perFileErrors.push({ filename: file.originalname, error: 'Invalid filename' });
+            continue;
           }
-        } catch (err) {
-          console.error(`EXIF parsing error for ${file.originalname}:`, err.message);
+
+          // Defensive check: ensure file passes acceptance rules
+          if (!accept(sanitizedName, file.mimetype)) {
+            perFileErrors.push({ filename: sanitizedName, error: 'File type not accepted' });
+            continue;
+          }
+
+          if (!file.buffer || file.buffer.length === 0) {
+            perFileErrors.push({ filename: sanitizedName, error: 'Empty file' });
+            continue;
+          }
+          const originalName = path.parse(sanitizedName).name;
+          const ext = path.extname(sanitizedName).toLowerCase();
+          const fileType = getFileType(sanitizedName);
+
+          // Save original file
+          const filePath = path.join(projectPath, sanitizedName);
+          await fs.writeFile(filePath, file.buffer);
+
+          // Defer thumbnail generation
+          const isRawFile = /\.(arw|cr2|nef|dng|raw)$/i.test(ext);
+          console.log(`Deferring thumbnail generation for ${sanitizedName} (RAW: ${isRawFile})`);
+
+          // Extract EXIF for non-RAW
+          let metadata = {};
+          if (!isRawFile) {
+            try {
+              const parser = exifParser.create(file.buffer);
+              const result = parser.parse();
+              if (result && result.tags) {
+                metadata = {
+                  date_time_original: result.tags.DateTimeOriginal ? new Date(result.tags.DateTimeOriginal * 1000).toISOString() : null,
+                  camera_model: result.tags.Model || null,
+                  camera_make: result.tags.Make || null,
+                  make: result.tags.Make || null,
+                  model: result.tags.Model || null,
+                  exif_image_width: result.tags.ExifImageWidth || null,
+                  exif_image_height: result.tags.ExifImageHeight || null,
+                  orientation: result.tags.Orientation || null
+                };
+                Object.keys(metadata).forEach(k => metadata[k] === null && delete metadata[k]);
+              }
+            } catch (err) {
+              console.error(`EXIF parsing error for ${sanitizedName}:`, err.message);
+              perFileErrors.push({ filename: sanitizedName, error: 'EXIF parsing failed' });
+            }
+          }
+
+          // Thumbnail status
+          const thumbnailStatus = isRawFile ? 'not_supported' : 'pending';
+          const previewStatus = isRawFile ? 'not_supported' : 'pending';
+
+          // Upsert into SQLite repository
+          const existing = photosRepo.getByProjectAndFilename(project.id, originalName);
+          const keepDefaults = (() => {
+            try { const cfg = getConfig(); return (cfg && cfg.keep_defaults) || { jpg: true, raw: false }; } catch (_) { return { jpg: true, raw: false }; }
+          })();
+
+          const photoPayload = {
+            manifest_id: existing?.manifest_id || undefined,
+            filename: originalName,
+            basename: originalName,
+            ext: ext ? ext.replace(/^\./, '') : null,
+            date_time_original: metadata.date_time_original || existing?.date_time_original || null,
+            jpg_available: existing ? (existing.jpg_available || fileType === 'jpg') : (fileType === 'jpg'),
+            raw_available: existing ? (existing.raw_available || fileType === 'raw') : (fileType === 'raw'),
+            other_available: existing ? (existing.other_available || fileType === 'other') : (fileType === 'other'),
+            keep_jpg: existing ? !!existing.keep_jpg : !!keepDefaults.jpg,
+            keep_raw: existing ? !!existing.keep_raw : !!keepDefaults.raw,
+            thumbnail_status: (fileType === 'jpg' || (existing && existing.thumbnail_status === 'failed')) ? thumbnailStatus : (existing?.thumbnail_status || null),
+            preview_status: (fileType === 'jpg' || (existing && existing.preview_status === 'failed')) ? previewStatus : (existing?.preview_status || null),
+            orientation: metadata.orientation ?? existing?.orientation ?? null,
+            meta_json: Object.keys(metadata).length ? JSON.stringify(metadata) : (existing?.meta_json || null),
+          };
+          photosRepo.upsertPhoto(project.id, photoPayload);
+
+          uploadedFiles.push({ filename: sanitizedName, size: file.size, type: fileType });
+          basenames.push(originalName);
+        } catch (fileErr) {
+          console.error(`Error processing file ${file.originalname}:`, fileErr);
+          perFileErrors.push({ filename: file.originalname, error: fileErr.message || 'Processing failed' });
         }
       }
 
-      // Thumbnail status
-      const thumbnailStatus = isRawFile ? 'not_supported' : 'pending';
-      const previewStatus = isRawFile ? 'not_supported' : 'pending';
+      // Check if any files were successfully uploaded
+      if (uploadedFiles.length === 0) {
+        const errorMsg = perFileErrors.length > 0 
+          ? `No valid files uploaded. Errors: ${perFileErrors.map(e => `${e.filename}: ${e.error}`).join('; ')}`
+          : 'No valid files uploaded';
+        return res.status(400).json({ error: errorMsg, perFileErrors });
+      }
 
-      // Upsert into SQLite repository
-      const existing = photosRepo.getByProjectAndFilename(project.id, originalName);
-      const keepDefaults = (() => {
-        try { const cfg = getConfig(); return (cfg && cfg.keep_defaults) || { jpg: true, raw: false }; } catch (_) { return { jpg: true, raw: false }; }
-      })();
+      // Enqueue post-process job with filenames
+      try {
+        const tenant_id = 'user_0';
+        const payload = { filenames: basenames };
+        jobsRepo.enqueueWithItems({ tenant_id, project_id: project.id, type: 'upload_postprocess', payload, items: basenames.map(fn => ({ filename: fn })) });
+      } catch (e) {
+        console.warn('Failed to enqueue upload_postprocess job:', e.message);
+      }
 
-      const photoPayload = {
-        manifest_id: existing?.manifest_id || undefined,
-        filename: originalName,
-        basename: originalName,
-        ext: ext ? ext.replace(/^\./, '') : null,
-        date_time_original: metadata.date_time_original || existing?.date_time_original || null,
-        jpg_available: existing ? (existing.jpg_available || fileType === 'jpg') : (fileType === 'jpg'),
-        raw_available: existing ? (existing.raw_available || fileType === 'raw') : (fileType === 'raw'),
-        other_available: existing ? (existing.other_available || fileType === 'other') : (fileType === 'other'),
-        keep_jpg: existing ? !!existing.keep_jpg : !!keepDefaults.jpg,
-        keep_raw: existing ? !!existing.keep_raw : !!keepDefaults.raw,
-        thumbnail_status: (fileType === 'jpg' || (existing && existing.thumbnail_status === 'failed')) ? thumbnailStatus : (existing?.thumbnail_status || null),
-        preview_status: (fileType === 'jpg' || (existing && existing.preview_status === 'failed')) ? previewStatus : (existing?.preview_status || null),
-        orientation: metadata.orientation ?? existing?.orientation ?? null,
-        meta_json: Object.keys(metadata).length ? JSON.stringify(metadata) : (existing?.meta_json || null),
+      const response = { 
+        message: `Successfully uploaded ${uploadedFiles.length} files`, 
+        files: uploadedFiles 
       };
-      photosRepo.upsertPhoto(project.id, photoPayload);
-
-      uploadedFiles.push({ filename: file.originalname, size: file.size, type: fileType });
+      if (perFileErrors.length > 0) {
+        response.warnings = perFileErrors;
+      }
+      res.status(201).json(response);
+    } catch (err) {
+      console.error('Error uploading files:', err);
+      res.status(500).json({ error: 'Failed to upload files' });
     }
-
-    res.json({ message: `Successfully uploaded ${uploadedFiles.length} files`, files: uploadedFiles });
-  } catch (err) {
-    console.error('Error uploading files:', err);
-    res.status(500).json({ error: 'Failed to upload files' });
-  }
+  });
 });
 
 // POST /api/projects/:folder/analyze-files
@@ -254,10 +247,19 @@ router.post('/:folder/analyze-files', async (req, res) => {
     if (!project) return res.status(404).json({ error: 'Project not found' });
 
     const imageGroups = {};
+    const accept = buildAcceptPredicate();
+    const accepted = [];
+    const rejected = [];
 
     for (const file of files) {
       const baseName = path.parse(file.name).name;
       const ext = path.extname(file.name).toLowerCase();
+      // Drop non-accepted files from analysis
+      if (!accept(file.name, file.type)) {
+        rejected.push({ name: file.name, reason: 'not accepted by uploader rules' });
+        continue;
+      }
+      accepted.push(file);
       if (!imageGroups[baseName]) {
         imageGroups[baseName] = {
           baseName,
@@ -292,16 +294,17 @@ router.post('/:folder/analyze-files', async (req, res) => {
 
     const summary = {
       totalImages: Object.keys(imageGroups).length,
-      totalFiles: files.length,
+      totalFiles: accepted.length,
       newImages: Object.values(imageGroups).filter(g => g.isNew).length,
       conflictImages: Object.values(imageGroups).filter(g => g.hasConflict).length,
       completionImages: Object.values(imageGroups).filter(g => g.conflictType === 'completion').length,
-      duplicateImages: Object.values(imageGroups).filter(g => g.conflictType === 'duplicate').length
+      duplicateImages: Object.values(imageGroups).filter(g => g.conflictType === 'duplicate').length,
+      rejectedFiles: rejected.length
     };
 
     console.log(`Analysis complete: ${summary.totalImages} images, ${summary.newImages} new, ${summary.completionImages} completions, ${summary.duplicateImages} duplicates`);
 
-    res.json({ success: true, imageGroups, summary, analysis: 'File analysis completed successfully' });
+    res.json({ success: true, imageGroups, summary, rejected });
   } catch (err) {
     console.error('Error analyzing files:', err);
     res.status(500).json({ error: 'Failed to analyze files' });
@@ -322,10 +325,6 @@ router.post('/:folder/generate-previews', async (req, res) => {
 });
 
 // GET /api/projects/:folder/progress
-router.get('/:folder/progress', async (req, res) => {
-  const { folder } = req.params;
-  const p = progressStore[folder] || { op: null, total: 0, processed: 0, status: 'idle', updatedAt: Date.now() };
-  res.json(p);
-});
+// Deprecated: in-memory /progress removed in favor of durable jobs + SSE
 
 module.exports = router;

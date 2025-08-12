@@ -373,7 +373,8 @@ const PhotoViewer = ({ projectData, projectFolder, startIndex, onClose, config, 
     return null;
   }
 
-  const isRawFile = /\.(arw|cr2|nef|dng|raw)$/i.test(currentPhoto.filename);
+  // RAW-only when we have a RAW but no JPG rendition available
+  const isRawFile = !!currentPhoto?.raw_available && !currentPhoto?.jpg_available;
   const isSelected = !!selectedPhotos?.has && selectedPhotos.has(currentPhoto.filename);
   const onImgLoad = (e) => setNaturalSize({ w: e.target.naturalWidth, h: e.target.naturalHeight });
   const effectiveScale = getEffectiveScale();
@@ -407,8 +408,8 @@ const PhotoViewer = ({ projectData, projectFolder, startIndex, onClose, config, 
     if (preloadCount === 0) return;
     const created = [];
     const makeUrl = (p) => {
-      const isRaw = /(\.(arw|cr2|nef|dng|raw))$/i.test(p.filename);
-      if (isRaw) return null; // nothing to preload for RAW placeholder
+      const rawOnly = !!p?.raw_available && !p?.jpg_available;
+      if (rawOnly) return null; // nothing to preload for RAW-only placeholder
       return usePreview
         ? `/api/projects/${encodeURIComponent(projectFolder)}/preview/${encodeURIComponent(p.filename)}`
         : `/api/projects/${encodeURIComponent(projectFolder)}/image/${encodeURIComponent(p.filename)}`;
@@ -470,6 +471,15 @@ const PhotoViewer = ({ projectData, projectFolder, startIndex, onClose, config, 
         {/* Prev/Next inside image container so they don't overlap right-side slider/sidebar */}
         <button onClick={(e)=>{e.stopPropagation(); prevPhoto();}} className="absolute left-4 top-1/2 -translate-y-1/2 text-white text-4xl z-40 bg-black bg-opacity-40 p-2 rounded-full hover:bg-opacity-60">&#10094;</button>
         <button onClick={(e)=>{e.stopPropagation(); nextPhoto();}} className="absolute right-4 top-1/2 -translate-y-1/2 text-white text-4xl z-40 bg-black bg-opacity-40 p-2 rounded-full hover:bg-opacity-60">&#10095;</button>
+        {/* Loading overlay while preview/full image is fetching */}
+        {!isRawFile && imageLoading && (
+          <div className="absolute inset-0 z-30 flex items-center justify-center bg-black bg-opacity-25">
+            <div className="flex flex-col items-center text-white">
+              <span className="inline-block h-8 w-8 border-2 border-white border-t-transparent rounded-full animate-spin mb-3" />
+              <span className="text-sm opacity-90">Loading…</span>
+            </div>
+          </div>
+        )}
         {isRawFile ? (
           // RAW file placeholder
           <div className="flex flex-col items-center justify-center text-white" onMouseDown={(e)=>e.stopPropagation()} onClick={(e)=>e.stopPropagation()}>

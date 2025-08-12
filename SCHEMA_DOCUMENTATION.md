@@ -33,50 +33,74 @@ Notes:
 - Foreign keys and WAL are enabled in `server/services/db.js`.
 - Routes (`projects.js`, `uploads.js`, `assets.js`, `tags.js`, `keep.js`) exclusively use repositories.
 
----
+### Async Jobs (Queue)
 
-# Manifest.json Schema Documentation (Legacy)
+Durable background jobs are stored in two tables: `jobs` and `job_items`.
 
-## Overview
+- `jobs`
+  - Columns: `id`, `tenant_id`, `project_id` (FK), `type`, `status`, `created_at`, `started_at`, `finished_at`,
+    `progress_total`, `progress_done`, `payload_json`, `error_message`, `worker_id`, `heartbeat_at`,
+    `attempts`, `max_attempts`, `last_error_at`.
+  - Indexes: `(project_id, created_at DESC)`, `(status)`, `(tenant_id, created_at DESC)`, `(tenant_id, status)`.
+  - Status values: `queued`, `running`, `completed`, `failed`, `canceled`.
+  - Progress: `progress_total` and `progress_done` are nullable; workers should set both (or leave null for indeterminate).
+  - Payload: arbitrary JSON (stringified) for worker‑specific params.
 
-The photo management application uses a formal schema system to ensure data consistency and reliability across the entire codebase. This document explains how the schema is structured, enforced, and how to safely extend it.
+- `job_items`
+  - Columns: `id`, `tenant_id`, `job_id` (FK), `photo_id` (FK nullable), `filename`, `status`, `message`,
+    `created_at`, `updated_at`.
+  - Indexes: `(job_id)`, `(tenant_id)`.
+  - Use when a job processes multiple files so you can report per‑item progress and summaries.
 
-## 🏗️ Schema Architecture (Legacy)
+- Source of truth: `server/services/db.js` (DDL), repositories in `server/services/repositories/jobsRepo.js`.
+- Worker loop: `server/services/workerLoop.js` dispatches by `job.type` to worker modules under `server/services/workers/`.
+- Events/SSE: `server/services/events.js` provides `emitJobUpdate` and `onJobUpdate`; `server/routes/jobs.js` exposes `GET /api/jobs/stream`.
 
-### Core Components
+#### Job Lifecycle
 
-1. **Schema Definition** (`/schema/manifest-schema.js`)
-   - Defines the complete structure of manifest.json files
-   - Provides validation functions
-   - Includes default value generators
-   - Handles schema migration for future versions
+1. Enqueue: `jobsRepo.enqueue()` or `enqueueWithItems()` (when filenames are provided) from `POST /api/projects/:folder/jobs`.
+2. Worker Loop picks the next `queued` job, sets `running`, `started_at`, `worker_id`, and `heartbeat_at`.
+3. Worker updates `progress_*` and may update `job_items.status/message` while sending heartbeats.
+4. On error: increment `attempts`; if `< max_attempts` requeue; otherwise set `failed`, `error_message`, `last_error_at`.
+5. On completion: set `completed` + `finished_at`.
+6. Crash recovery: stale `running` (expired `heartbeat_at`) are requeued automatically by the loop.
+7. SSE events are emitted on state transitions and significant progress.
 
-2. **Enforcement Points** (Legacy — no longer used at runtime)
-   - All locations marked with `// SCHEMA_ENFORCEMENT:` comments
-   - Automatic validation during data creation, loading, and saving
-   - Runtime validation of user inputs
+#### Typical Queries
 
-## 📋 Schema Structure (Legacy)
+List latest jobs for a project:
 
-### Manifest Base Structure (Legacy)
-```json
-{
-  "project_name": "string (required)",
-  "created_at": "ISO datetime string (required)",
-  "updated_at": "ISO datetime string (required)", 
-  "entries": "array of photo entries (required)",
-  "schema_version": "string (optional, defaults to current version)"
-}
+```sql
+SELECT * FROM jobs WHERE project_id = ? ORDER BY created_at DESC LIMIT 50;
 ```
 
-### Derivative Status Fields (Legacy)
+Count items by status for a job:
 
-- **thumbnail_status** and **preview_status** track background processing of derived assets.
-  - Values:
-    - `pending`: derivative generation queued/not yet processed
-    - `generated`: derivative successfully created on disk
-    - `failed`: attempted but failed; retryable via force endpoints
-    - `not_supported`: derivative not applicable (e.g., RAW-only without supported converter)
+```sql
+SELECT status, COUNT(*) AS c FROM job_items WHERE job_id = ? GROUP BY status;
+```
+
+Find running jobs and stale heartbeats (for future recovery):
+
+```sql
+SELECT * FROM jobs WHERE status = 'running' AND (strftime('%s','now') - strftime('%s', heartbeat_at)) > 60;
+```
+
+#### Extending the Schema
+
+- Prefer placing worker‑specific parameters in `jobs.payload_json` or `job_items.message`/`filename` before adding columns.
+- If you need structural changes:
+  - Update DDL in `server/services/db.js`.
+  - Add read/write methods in `server/services/repositories/jobsRepo.js`.
+  - Update `workerLoop` and workers accordingly.
+  - Document the change here (new columns, allowed values, indices).
+
+#### Frontend Expectations
+
+- SSE payloads include updated job fields; the UI merges by `id` and refreshes list on terminal states.
+- `App.jsx` triggers a project reload on job completion so thumbnails/previews appear without manual refresh.
+
+---
 
 ### On‑Disk Layout for Derivatives (Still used for files on disk)
 
@@ -280,7 +304,7 @@ const migratedManifest = migrateManifest(oldManifest);
 - `/schema/manifest-schema.js` - Main schema definition and validation
 - `/server.js` - Primary enforcement points in backend
 - `/SCHEMA_DOCUMENTATION.md` - This documentation file
-- Individual manifest.json files in project folders
+
 
 ## 🔄 Schema Evolution Strategy
 

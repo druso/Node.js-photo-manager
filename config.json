@@ -24,6 +24,12 @@
     "remember_last_project": true,
     "preview_mode_default": false
   },
+  "uploader": {
+    "accepted_files": {
+      "extensions": ["jpg", "jpeg", "png", "tif", "tiff", "raw", "cr2", "nef", "arw", "dng"],
+      "mime_prefixes": ["image/"]
+    }
+  },
   "viewer": {
     "preload_count": 1
   },
@@ -40,5 +46,12 @@
   "keep_defaults": {
     "jpg": true,
     "raw": false
+  },
+  "pipeline": {
+    "max_parallel_jobs": 1,
+    "max_parallel_items_per_job": 1,
+    "heartbeat_ms": 1000,
+    "stale_seconds": 60,
+    "max_attempts_default": 3
   }
 }

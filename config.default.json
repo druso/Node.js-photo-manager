@@ -24,6 +24,12 @@
     "remember_last_project": true,
     "preview_mode_default": false
   },
+  "uploader": {
+    "accepted_files": {
+      "extensions": ["jpg", "jpeg", "png", "tif", "tiff", "raw", "cr2", "nef", "arw", "dng"],
+      "mime_prefixes": ["image/"]
+    }
+  },
   "keep_defaults": {
     "jpg": true,
     "raw": false
@@ -31,5 +37,12 @@
   "processing": {
     "thumbnail": { "maxDim": 200, "quality": 80 },
     "preview": { "maxDim": 6000, "quality": 80 }
+  },
+  "pipeline": {
+    "max_parallel_jobs": 1,
+    "max_parallel_items_per_job": 1,
+    "heartbeat_ms": 1000,
+    "stale_seconds": 60,
+    "max_attempts_default": 3
   }
 }

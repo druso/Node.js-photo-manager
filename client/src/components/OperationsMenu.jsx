@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
+// NOTE: This menu is strictly for ACTIONS on selected UI objects (photos): tagging, plan keep/delete, regenerate, etc.
+// It is NOT the options/hamburger menu. Global options (Settings, Processes, Create Project) live in OptionsMenu.
 import { updateTags } from '../api/tagsApi';
 import { updateKeep } from '../api/keepApi';
 import { useUpload } from '../upload/UploadContext';
@@ -11,6 +13,7 @@ export default function OperationsMenu({
   onTagsUpdated,
   config,
   previewModeEnabled,
+  trigger = 'label', // 'label' | 'hamburger'
 }) {
   const [open, setOpen] = useState(false);
   const [tagInput, setTagInput] = useState('');
@@ -25,18 +28,15 @@ export default function OperationsMenu({
 
   // Close when clicking outside the menu
   useEffect(() => {
-    const handleDocMouseDown = (e) => {
+    const handleDocClick = (e) => {
       if (!rootRef.current) return;
       if (!rootRef.current.contains(e.target)) setOpen(false);
     };
-    document.addEventListener('mousedown', handleDocMouseDown);
-    return () => document.removeEventListener('mousedown', handleDocMouseDown);
+    document.addEventListener('click', handleDocClick);
+    return () => document.removeEventListener('click', handleDocClick);
   }, []);
 
-  // Close menu if selection becomes empty
-  useEffect(() => {
-    if (selectedPhotos?.size === 0 && open) setOpen(false);
-  }, [selectedPhotos, open]);
+  // Keep menu open regardless of selection size so Project actions remain accessible
 
   const applyTags = async (mode) => {
     const input = tagInput.trim();
@@ -105,24 +105,39 @@ export default function OperationsMenu({
       <div>
         <button
           type="button"
-          onClick={() => { if (selectedPhotos.size > 0 && !busy) setOpen(!open); }}
-          disabled={busy || selectedPhotos.size === 0}
-          aria-disabled={busy || selectedPhotos.size === 0}
-          className={`inline-flex justify-center w-full rounded-md border shadow-sm px-3 py-2 text-sm font-medium ${
-            (busy || selectedPhotos.size === 0)
+          onMouseDown={(e) => e.stopPropagation()}
+          onClick={(e) => { e.stopPropagation(); if (!busy) setOpen(prev => !prev); }}
+          disabled={busy}
+          aria-disabled={busy}
+          className={`inline-flex justify-center items-center w-full rounded-md border shadow-sm px-3 py-2 text-sm font-medium ${
+            busy
               ? 'bg-gray-200 text-gray-500 border-gray-300 cursor-not-allowed'
               : 'bg-white text-gray-700 hover:bg-gray-50 border-gray-300'
           }`}
+          title={trigger === 'hamburger' ? 'Actions' : undefined}
         >
-          Actions
-          <svg className="-mr-1 ml-2 h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-          </svg>
+          {trigger === 'hamburger' ? (
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+            </svg>
+          ) : (
+            <>
+              <span>Actions</span>
+              <svg className="-mr-1 ml-2 h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+              </svg>
+            </>
+          )}
         </button>
       </div>
 
       {open && (
-        <div className="origin-top-right absolute right-0 mt-2 w-80 rounded-md shadow-lg bg-white ring-1 ring-black ring-opacity-5 p-3 z-10">
+        <div
+          className="origin-top-right absolute right-0 mt-2 w-80 rounded-md shadow-lg bg-white ring-1 ring-black ring-opacity-5 p-3 z-50"
+          onMouseDown={(e) => e.stopPropagation()}
+          onClick={(e) => e.stopPropagation()}
+        >
+          {/* No project/global options here by design */}
           <div className="mb-3">
             <div className="text-xs text-gray-500 mb-2">Plan</div>
             <div className="grid grid-cols-3 gap-2">

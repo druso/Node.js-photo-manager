@@ -25,6 +25,9 @@ const tagsRouter = require('./server/routes/tags');
 app.use('/api/projects', tagsRouter);
 const keepRouter = require('./server/routes/keep');
 app.use('/api/projects', keepRouter);
+// Jobs routes
+const jobsRouter = require('./server/routes/jobs');
+app.use('/api', jobsRouter);
 
 // Ensure projects directory exists
 const PROJECTS_DIR = path.join(__dirname, '.projects');
@@ -131,4 +134,12 @@ app.post('/api/config/restore', async (req, res) => {
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
   console.log(`Projects directory: ${PROJECTS_DIR}`);
+  // Start background worker loop
+  try {
+    const { startWorkerLoop } = require('./server/services/workerLoop');
+    startWorkerLoop();
+    console.log('Worker loop started');
+  } catch (e) {
+    console.error('Failed to start worker loop:', e);
+  }
 });

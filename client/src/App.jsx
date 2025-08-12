@@ -3,8 +3,11 @@ import { listProjects, getProject, createProject } from './api/projectsApi';
 import ProjectSelector from './components/ProjectSelector';
 import PhotoDisplay from './components/PhotoDisplay';
 import OperationsMenu from './components/OperationsMenu';
+// OptionsMenu removed: hamburger opens unified panel directly
+import SettingsProcessesModal from './components/SettingsProcessesModal';
+import { openJobStream } from './api/jobsApi';
 import PhotoViewer from './components/PhotoViewer';
-import Settings from './components/Settings';
+// Settings rendered via SettingsProcessesModal
 import UniversalFilter from './components/UniversalFilter';
 import { UploadProvider } from './upload/UploadContext';
 import UploadConfirmModal from './components/UploadConfirmModal';
@@ -18,8 +21,8 @@ function App() {
   const [projectData, setProjectData] = useState(null);
   const [activeTab, setActiveTab] = useState('view');
   const [loading, setLoading] = useState(false);
-  const [showSettings, setShowSettings] = useState(false);
-  const [showMobileMenu, setShowMobileMenu] = useState(false);
+  const [showOptionsModal, setShowOptionsModal] = useState(false);
+  const [optionsTab, setOptionsTab] = useState('settings'); // 'settings' | 'processes'
   const [showCreateProject, setShowCreateProject] = useState(false);
   const [newProjectName, setNewProjectName] = useState('');
   const [config, setConfig] = useState(null);
@@ -283,6 +286,17 @@ function App() {
     fetchProjectData(project.folder);
     setSelectedPhotos(new Set()); // Clear selection when switching projects
   };
+
+  // Auto-refresh thumbnails when any job completes (e.g., generate_derivatives/upload_postprocess)
+  useEffect(() => {
+    const close = openJobStream((evt) => {
+      if (evt && evt.status === 'completed' && selectedProject) {
+        fetchProjectData(selectedProject.folder);
+      }
+    });
+    return () => close && close();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedProject]);
 
   const handleProjectCreate = async (projectName) => {
     try {
@@ -625,37 +639,25 @@ function App() {
                 Druso Photo Manager
               </h1>
               
-              {/* Desktop Project Controls - Right Aligned */}
-              <div className="hidden md:flex items-center space-x-3">
-                <ProjectSelector 
-                  projects={projects}
-                  selectedProject={selectedProject}
-                  onProjectSelect={handleProjectSelect}
-                />
-                
-                {/* Settings Button */}
-                {selectedProject && (
-                  <button 
-                    onClick={() => setShowSettings(true)} 
-                    className="p-2 text-gray-600 rounded-md hover:bg-gray-200 transition-colors"
-                    title="Project settings"
-                  >
-                    <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                    </svg>
-                  </button>
-                )}
-              </div>
-              
-              {/* Mobile Hamburger Menu */}
-              <div className="md:hidden">
+              {/* Right Controls: Create project + Panel (hamburger opens panel) */}
+              <div className="flex items-center space-x-2">
                 <button
-                  onClick={() => setShowMobileMenu(!showMobileMenu)}
-                  className="p-2 text-gray-600 rounded-md hover:bg-gray-200 transition-colors"
-                  title="Menu"
+                  onClick={() => setShowCreateProject(true)}
+                  className="inline-flex items-center justify-center px-3 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
+                  title="Create project"
+                  aria-label="Create project"
                 >
-                  <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="h-5 w-5">
+                    <path fillRule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" clipRule="evenodd" />
+                  </svg>
+                </button>
+                <button
+                  onClick={() => { setOptionsTab('settings'); setShowOptionsModal(true); }}
+                  className="inline-flex items-center justify-center rounded-md border shadow-sm px-3 py-2 text-sm font-medium bg-white text-gray-700 hover:bg-gray-50 border-gray-300"
+                  title="Options"
+                  aria-label="Options"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
                   </svg>
                 </button>
@@ -663,78 +665,49 @@ function App() {
             </div>
           </div>
           
-          {/* Mobile Menu Overlay */}
-          {showMobileMenu && (
-            <div className="absolute top-full left-0 right-0 bg-gray-100 border-t border-gray-200 shadow-lg z-50 md:hidden">
-              <div className="w-full px-4 sm:px-6 lg:px-8 py-4">
-                <div className="space-y-4">
+          {/* Mobile menu overlay removed; Actions menu used across devices */}
+        </header>
+
+        {/* Project selector bar (replaces tabs) */}
+        {selectedProject && (
+          <div className="bg-white border-b relative">
+            <div className="w-full px-4 sm:px-6 lg:px-8">
+              <div className="flex items-center justify-between py-2">
+                <div className="flex items-center">
                   <ProjectSelector 
                     projects={projects}
                     selectedProject={selectedProject}
                     onProjectSelect={handleProjectSelect}
                   />
-                  
-                  {/* Mobile Settings Button */}
-                  {selectedProject && (
-                    <button 
-                      onClick={() => {
-                        setShowSettings(true);
-                        setShowMobileMenu(false);
-                      }} 
-                      className="flex items-center space-x-2 p-2 text-gray-600 rounded-md hover:bg-gray-200 transition-colors w-full text-left"
-                    >
-                      <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                      </svg>
-                      <span>Project Settings</span>
-                    </button>
-                  )}
                 </div>
-                {/* Mobile controls (size cycle) moved to grid toolbar below */}
-              </div>
-            </div>
-          )}
-        </header>
-
-        {/* Navigation (View only) */}
-        {selectedProject && (
-          <div className="bg-white border-b relative">
-            <div className="w-full px-4 sm:px-6 lg:px-8">
-              <div className="flex items-center justify-between py-2">
-                <nav className="flex space-x-8" aria-label="Tabs">
-                  <button
-                    onClick={() => setActiveTab('view')}
-                    className={`py-4 px-1 border-b-2 font-medium text-sm ${
-                      activeTab === 'view'
-                        ? 'border-blue-500 text-blue-600'
-                        : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                    }`}
-                  >
-                    View
-                  </button>
-                  {/* Tag tab removed: tagging is now in Operations dropdown on the View tab */}
-                </nav>
                 
                 {/* Filters cluster: toggle + counts + clear */}
-                <div className="flex items-center gap-3">
+                <div className="flex items-center gap-2">
                   <button
                     onClick={() => setFiltersCollapsed(!filtersCollapsed)}
-                    className={`flex items-center space-x-2 py-3 px-3 text-sm font-medium transition-colors text-gray-700 hover:text-gray-900`}
+                    className={`flex items-center gap-2 py-2 px-2 sm:py-3 sm:px-3 text-sm font-medium transition-colors text-gray-700 hover:text-gray-900`}
                     disabled={loading}
                   >
-                    {/* Desktop Filter Button */}
-                    <span className="hidden sm:inline">Filters</span>
-                    {/* Mobile Filter Icon */}
-                    <svg className="h-5 w-5 sm:hidden" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
-                    </svg>
-                    {/* Active Filter Count Badge */}
-                    {activeFilterCount > 0 && (
-                      <span className="inline-flex items-center justify-center min-w-[1.25rem] h-5 px-1 text-xs font-semibold rounded-full bg-blue-100 text-blue-800">
-                        {activeFilterCount}
-                      </span>
-                    )}
+                    {/* Desktop label with small badge */}
+                    <span className="hidden sm:inline relative">
+                      Filters
+                      {activeFilterCount > 0 && (
+                        <span className="absolute -top-2 -right-3 inline-flex items-center justify-center min-w-[1rem] h-4 px-[0.25rem] text-[10px] font-semibold rounded-full bg-blue-100 text-blue-800">
+                          {activeFilterCount}
+                        </span>
+                      )}
+                    </span>
+                    {/* Mobile funnel icon with overlaid badge */}
+                    <span className="relative sm:hidden inline-flex">
+                      <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
+                      </svg>
+                      {activeFilterCount > 0 && (
+                        <span className="absolute -top-1 -right-1 inline-flex items-center justify-center min-w-[0.9rem] h-4 px-[0.2rem] text-[10px] font-semibold rounded-full bg-blue-600 text-white ring-2 ring-white">
+                          {activeFilterCount}
+                        </span>
+                      )}
+                    </span>
                     {/* Chevron */}
                     <svg className={`h-4 w-4 transition-transform ${filtersCollapsed ? '' : 'rotate-180'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
@@ -752,7 +725,7 @@ function App() {
                       </>
                     )}
                   </span>
-                  {/* Clear all filters link */}
+                  {/* Clear filters button */}
                   {hasActiveFilters && (
                     <button
                       onClick={() => setActiveFilters({
@@ -762,12 +735,14 @@ function App() {
                         orientation: 'any',
                         previewMode: false
                       })}
-                      className="px-2 py-1 text-xs rounded-md border border-red-300 text-red-600 hover:bg-red-50 leading-tight text-center"
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-full border border-red-300 text-red-600 hover:bg-red-50 hover:border-red-400 leading-none"
                       title="Clear all filters"
                       aria-label="Clear all filters"
                     >
-                      <span className="block">Clear all</span>
-                      <span className="block">filters</span>
+                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-4 w-4">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M6 6l12 12M18 6L6 18" />
+                      </svg>
+                      <span>Clear</span>
                     </button>
                   )}
                 </div>
@@ -870,15 +845,22 @@ function App() {
                         </button>
                       )}
                     </div>
-                    <OperationsMenu
-                      projectFolder={selectedProject.folder}
-                      projectData={filteredProjectData}
-                      selectedPhotos={selectedPhotos}
-                      setSelectedPhotos={setSelectedPhotos}
-                      onTagsUpdated={handleTagsUpdated}
-                      config={config}
-                      previewModeEnabled={!!activeFilters.previewMode}
-                    />
+                    {/* Restore Actions menu in controls bar */}
+                    {selectedProject && (
+                      <div className="flex items-center gap-2">
+                        {/* Actions (selected items) */}
+                        <OperationsMenu
+                          projectFolder={selectedProject.folder}
+                          projectData={filteredProjectData}
+                          selectedPhotos={selectedPhotos}
+                          setSelectedPhotos={setSelectedPhotos}
+                          onTagsUpdated={handleTagsUpdated}
+                          config={config}
+                          previewModeEnabled={activeFilters.previewMode}
+                          trigger="label"
+                        />
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
@@ -1021,20 +1003,21 @@ function App() {
         />
       )}
 
-      {showSettings && (
-        <Settings 
+      {showOptionsModal && (
+        <SettingsProcessesModal
           project={selectedProject}
+          projectFolder={selectedProject?.folder}
           config={config}
           onConfigUpdate={setConfig}
           onProjectDelete={() => {
-            setShowSettings(false);
+            setShowOptionsModal(false);
             handleProjectDeleted();
           }}
-          onClose={() => setShowSettings(false)} 
-          onOpenCreateProject={() => setShowCreateProject(true)}
+          onOpenCreateProject={() => { setShowCreateProject(true); setShowOptionsModal(false); }}
+          initialTab={optionsTab}
+          onClose={() => setShowOptionsModal(false)}
         />
       )}
-
       {/* Create Project Modal */}
       {showCreateProject && (
         <div className="fixed inset-0 z-50 flex items-center justify-center">
@@ -1048,7 +1031,7 @@ function App() {
                 await handleProjectCreate(name);
                 setActiveTab('view');
                 setShowCreateProject(false);
-                setShowSettings(false);
+                setShowOptionsModal(false);
                 setNewProjectName('');
               }}
             >

@@ -79,9 +79,53 @@ function applySchema(db) {
   CREATE INDEX IF NOT EXISTS idx_photos_date ON photos(project_id, date_time_original);
   CREATE INDEX IF NOT EXISTS idx_photos_raw ON photos(project_id, raw_available);
   CREATE INDEX IF NOT EXISTS idx_photos_orientation ON photos(project_id, orientation);
+
+  -- Durable async jobs (global queue)
+  CREATE TABLE IF NOT EXISTS jobs (
+    id INTEGER PRIMARY KEY,
+    tenant_id TEXT NOT NULL,
+    project_id INTEGER NOT NULL,
+    type TEXT NOT NULL,
+    status TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    started_at TEXT,
+    finished_at TEXT,
+    progress_total INTEGER,
+    progress_done INTEGER,
+    payload_json TEXT,
+    error_message TEXT,
+    worker_id TEXT,
+    heartbeat_at TEXT,
+    FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
+  );
+
+  CREATE TABLE IF NOT EXISTS job_items (
+    id INTEGER PRIMARY KEY,
+    tenant_id TEXT NOT NULL,
+    job_id INTEGER NOT NULL,
+    photo_id INTEGER,
+    filename TEXT,
+    status TEXT NOT NULL,
+    message TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY(job_id) REFERENCES jobs(id) ON DELETE CASCADE,
+    FOREIGN KEY(photo_id) REFERENCES photos(id) ON DELETE SET NULL
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_jobs_project ON jobs(project_id, created_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
+  CREATE INDEX IF NOT EXISTS idx_jobs_tenant_created ON jobs(tenant_id, created_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_jobs_tenant_status ON jobs(tenant_id, status);
+  CREATE INDEX IF NOT EXISTS idx_job_items_job ON job_items(job_id);
+  CREATE INDEX IF NOT EXISTS idx_job_items_tenant ON job_items(tenant_id);
   `;
 
   db.exec(ddl);
+  // Lightweight migrations for new columns (SQLite lacks IF NOT EXISTS for columns)
+  ensureColumn(db, 'jobs', 'attempts', "ALTER TABLE jobs ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0");
+  ensureColumn(db, 'jobs', 'max_attempts', "ALTER TABLE jobs ADD COLUMN max_attempts INTEGER");
+  ensureColumn(db, 'jobs', 'last_error_at', "ALTER TABLE jobs ADD COLUMN last_error_at TEXT");
 }
 
 function withTransaction(fn) {
@@ -96,3 +140,17 @@ module.exports = {
   DB_DIR,
   DEFAULT_DB_FILE,
 };
+
+// ---- Helpers ----
+function ensureColumn(db, table, column, alterSql) {
+  try {
+    const rows = db.prepare(`PRAGMA table_info(${table})`).all();
+    const hasCol = rows.some(r => r.name === column);
+    if (!hasCol) {
+      db.exec(alterSql);
+    }
+  } catch (e) {
+    // Best effort; log and continue
+    try { console.warn(`[db] ensureColumn failed for ${table}.${column}:`, e.message); } catch {}
+  }
+}
