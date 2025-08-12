@@ -8,7 +8,6 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 archived_tasks
-new_tasks
 
 # Env files
 .env

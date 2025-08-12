@@ -18,7 +18,7 @@ The application is built around a few key concepts:
 
 *   **Worker Pipeline**: To ensure the UI remains responsive, time-consuming tasks like generating thumbnails and previews are handled asynchronously by a background worker pipeline. This system is designed to be extensible for future processing needs.
 
-*   **Manifest & Database**: While photo files (originals, raws, previews) are stored on the file system, all their metadata—such as project association, tags, timestamps, and file paths—is stored in a central database. The frontend application relies on this database for fast access to photo information.
+*   **Database**: While photo files (originals, raws, previews) are stored on the file system, all their metadata—such as project association, tags, timestamps, and file paths—is stored in a central SQLite database. The frontend application relies on this database for fast access to photo information.
 
 ## 3. Technology Stack
 
@@ -90,10 +90,10 @@ The application uses **SQLite** with better-sqlite3 for data storage, providing 
 *   **Core Tables**: `projects`, `photos`, `tags`, `photo_tags` (many-to-many)
 *   **Job System**: `jobs` and `job_items` tables power the async worker pipeline
 *   **Features**: WAL mode enabled, foreign key constraints, comprehensive indexing
-*   **Migration**: Evolved from file-based manifest.json to normalized SQLite schema
+*   **Storage**: Uses SQLite with WAL mode for ACID compliance and performance
 *   **Data Access**: Repository pattern with dedicated modules in `server/services/repositories/`
 
-Refer to `SCHEMA_DOCUMENTATION.md` for detailed table structures, relationships, and migration information.
+Refer to `SCHEMA_DOCUMENTATION.md` for detailed table structures and relationships.
 
 ## 5. Key Features
 
@@ -286,12 +286,20 @@ See `config.default.json` for the complete configuration template with all avail
 The backend exposes a comprehensive REST API for all frontend operations:
 
 ### Core Endpoints
-*   **Projects**: `GET/POST /api/projects` - Project management
+*   **Projects**: `GET/POST/DELETE /api/projects` - Project management
 *   **Uploads**: `POST /api/projects/:folder/upload` - File upload with progress
-*   **Assets**: `GET /api/projects/:folder/assets/*` - Signed URL asset serving
+*   **Processing**: `POST /api/projects/:folder/process` - Queue thumbnail/preview generation
+*   **Analysis**: `POST /api/projects/:folder/analyze-files` - Pre-upload file analysis
+*   **Assets**: 
+    *   `GET /api/projects/:folder/thumbnail/:filename` - Thumbnail serving (no token)
+    *   `GET /api/projects/:folder/preview/:filename` - Preview serving (no token)
+    *   `POST /api/projects/:folder/download-url` - Mint signed URLs for originals
+    *   `GET /api/projects/:folder/file/:type/:filename` - Download originals (requires token)
+    *   `GET /api/projects/:folder/files-zip/:filename` - Download ZIP (requires token)
 *   **Jobs**: `GET/POST /api/projects/:folder/jobs` - Background job management
-*   **Tags**: `GET/POST/PUT/DELETE /api/projects/:folder/tags` - Tagging system
-*   **Keep**: `POST /api/projects/:folder/keep` - RAW/JPG keep decisions
+*   **Tags**: `PUT /api/projects/:folder/tags` - Batch tag updates
+*   **Keep**: `PUT /api/projects/:folder/keep` - RAW/JPG keep decisions
+*   **Config**: `GET/POST /api/config`, `POST /api/config/restore` - Configuration management
 
 ### Real-time Features
 *   **Server-Sent Events**: `GET /api/jobs/stream` - Live job progress updates
