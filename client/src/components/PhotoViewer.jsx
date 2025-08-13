@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { updateKeep } from '../api/keepApi';
 
-const PhotoViewer = ({ projectData, projectFolder, startIndex, onClose, config, selectedPhotos, onToggleSelect, onKeepUpdated, previewModeEnabled, onCurrentIndexChange }) => {
+const PhotoViewer = ({ projectData, projectFolder, startIndex, onClose, config, selectedPhotos, onToggleSelect, onKeepUpdated, onCurrentIndexChange }) => {
   // All hooks are called at the top level, unconditionally.
   const [currentIndex, setCurrentIndex] = useState(startIndex);
   const [zoomPercent, setZoomPercent] = useState(0); // 0 = Fit, 100 = Actual size, 200 = 2x
@@ -133,22 +133,21 @@ const PhotoViewer = ({ projectData, projectFolder, startIndex, onClose, config, 
     try {
       const total = (projectData?.photos?.length || photos.length || 1);
       msg += ` • 1 of ${total}`;
-      if (previewModeEnabled) msg += ' • Preview mode ON';
       showToast(msg);
       console.log('Sending keep update for', currentPhoto.filename, target);
       await updateKeep(projectFolder, [{ filename: currentPhoto.filename, ...target }]);
       // notify parent to update in-memory data so lists/grid refresh without full reload
       onKeepUpdated && onKeepUpdated({ filename: currentPhoto.filename, ...target });
       console.log('Keep update success');
-      // In preview mode, if we cancelled (both false), advance so the current disappears and we keep navigating
-      if (previewModeEnabled && target.keep_jpg === false && target.keep_raw === false) {
+      // If cancelled (both false), advance to next photo for quicker review
+      if (target.keep_jpg === false && target.keep_raw === false) {
         nextPhoto();
       }
     } catch (e) {
       console.error('Viewer keep error:', e);
       alert(e.message || 'Failed to update keep flags');
     }
-  }, [currentPhoto, projectFolder, showToast, onKeepUpdated, previewModeEnabled, nextPhoto]);
+  }, [currentPhoto, projectFolder, showToast, onKeepUpdated, nextPhoto]);
 
   const prevPhoto = useCallback(() => {
     if (photos.length === 0) return;
@@ -588,7 +587,7 @@ const PhotoViewer = ({ projectData, projectFolder, startIndex, onClose, config, 
                     <button
                       onClick={() => applyKeep('none')}
                       className={delClass}
-                      title="Plan: Delete (hide in preview mode)"
+                      title="Plan: Delete"
                     >Delete</button>
                     <button
                       onClick={() => { if (!jpgDisabled) applyKeep('jpg_only'); }}

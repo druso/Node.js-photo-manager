@@ -309,8 +309,7 @@ The application's behavior is controlled by the `config.json` file (not in sourc
 "ui": {
   "default_view_mode": "grid",
   "filters_collapsed_default": true,
-  "remember_last_project": true,
-  "preview_mode_default": false
+  "remember_last_project": true
 }
 ```
 

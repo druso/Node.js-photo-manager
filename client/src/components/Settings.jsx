@@ -15,7 +15,6 @@ const Settings = ({ project, config, onConfigUpdate, onProjectDelete, onClose, o
       const copy = JSON.parse(JSON.stringify(config));
       // Ensure ui exists with defaults when missing
       copy.ui = copy.ui || { default_view_mode: 'grid', filters_collapsed_default: true, remember_last_project: true };
-      if (copy.ui.preview_mode_default === undefined) copy.ui.preview_mode_default = false;
       // Ensure viewer defaults
       copy.viewer = copy.viewer || { preload_count: 1 };
       // Ensure processing defaults
@@ -106,7 +105,6 @@ const Settings = ({ project, config, onConfigUpdate, onProjectDelete, onClose, o
           // Normalize to ensure all sections exist in local UI
           const copy = JSON.parse(JSON.stringify(updatedConfig));
           copy.ui = copy.ui || { default_view_mode: 'grid', filters_collapsed_default: true, remember_last_project: true };
-          if (copy.ui.preview_mode_default === undefined) copy.ui.preview_mode_default = false;
           copy.viewer = copy.viewer || { preload_count: 1 };
           copy.processing = copy.processing || {};
           copy.processing.thumbnail = copy.processing.thumbnail || { maxDim: 200, quality: 80 };
@@ -352,11 +350,6 @@ const Settings = ({ project, config, onConfigUpdate, onProjectDelete, onClose, o
                 <input type="checkbox" checked={localConfig.ui?.remember_last_project !== false}
                   onChange={(e) => handleConfigChange('ui', 'remember_last_project', e.target.checked)} />
                 <span className="text-gray-700">Remember last opened project</span>
-              </label>
-              <label className="flex items-center gap-2">
-                <input type="checkbox" checked={!!localConfig.ui?.preview_mode_default}
-                  onChange={(e) => handleConfigChange('ui', 'preview_mode_default', e.target.checked)} />
-                <span className="text-gray-700">Enable preview mode by default</span>
               </label>
             </div>
           )}
@@ -618,14 +611,7 @@ const Settings = ({ project, config, onConfigUpdate, onProjectDelete, onClose, o
                     />
                     <span className="text-gray-700">Remember last opened project</span>
                   </label>
-                  <label className="flex items-center gap-2">
-                    <input
-                      type="checkbox"
-                      checked={!!localConfig.ui?.preview_mode_default}
-                      onChange={(e) => handleConfigChange('ui', 'preview_mode_default', e.target.checked)}
-                    />
-                    <span className="text-gray-700">Preview mode enabled by default</span>
-                  </label>
+                  
                 </div>
               )}
             </section>

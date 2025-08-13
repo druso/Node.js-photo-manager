@@ -35,7 +35,7 @@ function App() {
     dateRange: { start: '', end: '' }, // Only date_time_original field is used
     fileType: 'any', // any | jpg_only | raw_only | both
     orientation: 'any',
-    previewMode: false
+    keepType: 'any' // any | none | jpg_only | raw_jpg
   });
   // Sorting state: key: 'date' | 'name' | other (for table)
   const [sortKey, setSortKey] = useState('date');
@@ -205,9 +205,6 @@ function App() {
       }
       if (typeof config.ui?.filters_collapsed_default === 'boolean') {
         setFiltersCollapsed(config.ui.filters_collapsed_default);
-      }
-      if (typeof config.ui?.preview_mode_default === 'boolean') {
-        setActiveFilters(prev => ({ ...prev, previewMode: config.ui.preview_mode_default }));
       }
     }
   }, [config]);
@@ -414,12 +411,6 @@ function App() {
     if (!projectData?.photos) return [];
     
     return projectData.photos.filter((photo, index) => {
-      // Preview mode: hide cancelled items where both keeps are false
-      if (activeFilters.previewMode) {
-        const kj = photo.keep_jpg !== false; // treat missing as true by default unless explicitly false
-        const kr = photo.keep_raw === true;  // treat missing as false by default unless explicitly true
-        if (!kj && !kr) return false;
-      }
       // Text search filter
       if (activeFilters.textSearch) {
         const searchTerm = activeFilters.textSearch.toLowerCase();
@@ -457,6 +448,17 @@ function App() {
         if (activeFilters.fileType === 'jpg_only' && !(hasJpg && !hasRaw)) return false;
         if (activeFilters.fileType === 'raw_only' && !(hasRaw && !hasJpg)) return false;
         if (activeFilters.fileType === 'both' && !(hasJpg && hasRaw)) return false;
+      }
+
+      // Keep-type filter (based on planned keep flags)
+      if (activeFilters.keepType && activeFilters.keepType !== 'any') {
+        // Defaults: treat undefined as keep_jpg=true, keep_raw=false
+        const kj = photo.keep_jpg !== false; // default true unless explicitly false
+        const kr = photo.keep_raw === true;  // default false unless explicitly true
+        if (activeFilters.keepType === 'any_kept' && !kj) return false;
+        if (activeFilters.keepType === 'none' && !(kj === false && kr === false)) return false;
+        if (activeFilters.keepType === 'jpg_only' && !(kj === true && kr === false)) return false;
+        if (activeFilters.keepType === 'raw_jpg' && !(kj === true && kr === true)) return false;
       }
       
       // Orientation filter
@@ -578,8 +580,8 @@ function App() {
     (activeFilters.dateRange?.start ? 1 : 0) +
     (activeFilters.dateRange?.end ? 1 : 0) +
     (activeFilters.fileType && activeFilters.fileType !== 'any' ? 1 : 0) +
-    (activeFilters.orientation && activeFilters.orientation !== 'any' ? 1 : 0) +
-    (activeFilters.previewMode ? 1 : 0)
+    (activeFilters.keepType && activeFilters.keepType !== 'any' ? 1 : 0) +
+    (activeFilters.orientation && activeFilters.orientation !== 'any' ? 1 : 0)
   );
 
   const hasActiveFilters = !!(
@@ -587,8 +589,8 @@ function App() {
     activeFilters.dateRange?.start ||
     activeFilters.dateRange?.end ||
     (activeFilters.fileType && activeFilters.fileType !== 'any') ||
-    (activeFilters.orientation && activeFilters.orientation !== 'any') ||
-    activeFilters.previewMode
+    (activeFilters.keepType && activeFilters.keepType !== 'any') ||
+    (activeFilters.orientation && activeFilters.orientation !== 'any')
   );
 
   // Keyboard shortcuts: use config.keyboard_shortcuts with sensible defaults
@@ -733,7 +735,7 @@ function App() {
                         dateRange: { start: '', end: '' },
                         fileType: 'any',
                         orientation: 'any',
-                        previewMode: false
+                        keepType: 'any'
                       })}
                       className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-full border border-red-300 text-red-600 hover:bg-red-50 hover:border-red-400 leading-none"
                       title="Clear all filters"
@@ -780,9 +782,7 @@ function App() {
                       {/* Gallery (grid) icon */}
                       <button
                         onClick={() => setViewMode('grid')}
-                        className={`px-2.5 py-1.5 rounded-md ${
-                          viewMode === 'grid' ? 'bg-blue-500 text-white' : 'bg-gray-200 text-gray-700'
-                        }`}
+                        className={`px-2.5 py-1.5 rounded-md ${viewMode === 'grid' ? 'bg-blue-500 text-white' : 'bg-gray-200 text-gray-700'}`}
                         title="Gallery view"
                         aria-label="Gallery view"
                       >
@@ -793,9 +793,7 @@ function App() {
                       {/* Details (table/list) icon */}
                       <button
                         onClick={() => setViewMode('table')}
-                        className={`px-2.5 py-1.5 rounded-md ${
-                          viewMode === 'table' ? 'bg-blue-500 text-white' : 'bg-gray-200 text-gray-700'
-                        }`}
+                        className={`px-2.5 py-1.5 rounded-md ${viewMode === 'table' ? 'bg-blue-500 text-white' : 'bg-gray-200 text-gray-700'}`}
                         title="Details view"
                         aria-label="Details view"
                       >
@@ -803,190 +801,118 @@ function App() {
                           <path d="M3 5h14v2H3V5zm0 4h14v2H3V9zm0 4h14v2H3v-2z" />
                         </svg>
                       </button>
-
-                      {/* Size control: s/m/l */}
-                      {selectedProject && (
-                        <div className="ml-2 hidden md:inline-flex rounded-md overflow-hidden border">
-                          <button
-                            className={`px-2 py-1 text-sm ${sizeLevel === 's' ? 'bg-gray-900 text-white' : 'bg-white text-gray-700 hover:bg-gray-100'}`}
-                            onClick={() => setSizeLevel('s')}
-                            title="Small previews"
-                            aria-label="Small previews"
-                          >
-                            S
-                          </button>
-                          <button
-                            className={`px-2 py-1 text-sm border-l ${sizeLevel === 'm' ? 'bg-gray-900 text-white' : 'bg-white text-gray-700 hover:bg-gray-100'}`}
-                            onClick={() => setSizeLevel('m')}
-                            title="Medium previews"
-                            aria-label="Medium previews"
-                          >
-                            M
-                          </button>
-                          <button
-                            className={`px-2 py-1 text-sm border-l ${sizeLevel === 'l' ? 'bg-gray-900 text-white' : 'bg-white text-gray-700 hover:bg-gray-100'}`}
-                            onClick={() => setSizeLevel('l')}
-                            title="Large previews"
-                            aria-label="Large previews"
-                          >
-                            L
-                          </button>
-                        </div>
-                      )}
-                      {/* Mobile: single size cycle button */}
-                      {selectedProject && (
-                        <button
-                          className="ml-2 md:hidden px-2.5 py-1 text-xs rounded-md bg-gray-200 text-gray-800 hover:bg-gray-300"
-                          onClick={() => setSizeLevel(prev => (prev === 's' ? 'm' : prev === 'm' ? 'l' : 's'))}
-                          title="Change preview size"
-                          aria-label="Change preview size"
-                        >
-                          Size {sizeLevel.toUpperCase()}
-                        </button>
-                      )}
                     </div>
-                    {/* Restore Actions menu in controls bar */}
+                    {/* Size control: s/m/l */}
                     {selectedProject && (
-                      <div className="flex items-center gap-2">
-                        {/* Actions (selected items) */}
-                        <OperationsMenu
-                          projectFolder={selectedProject.folder}
-                          projectData={filteredProjectData}
-                          selectedPhotos={selectedPhotos}
-                          setSelectedPhotos={setSelectedPhotos}
-                          onTagsUpdated={handleTagsUpdated}
-                          config={config}
-                          previewModeEnabled={activeFilters.previewMode}
-                          trigger="label"
-                        />
+                      <div className="ml-2 hidden md:inline-flex rounded-md overflow-hidden border">
+                        <button
+                          className={`px-2 py-1 text-sm ${sizeLevel === 's' ? 'bg-gray-900 text-white' : 'bg-white text-gray-700 hover:bg-gray-100'}`}
+                          onClick={() => setSizeLevel('s')}
+                          title="Small previews"
+                          aria-label="Small previews"
+                        >
+                          S
+                        </button>
+                        <button
+                          className={`px-2 py-1 text-sm border-l ${sizeLevel === 'm' ? 'bg-gray-900 text-white' : 'bg-white text-gray-700 hover:bg-gray-100'}`}
+                          onClick={() => setSizeLevel('m')}
+                          title="Medium previews"
+                          aria-label="Medium previews"
+                        >
+                          M
+                        </button>
+                        <button
+                          className={`px-2 py-1 text-sm border-l ${sizeLevel === 'l' ? 'bg-gray-900 text-white' : 'bg-white text-gray-700 hover:bg-gray-100'}`}
+                          onClick={() => setSizeLevel('l')}
+                          title="Large previews"
+                          aria-label="Large previews"
+                        >
+                          L
+                        </button>
                       </div>
                     )}
+                    {/* Mobile: single size cycle button */}
+                    {selectedProject && (
+                      <button
+                        className="ml-2 md:hidden px-2.5 py-1 text-xs rounded-md bg-gray-200 text-gray-800 hover:bg-gray-300"
+                        onClick={() => setSizeLevel(prev => (prev === 's' ? 'm' : prev === 'm' ? 'l' : 's'))}
+                        title="Change preview size"
+                        aria-label="Change preview size"
+                      >
+                        Size {sizeLevel.toUpperCase()}
+                      </button>
+                    )}
+
+                    {/* Actions menu moved to floating FAB; removed from toolbar */}
                   </div>
                 </div>
               </div>
             )}
-            
-            {/* Universal Filter Dropdown (view tab only) */}
+
+            {/* Filters Panel */}
             {!filtersCollapsed && (
-              <div className="absolute top-full left-0 right-0 bg-white border-b shadow-lg z-40">
-                {/* Constrain height on small screens and allow scrolling of content while keeping footer visible */}
-                <div className="flex flex-col max-h-[70vh] sm:max-h-[60vh]">
-                  <div className="overflow-y-auto p-4">
-                    <UniversalFilter
-                      projectData={projectData}
-                      filters={activeFilters}
-                      onFilterChange={(newFilters) => {
-                        setActiveFilters(newFilters);
-                        if (newFilters.previewMode) {
-                          setProjectData(filteredProjectData);
-                        }
-                      }}
-                      disabled={false}
-                    />
-                  </div>
-                  <div className="border-t bg-white p-3">
-                    <button
-                      onClick={() => setFiltersCollapsed(true)}
-                      className="w-full py-2 px-3 text-sm rounded-md bg-gray-200 hover:bg-gray-300 text-gray-800"
-                    >
-                      Close
-                    </button>
-                  </div>
-                </div>
+              <div className="bg-white border-t">
+                <UniversalFilter
+                  projectData={projectData}
+                  filters={activeFilters}
+                  onFilterChange={setActiveFilters}
+                  disabled={loading}
+                />
               </div>
             )}
           </div>
         )}
       </div>
+      {loading ? (
+        <div className="flex justify-center items-center py-12">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500"></div>
+          <span className="ml-3 text-gray-600">Loading project data...</span>
+        </div>
+      ) : (
+        <div className="w-full px-4 sm:px-6 lg:px-8 pt-2 pb-8">
 
-      {/* Main Content */}
-      <main className="flex-1 overflow-auto">
-        {!selectedProject ? (
-          <div className="flex items-center justify-center h-full">
-            <div className="text-center max-w-md mx-auto px-4">
-              <div className="text-6xl mb-6">📸</div>
-              <h2 className="text-xl font-semibold text-gray-900 mb-4">
-                Welcome to Druso Photo Manager
-              </h2>
-              {projects.length === 0 ? (
-                <div className="space-y-6">
-                  <p className="text-gray-600 mb-6">
-                    Get started by creating your first project
-                  </p>
+
+          {activeTab === 'view' && (
+            <div>
+              {/* Grid sorting controls */}
+              {viewMode === 'grid' && (
+                <div className="flex items-center gap-2 mb-2 px-1">
+                  <span className="text-xs text-gray-500 mr-2">Sort:</span>
                   <button
-                    onClick={() => setShowCreateProject(true)}
-                    className="inline-flex items-center justify-center px-6 py-3 bg-blue-600 text-white rounded-md hover:bg-blue-700"
+                    onClick={() => toggleSort('date')}
+                    className={`text-sm px-2 py-1 rounded ${sortKey === 'date' ? 'font-semibold bg-gray-100' : 'text-gray-700 hover:bg-gray-100'}`}
+                    title="Sort by date"
                   >
-                    create a new project
+                    Date {sortKey === 'date' && (sortDir === 'asc' ? '▲' : '▼')}
+                  </button>
+                  <button
+                    onClick={() => toggleSort('name')}
+                    className={`text-sm px-2 py-1 rounded ${sortKey === 'name' ? 'font-semibold bg-gray-100' : 'text-gray-700 hover:bg-gray-100'}`}
+                    title="Sort by name"
+                  >
+                    Name {sortKey === 'name' && (sortDir === 'asc' ? '▲' : '▼')}
                   </button>
                 </div>
-              ) : (
-                <div className="space-y-6">
-                  <p className="text-gray-600 mb-6">
-                    Select a project to get started
-                  </p>
-                  <div className="flex justify-center">
-                    <ProjectSelector 
-                      projects={projects}
-                      selectedProject={selectedProject}
-                      onProjectSelect={handleProjectSelect}
-                    />
-                  </div>
-                </div>
               )}
+              <PhotoDisplay 
+                viewMode={viewMode}
+                projectData={filteredProjectData}
+                projectFolder={selectedProject?.folder}
+                onPhotoSelect={(photo) => handlePhotoSelect(photo, sortedPhotos)}
+                onToggleSelection={handleToggleSelection}
+                selectedPhotos={selectedPhotos}
+                lazyLoadThreshold={config?.photo_grid?.lazy_load_threshold ?? 100}
+                sortKey={sortKey}
+                sortDir={sortDir}
+                onSortChange={toggleSort}
+                sizeLevel={sizeLevel}
+              />
             </div>
-          </div>
-        ) : loading ? (
-          <div className="flex justify-center items-center py-12">
-            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500"></div>
-            <span className="ml-3 text-gray-600">Loading project data...</span>
-          </div>
-        ) : (
-          <div className="w-full px-4 sm:px-6 lg:px-8 pt-2 pb-8">
+          )}
 
-
-            {activeTab === 'view' && (
-              <div>
-                {/* Grid sorting controls */}
-                {viewMode === 'grid' && (
-                  <div className="flex items-center gap-2 mb-2 px-1">
-                    <span className="text-xs text-gray-500 mr-2">Sort:</span>
-                    <button
-                      onClick={() => toggleSort('date')}
-                      className={`text-sm px-2 py-1 rounded ${sortKey === 'date' ? 'font-semibold bg-gray-100' : 'text-gray-700 hover:bg-gray-100'}`}
-                      title="Sort by date"
-                    >
-                      Date {sortKey === 'date' && (sortDir === 'asc' ? '▲' : '▼')}
-                    </button>
-                    <button
-                      onClick={() => toggleSort('name')}
-                      className={`text-sm px-2 py-1 rounded ${sortKey === 'name' ? 'font-semibold bg-gray-100' : 'text-gray-700 hover:bg-gray-100'}`}
-                      title="Sort by name"
-                    >
-                      Name {sortKey === 'name' && (sortDir === 'asc' ? '▲' : '▼')}
-                    </button>
-                  </div>
-                )}
-                <PhotoDisplay 
-                  viewMode={viewMode}
-                  projectData={filteredProjectData}
-                  projectFolder={selectedProject.folder}
-                  onPhotoSelect={(photo) => handlePhotoSelect(photo, sortedPhotos)}
-                  onToggleSelection={handleToggleSelection}
-                  selectedPhotos={selectedPhotos}
-                  lazyLoadThreshold={config?.photo_grid?.lazy_load_threshold ?? 100}
-                  sortKey={sortKey}
-                  sortDir={sortDir}
-                  onSortChange={toggleSort}
-                  sizeLevel={sizeLevel}
-                />
-              </div>
-            )}
-
-            {/* Tag tab removed; tagging via OperationsMenu */}
-          </div>
-        )}
-      </main>
+          {/* Tag tab removed; tagging via OperationsMenu */}
+        </div>
+      )}
 
       {viewerState.isOpen && (
         <PhotoViewer 
@@ -998,7 +924,6 @@ function App() {
           selectedPhotos={selectedPhotos}
           onToggleSelect={handleToggleSelection}
           onKeepUpdated={handleKeepUpdated}
-          previewModeEnabled={activeFilters.previewMode}
           onCurrentIndexChange={handleViewerIndexChange}
         />
       )}
@@ -1076,6 +1001,19 @@ function App() {
       <UploadConfirmModal />
       <BottomUploadBar />
       {selectedProject?.folder && <GlobalDragDrop />}
+
+      {/* Floating Actions FAB: only show when some images are selected */}
+      {selectedProject && selectedPhotos.size > 0 && (
+        <OperationsMenu
+          projectFolder={selectedProject.folder}
+          projectData={filteredProjectData}
+          selectedPhotos={selectedPhotos}
+          setSelectedPhotos={setSelectedPhotos}
+          onTagsUpdated={handleTagsUpdated}
+          config={config}
+          variant="fab"
+        />
+      )}
     </div>
     </UploadProvider>
   );

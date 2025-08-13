@@ -26,8 +26,21 @@
   },
   "uploader": {
     "accepted_files": {
-      "extensions": ["jpg", "jpeg", "png", "tif", "tiff", "raw", "cr2", "nef", "arw", "dng"],
-      "mime_prefixes": ["image/"]
+      "extensions": [
+        "jpg",
+        "jpeg",
+        "png",
+        "tif",
+        "tiff",
+        "raw",
+        "cr2",
+        "nef",
+        "arw",
+        "dng"
+      ],
+      "mime_prefixes": [
+        "image/"
+      ]
     }
   },
   "viewer": {

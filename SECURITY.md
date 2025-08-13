@@ -1,360 +1,113 @@
 # Security Documentation
 
-This document provides a comprehensive overview of security measures implemented in the Node.js Photo Manager, current protections, configuration options, and recommendations for future hardening.
+## Suggested Interventions
 
-## Table of Contents
-- [Current Security Measures](#current-security-measures)
-- [Download Security (Signed URLs)](#download-security-signed-urls)
-- [Upload Security](#upload-security)
-- [Database Security](#database-security)
-- [Network Security](#network-security)
-- [Configuration Security](#configuration-security)
-- [Local Development](#local-development)
-- [Future Enhancements](#future-enhancements)
-- [Environment Variables](#environment-variables)
-- [Files & Implementation](#files--implementation)
+*Maintained by security analyst, prioritized by complexity and risk.*
 
-## Current Security Measures
+### 🔴 **HIGH PRIORITY** (Immediate)
 
-The application implements multiple layers of security protection:
+**1. Production CORS Configuration** ⚡ *5 min*
+- **Risk**: Cross-origin attacks
+- **Action**: Replace `app.use(cors())` with origin allowlist in `server.js`
 
-### ✅ **Download Protection**
-- **Signed URLs**: HMAC-based token system for all file downloads
-- **Time-limited access**: 2-minute default expiry for download tokens
-- **Request binding**: Tokens tied to specific project, filename, and type
-- **Replay protection**: Unique `jti` (JWT ID) in each token
+**2. Change Default Download Secret** ⚡ *5 min*  
+- **Risk**: Token forgery with known secret
+- **Action**: Set strong `DOWNLOAD_SECRET`: `openssl rand -base64 32`
 
-### ✅ **Upload Security**
-- **Configurable file type validation**: Server-side filtering via `config.json`
-- **Dual validation**: Both MIME type and file extension checking
-- **Path traversal protection**: Filename sanitization using `path.basename()`
-- **File size limits**: 100MB maximum upload size
-- **Fallback validation**: Safe defaults when configuration fails
+### 🟡 **MEDIUM PRIORITY** (Next cycle)
 
-### ✅ **Database Security**
-- **Parameterized queries**: All database operations use prepared statements
-- **Foreign key constraints**: Referential integrity enforcement
-- **WAL mode**: Write-Ahead Logging for better concurrency
-- **Repository pattern**: Abstracted data access layer
+**3. Rate Limiting** 🔧 *2-4h*
+- **Risk**: Abuse of commit-changes endpoint
+- **Action**: Add express-rate-limit to `/api/projects/:folder/commit-changes`
 
-### ✅ **Input Validation**
-- **Filename sanitization**: Prevention of directory traversal attacks
-- **Project folder validation**: Path-based access control
-- **MIME type verification**: Content-type validation for uploads
-- **Extension allowlisting**: Configurable accepted file types
+**4. Job Queue Limits** 🔧 *4-6h*
+- **Risk**: Memory exhaustion from unlimited jobs
+- **Action**: Max 100 pending jobs per project in scheduler
 
-## Download Security (Signed URLs)
+**5. Audit Logging** 🔧 *6-8h*
+- **Risk**: Limited forensics capability
+- **Action**: Structured logs for file ops, job failures
 
-### Implementation Details
+### 🟢 **LOW PRIORITY** (Future)
 
-**Token Structure**:
-```javascript
-{
-  f: "project-folder",    // Project folder name
-  t: "jpg|raw|zip",       // File type
-  n: "filename.jpg",      // Filename
-  exp: 1640995200000,     // Expiry timestamp
-  jti: "a1b2c3d4"         // Unique token ID
-}
-```
+**6. User Authentication** 🏗️ *2-3 weeks*
+- **Risk**: No access control for multi-user
+- **Action**: JWT auth with project ownership
 
-**Security Features**:
-- **HMAC-SHA256 signing** with configurable secret
-- **Base64URL encoding** for URL safety
-- **Signature verification** on every download request
-- **Expiry validation** prevents token reuse
-- **Parameter binding** ensures tokens can't be misused
+**7. Content File Validation** 🔧 *1-2 weeks*
+- **Risk**: Malicious files bypass MIME checks
+- **Action**: File signature validation
 
-**Files**: `server/utils/signedUrl.js`, `server/routes/assets.js`
+---
 
-## Upload Security
+## Security Overview
 
-### File Type Validation
+### ✅ **Current Protections**
 
-**Configuration-based filtering** (`config.json`):
-```json
-{
-  "uploader": {
-    "accepted_files": {
-      "extensions": ["jpg", "jpeg", "png", "tif", "tiff", "raw", "cr2", "nef", "arw", "dng"],
-      "mime_prefixes": ["image/"]
-    }
-  }
-}
-```
+**Download Security**:
+- HMAC-signed URLs with 2-minute expiry
+- Request binding (project/filename/type)
+- Replay protection via unique JWT ID
 
-**Server-side validation** (`server/routes/uploads.js`):
-- **Dual checking**: Both file extension and MIME type validation
-- **Configurable rules**: Accepts extensions and MIME prefixes from config
-- **Fallback protection**: Safe defaults if configuration fails
-- **Error handling**: Clear rejection messages for invalid files
+**Upload Security**:
+- Dual validation (MIME + extension)
+- Path traversal protection (`path.basename()`)
+- 100MB size limits
+- Configurable file type filtering
 
-### Path Security
+**Database Security**:
+- Parameterized queries (SQL injection protection)
+- WAL mode + foreign key constraints
+- Repository pattern abstraction
 
-**Filename sanitization**:
-```javascript
-const sanitizedName = path.basename(file.originalname);
-if (!sanitizedName || sanitizedName === '.' || sanitizedName === '..') {
-  // Reject invalid filenames
-}
-```
+**File Operations**:
+- Operations confined to project subdirectories
+- Filename sanitization
+- Atomic database + file transactions
 
-**Protection against**:
-- Directory traversal attacks (`../../../etc/passwd`)
-- Hidden file uploads (`.htaccess`, `.env`)
-- Special directory names (`.`, `..`)
+### ⚠️ **Current Gaps**
 
-### File Size Limits
-- **100MB maximum** per file upload
-- **Memory storage**: Files processed in memory for security
-- **Configurable limits**: Can be adjusted via Multer configuration
+**Access Control**:
+- No authentication on destructive endpoints
+- Permissive CORS (development mode)
+- No rate limiting
 
-## Database Security
+**Resource Management**:
+- Unlimited job queue growth
+- No memory usage controls
+- Large batch processing (100k+ photos)
 
-### SQLite Configuration
-- **WAL mode enabled**: `PRAGMA journal_mode = WAL`
-- **Foreign keys enforced**: `PRAGMA foreign_keys = ON`
-- **File location**: `.projects/db/user_0.sqlite`
-- **Automatic creation**: Database initialized on first run
+**Monitoring**:
+- Limited audit logging
+- Basic error tracking
+- No security event alerting
 
-### Query Security
-- **Prepared statements**: All queries use parameterized statements
-- **Repository pattern**: Centralized data access in `server/services/repositories/`
-- **No dynamic SQL**: Prevents SQL injection attacks
-- **Type validation**: Input validation before database operations
+---
 
-### Data Access Control
-- **Project-scoped queries**: Photos filtered by project ownership
-- **Unique constraints**: Prevent duplicate entries
-- **Referential integrity**: Foreign key constraints maintain consistency
+## Configuration & Environment
 
-## Network Security
-
-### CORS Configuration
-**Current setup** (`server.js`):
-```javascript
-app.use(cors()); // Permissive for development
-```
-
-**Security implications**:
-- ⚠️ **Development-friendly**: Currently allows all origins
-- 🔒 **Production recommendation**: Restrict to specific domains
-- 📝 **Configuration needed**: Should be environment-specific
-
-### HTTPS Considerations
-- **Local development**: HTTP acceptable for localhost
-- **Production deployment**: HTTPS strongly recommended
-- **Asset serving**: Signed URLs work over both HTTP/HTTPS
-
-## Configuration Security
-
-### Sensitive Configuration
-**Environment variables**:
-- `DOWNLOAD_SECRET`: HMAC signing key (change from default!)
-- `REQUIRE_SIGNED_DOWNLOADS`: Enable/disable signed URL enforcement
-
-**Configuration file** (`config.json`):
-- ❌ **Not in source control**: Contains environment-specific settings
-- 🔒 **File permissions**: Should be readable only by application user
-- 📋 **Template provided**: `config.default.json` shows structure
-
-### Security-relevant Settings
-```json
-{
-  "uploader": {
-    "accepted_files": {
-      "extensions": [...],     // Allowed file extensions
-      "mime_prefixes": [...]   // Allowed MIME type prefixes
-    }
-  },
-  "pipeline": {
-    "max_parallel_jobs": 1,    // Resource limiting
-    "heartbeat_ms": 1000,      // Job monitoring
-    "stale_seconds": 60        // Cleanup timing
-  }
-}
-```
-
-## Local Development
-
-### Safe Defaults
-- **Signed URLs enabled**: `REQUIRE_SIGNED_DOWNLOADS=true` by default
-- **Development secret**: Default `DOWNLOAD_SECRET` for quick setup
-- **Permissive CORS**: Allows cross-origin requests for ease of development
-- **File validation**: Safe fallback file type restrictions
-
-### Development Toggles
-```bash
-# Disable signed URLs for testing (not recommended)
-REQUIRE_SIGNED_DOWNLOADS=false
-
-# Custom signing secret
-DOWNLOAD_SECRET=your-secure-secret-here
-```
-
-### Recommendations
-- ✅ **Keep signed URLs enabled** for realistic testing
-- ⚠️ **Change default secret** before any network exposure
-- 🔒 **Use HTTPS** if accessible from other machines
-- 📝 **Test with realistic file types** to verify validation
-
-## Future Enhancements
-
-### User Authentication & Multi-Tenancy
-
-**When adding user accounts**:
-- **Authentication gating**: Protect download URL minting endpoints
-- **User-scoped tokens**: Include `userId` in token payload
-- **Access control**: Verify user owns requested project/files
-- **Session management**: JWT or session-based authentication
-
-**Implementation approach**:
-```javascript
-// Token payload with user binding
-{
-  f: "project-folder",
-  t: "jpg",
-  n: "photo.jpg",
-  exp: 1640995200000,
-  jti: "a1b2c3d4",
-  uid: "user123"  // User identifier
-}
-```
-
-### Enhanced Security Features
-
-**Single-use tokens**:
-- Store `jti` values in Redis/LRU cache
-- Mark tokens as consumed after use
-- Prevent replay attacks
-
-**Rate limiting**:
-- Download endpoint throttling
-- Upload rate limiting
-- Token minting restrictions
-
-**Audit logging**:
-- Token generation events
-- Download access logs
-- Failed authentication attempts
-- File upload activities
-
-### Production Hardening
-
-**Network security**:
-- **Restrict CORS**: Specific origin allowlist
-- **HTTPS enforcement**: Redirect HTTP to HTTPS
-- **Security headers**: CSP, HSTS, X-Frame-Options
-
-**Input validation**:
-- **Strict project validation**: Verify project existence and ownership
-- **Enhanced filename checks**: Additional sanitization rules
-- **Content validation**: File content verification beyond MIME types
-
-**Monitoring & alerting**:
-- **Failed authentication tracking**
-- **Unusual download patterns**
-- **Large file upload monitoring**
-- **Database integrity checks**
-
-### Desktop/Local Packaging
-
-**Air-gapped deployment**:
-- Optional signed URL enforcement
-- Local user model without network auth
-- File system permission-based security
-- Simplified configuration for single-user scenarios
-
-## Environment Variables
-
-### Security-Critical Variables
-
-**`REQUIRE_SIGNED_DOWNLOADS`** (default: `true`)
-- **Purpose**: Enable/disable signed URL enforcement
-- **Values**: `true` (secure) | `false` (development only)
-- **Security impact**: Disabling removes download protection
-- **Recommendation**: Keep `true` except for temporary local testing
+### Critical Variables
 
 **`DOWNLOAD_SECRET`** (default: `"dev-download-secret-change-me"`)
-- **Purpose**: HMAC signing key for download tokens
-- **Security impact**: Weak secrets allow token forgery
-- **Requirements**: 
-  - Minimum 32 characters
-  - Cryptographically random
-  - Different per environment
-- **Example**: `openssl rand -base64 32`
+- **Must change** for any network deployment
+- Generate: `openssl rand -base64 32`
 
-### Configuration Validation
+**`REQUIRE_SIGNED_DOWNLOADS`** (default: `true`)
+- Keep enabled except temporary local testing
 
-**Security checklist for production**:
-- [ ] `DOWNLOAD_SECRET` changed from default
-- [ ] `REQUIRE_SIGNED_DOWNLOADS=true`
-- [ ] `config.json` has appropriate file permissions
-- [ ] CORS configured for specific origins
-- [ ] Database file has restricted access
+### Security Files
 
-## Files & Implementation
-
-### Core Security Files
-
-**Backend Implementation**:
-- `server/utils/signedUrl.js` - HMAC signing and verification
-- `server/routes/assets.js` - Download protection and URL minting
-- `server/routes/uploads.js` - Upload validation and sanitization
-- `server/services/db.js` - Database security configuration
-- `server/services/repositories/` - Parameterized query implementations
-
-**Configuration**:
-- `config.json` - Security settings (not in source control)
-- `config.default.json` - Template with secure defaults
-- `.env` files - Environment-specific secrets
-
-**Frontend Security**:
-- `client/src/api/` - Secure API communication patterns
-- Download flows use signed URL requests
-- No sensitive data in client-side storage
-
-### Key Endpoints
-
-**Protected endpoints**:
-- `GET /api/projects/:folder/file/:type/:filename` - Requires valid token
-- `GET /api/projects/:folder/files-zip/:filename` - Requires valid token
-- `POST /api/projects/:folder/download-url` - Mints signed URLs
-
-**Upload endpoints**:
-- `POST /api/projects/:folder/upload` - File type validation
-- `POST /api/projects/:folder/analyze-files` - Pre-upload validation
-
-**Unprotected endpoints**:
-- `GET /api/projects/:folder/thumbnail/:filename` - Thumbnails (performance)
-- `GET /api/projects/:folder/preview/:filename` - Previews (performance)
+**Backend**: `server/utils/signedUrl.js`, `server/routes/assets.js`, `server/routes/uploads.js`
+**Config**: `config.json` (file type validation), `.env` (secrets)
 
 ---
 
-## Security Best Practices Summary
+## Development Workflow
 
-### ✅ **Currently Implemented**
-- Signed URL download protection
-- Server-side file type validation
-- Path traversal prevention
-- Parameterized database queries
-- Input sanitization
-- Configurable security settings
+**⚠️ SECURITY REVIEW PROCESS**:
 
-### ⚠️ **Needs Attention**
-- CORS configuration for production
-- HTTPS enforcement for network deployments
-- Rate limiting implementation
-- Audit logging system
+1. **Developers**: Document new features requiring security assessment in this document
+2. **Security Analyst**: Assess implications, update interventions, enrich documentation  
+3. **Cleanup**: Remove temporary notes after assessment
 
-### 🔮 **Future Considerations**
-- User authentication system
-- Multi-tenant access controls
-- Enhanced monitoring and alerting
-- Content-based file validation
-- Single-use token implementation
-
----
-
-# NEW DEVELOPMENT TO BE ASSESSED BY SECURITY ANALYSIS
-
+This ensures all functionality receives security review before deployment.

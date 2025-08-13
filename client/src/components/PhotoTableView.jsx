@@ -46,7 +46,7 @@ const PhotoTableView = ({ projectData, projectFolder, onPhotoSelect, selectedPho
               <HeaderButton label="Filename" k="name" />
             </th>
             <th scope="col" className="px-6 py-3 text-left">
-              <HeaderButton label="File Types" k="filetypes" />
+              <HeaderButton label="File Types Available" k="filetypes" />
             </th>
             <th scope="col" className="px-6 py-3 text-left">
               <HeaderButton label="Date Taken" k="date" />

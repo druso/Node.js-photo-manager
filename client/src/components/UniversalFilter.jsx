@@ -7,7 +7,8 @@ const UniversalFilter = ({
     textSearch: '',
     dateRange: { start: '', end: '' }, // Only date_time_original field is used
     fileType: 'any', // any | jpg_only | raw_only | both
-    orientation: 'any'
+    orientation: 'any',
+    keepType: 'any' // any | none | jpg_only | raw_jpg
   },
   onFilterChange, 
   disabled = false
@@ -87,7 +88,7 @@ const UniversalFilter = ({
       dateRange: { start: '', end: '' },
       fileType: 'any',
       orientation: 'any',
-      previewMode: false
+      keepType: 'any'
     });
   };
 
@@ -95,25 +96,12 @@ const UniversalFilter = ({
     filters.dateRange.start || 
     filters.dateRange.end || 
     (filters.fileType && filters.fileType !== 'any') || 
-    filters.orientation !== 'any' ||
-    !!filters.previewMode;
+    (filters.keepType && filters.keepType !== 'any') ||
+    filters.orientation !== 'any';
 
   return (
     <div className={`${disabled ? 'bg-gray-50' : 'bg-white'}`}>
       <div className="w-full p-4 space-y-6">
-        {/* Preview Mode Toggle */}
-        <div className="flex items-center justify-between">
-          <label className="flex items-center gap-2 text-sm text-gray-800">
-            <input
-              type="checkbox"
-              className="h-4 w-4"
-              checked={!!filters.previewMode}
-              onChange={(e) => onFilterChange({ ...filters, previewMode: e.target.checked })}
-              disabled={disabled}
-            />
-            <span>Preview mode (hide cancelled)</span>
-          </label>
-        </div>
         {/* All Filters in organized layout */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
           {/* Text Search with Suggestions */}
@@ -150,10 +138,10 @@ const UniversalFilter = ({
             )}
           </div>
 
-          {/* File Types Dropdown */}
+          {/* File Types Available Dropdown */}
           <div>
             <label htmlFor="fileType" className="block text-sm font-medium text-gray-700 mb-1">
-              File types
+              File types available
             </label>
             <select
               id="fileType"
@@ -162,10 +150,30 @@ const UniversalFilter = ({
               className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
               disabled={disabled}
             >
-              <option value="any">Any</option>
+              <option value="any">Any (no filter)</option>
               <option value="jpg_only">JPG only</option>
               <option value="raw_only">RAW only</option>
               <option value="both">Both</option>
+            </select>
+          </div>
+
+          {/* File Types To Keep Dropdown */}
+          <div>
+            <label htmlFor="keepType" className="block text-sm font-medium text-gray-700 mb-1">
+              File types to keep
+            </label>
+            <select
+              id="keepType"
+              value={filters.keepType}
+              onChange={(e) => updateFilters({ ...filters, keepType: e.target.value })}
+              className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+              disabled={disabled}
+            >
+              <option value="any">Show all (no filter)</option>
+              <option value="any_kept">Any kept (JPG only or RAW+JPG)</option>
+              <option value="jpg_only">Keep JPG only</option>
+              <option value="raw_jpg">Keep RAW + JPG</option>
+              <option value="none">Keep none (planned delete)</option>
             </select>
           </div>
 

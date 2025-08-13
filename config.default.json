@@ -21,8 +21,7 @@
   "ui": {
     "default_view_mode": "grid",
     "filters_collapsed_default": true,
-    "remember_last_project": true,
-    "preview_mode_default": false
+    "remember_last_project": true
   },
   "uploader": {
     "accepted_files": {
