@@ -25,6 +25,9 @@ const tagsRouter = require('./server/routes/tags');
 app.use('/api/projects', tagsRouter);
 const keepRouter = require('./server/routes/keep');
 app.use('/api/projects', keepRouter);
+// Maintenance routes
+const maintenanceRouter = require('./server/routes/maintenance');
+app.use('/api/projects', maintenanceRouter);
 // Jobs routes
 const jobsRouter = require('./server/routes/jobs');
 app.use('/api', jobsRouter);
@@ -139,6 +142,14 @@ app.listen(PORT, () => {
     const { startWorkerLoop } = require('./server/services/workerLoop');
     startWorkerLoop();
     console.log('Worker loop started');
+    // Start scheduler to enqueue periodic maintenance jobs
+    try {
+      const { startScheduler } = require('./server/services/scheduler');
+      startScheduler();
+      console.log('Scheduler started');
+    } catch (e) {
+      console.error('Failed to start scheduler:', e);
+    }
   } catch (e) {
     console.error('Failed to start worker loop:', e);
   }

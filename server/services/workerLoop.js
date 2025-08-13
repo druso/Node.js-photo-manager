@@ -1,6 +1,7 @@
 const { getConfig } = require('./config');
 const jobsRepo = require('./repositories/jobsRepo');
 const { runGenerateDerivatives } = require('./workers/derivativesWorker');
+const { runTrashMaintenance, runManifestCheck, runFolderCheck, runManifestCleaning } = require('./workers/maintenanceWorker');
 const { emitJobUpdate } = require('./events');
 
 let running = false;
@@ -28,6 +29,36 @@ async function handleJob(job, { heartbeatMs, maxAttemptsDefault, workerId }) {
         emitJobUpdate({ id: job.id, status: 'running', progress_done: done, progress_total: total });
         try { jobsRepo.updateProgress(job.id, { done, total }); } catch {}
       }});
+      stopHeartbeat();
+      jobsRepo.complete(job.id);
+      emitJobUpdate({ id: job.id, status: 'completed' });
+      return;
+    }
+
+    // Maintenance job types
+    if (job.type === 'trash_maintenance') {
+      await runTrashMaintenance(job);
+      stopHeartbeat();
+      jobsRepo.complete(job.id);
+      emitJobUpdate({ id: job.id, status: 'completed' });
+      return;
+    }
+    if (job.type === 'manifest_check') {
+      await runManifestCheck(job);
+      stopHeartbeat();
+      jobsRepo.complete(job.id);
+      emitJobUpdate({ id: job.id, status: 'completed' });
+      return;
+    }
+    if (job.type === 'folder_check') {
+      await runFolderCheck(job);
+      stopHeartbeat();
+      jobsRepo.complete(job.id);
+      emitJobUpdate({ id: job.id, status: 'completed' });
+      return;
+    }
+    if (job.type === 'manifest_cleaning') {
+      await runManifestCleaning(job);
       stopHeartbeat();
       jobsRepo.complete(job.id);
       emitJobUpdate({ id: job.id, status: 'completed' });

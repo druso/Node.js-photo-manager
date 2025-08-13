@@ -161,6 +161,32 @@ Refer to `SECURITY.md` for detailed security implementation and best practices.
 4.  **Update Database**: The paths to the newly generated assets are saved in the photo's database record.
 5.  **Job Completion**: The job is marked as `completed` in the `jobs` table.
 
+### Maintenance Processes
+
+Maintenance tasks keep the on‑disk state and the database in sync. They are implemented as high‑priority, idempotent jobs handled by the same worker loop.
+
+Job types:
+
+- `trash_maintenance`: Remove files in `.trash` older than 24h.
+- `manifest_check`: Verify DB availability flags (`jpg_available`, `raw_available`) against files on disk and fix discrepancies.
+- `folder_check`: Scan the project folder for untracked files; enqueue `upload_postprocess` for accepted files; move unaccepted files to `.trash`.
+- `manifest_cleaning`: Delete rows where both JPG and RAW are unavailable.
+
+Scheduler (`server/services/scheduler.js`) cadence:
+
+- Hourly: `trash_maintenance` (priority 100)
+- Every 6h: `manifest_check` (95)
+- Every 6h (staggered by 30m): `folder_check` (95)
+- Daily: `manifest_cleaning` (80)
+
+Manual reconciliation endpoint:
+
+- `POST /api/projects/:folder/commit-changes`
+  - Moves non‑kept files to `.trash` based on `keep_jpg`/`keep_raw` flags
+  - Updates DB availability flags accordingly
+  - Enqueues `manifest_check`, `folder_check`, and `manifest_cleaning`
+  - See implementation in `server/routes/maintenance.js`
+
 ## 7. Getting Started
 
 ### Prerequisites

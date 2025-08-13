@@ -356,4 +356,5 @@ DOWNLOAD_SECRET=your-secure-secret-here
 
 ---
 
-*For questions about security implementation or to report security issues, refer to the project documentation or contact the development team.*
+# NEW DEVELOPMENT TO BE ASSESSED BY SECURITY ANALYSIS
+

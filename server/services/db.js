@@ -96,6 +96,8 @@ function applySchema(db) {
     error_message TEXT,
     worker_id TEXT,
     heartbeat_at TEXT,
+    -- priority is part of the fresh-start schema; ensure for new DBs
+    priority INTEGER NOT NULL DEFAULT 0,
     FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
   );
 
@@ -126,6 +128,13 @@ function applySchema(db) {
   ensureColumn(db, 'jobs', 'attempts', "ALTER TABLE jobs ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0");
   ensureColumn(db, 'jobs', 'max_attempts', "ALTER TABLE jobs ADD COLUMN max_attempts INTEGER");
   ensureColumn(db, 'jobs', 'last_error_at', "ALTER TABLE jobs ADD COLUMN last_error_at TEXT");
+  ensureColumn(db, 'jobs', 'priority', "ALTER TABLE jobs ADD COLUMN priority INTEGER NOT NULL DEFAULT 0");
+  // Create composite index after ensuring the column exists (for existing DBs)
+  try {
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_jobs_status_priority_created ON jobs(status, priority DESC, created_at ASC)`);
+  } catch (e) {
+    try { console.warn('[db] failed to create idx_jobs_status_priority_created:', e.message); } catch {}
+  }
 }
 
 function withTransaction(fn) {

@@ -50,11 +50,13 @@ Durable background jobs are stored in two tables: `jobs` and `job_items`.
 - `jobs`
   - Columns: `id`, `tenant_id`, `project_id` (FK), `type`, `status`, `created_at`, `started_at`, `finished_at`,
     `progress_total`, `progress_done`, `payload_json`, `error_message`, `worker_id`, `heartbeat_at`,
-    `attempts`, `max_attempts`, `last_error_at`.
-  - Indexes: `(project_id, created_at DESC)`, `(status)`, `(tenant_id, created_at DESC)`, `(tenant_id, status)`.
+    `attempts`, `max_attempts`, `last_error_at`, `priority`.
+  - Indexes: `(project_id, created_at DESC)`, `(status)`, `(tenant_id, created_at DESC)`, `(tenant_id, status)`, `(priority DESC, created_at ASC)`.
   - Status values: `queued`, `running`, `completed`, `failed`, `canceled`.
   - Progress: `progress_total` and `progress_done` are nullable; workers should set both (or leave null for indeterminate).
   - Payload: arbitrary JSON (stringified) for worker‑specific params.
+
+  - Priority: higher `priority` values are claimed first; ties break on oldest `created_at`.
 
 - `job_items`
   - Columns: `id`, `tenant_id`, `job_id` (FK), `photo_id` (FK nullable), `filename`, `status`, `message`,
@@ -65,6 +67,17 @@ Durable background jobs are stored in two tables: `jobs` and `job_items`.
 - Source of truth: `server/services/db.js` (DDL), repositories in `server/services/repositories/jobsRepo.js`.
 - Worker loop: `server/services/workerLoop.js` dispatches by `job.type` to worker modules under `server/services/workers/`.
 - Events/SSE: `server/services/events.js` provides `emitJobUpdate` and `onJobUpdate`; `server/routes/jobs.js` exposes `GET /api/jobs/stream`.
+
+#### Maintenance Jobs
+
+High‑priority, idempotent maintenance jobs operate per project:
+
+- `trash_maintenance`: remove files in `.trash` older than 24h
+- `manifest_check`: reconcile DB availability flags with files on disk
+- `folder_check`: scan project folder for untracked files; enqueue `upload_postprocess` for accepted ones; move others to `.trash`
+- `manifest_cleaning`: delete photo rows with no JPG or RAW available
+
+Scheduler (`server/services/scheduler.js`) enqueues these periodically for all projects. See `PROJECT_OVERVIEW.md` for schedule details.
 
 #### Job Lifecycle
 

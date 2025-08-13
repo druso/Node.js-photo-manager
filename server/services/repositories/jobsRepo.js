@@ -15,6 +15,7 @@ function rowToJob(row) {
     project_id: row.project_id,
     type: row.type,
     status: row.status,
+    priority: row.priority ?? 0,
     created_at: row.created_at,
     started_at: row.started_at,
     finished_at: row.finished_at,
@@ -47,19 +48,19 @@ function listByProject(project_id, { limit = 50, offset = 0, status, type } = {}
   return rows.map(rowToJob);
 }
 
-function enqueue({ tenant_id, project_id, type, payload = null, progress_total = null }) {
+function enqueue({ tenant_id, project_id, type, payload = null, progress_total = null, priority = 0 }) {
   const db = getDb();
   const created_at = nowISO();
-  const info = db.prepare(`INSERT INTO jobs (tenant_id, project_id, type, status, created_at, progress_total, progress_done, payload_json, attempts)
-    VALUES (?, ?, ?, 'queued', ?, ?, 0, ?, 0)
-  `).run(tenant_id, project_id, type, created_at, progress_total, payload ? JSON.stringify(payload) : null);
+  const info = db.prepare(`INSERT INTO jobs (tenant_id, project_id, type, status, created_at, progress_total, progress_done, payload_json, attempts, priority)
+    VALUES (?, ?, ?, 'queued', ?, ?, 0, ?, 0, ?)
+  `).run(tenant_id, project_id, type, created_at, progress_total, payload ? JSON.stringify(payload) : null, priority);
   return getById(info.lastInsertRowid);
 }
 
-function enqueueWithItems({ tenant_id, project_id, type, payload = null, items = [] }) {
+function enqueueWithItems({ tenant_id, project_id, type, payload = null, items = [], priority = 0 }) {
   // items: array of { photo_id?, filename?, status? }
   return withTransaction(() => {
-    const job = enqueue({ tenant_id, project_id, type, payload, progress_total: items.length });
+    const job = enqueue({ tenant_id, project_id, type, payload, progress_total: items.length, priority });
     const db = getDb();
     const now = nowISO();
     const stmt = db.prepare(`INSERT INTO job_items (tenant_id, job_id, photo_id, filename, status, message, created_at, updated_at)
@@ -79,7 +80,7 @@ function claimNext({ workerId = null, tenant_id = null } = {}) {
   const params = [];
   if (tenant_id) { conds.push('tenant_id = ?'); params.push(tenant_id); }
   const where = `WHERE ${conds.join(' AND ')}`;
-  const candidate = db.prepare(`SELECT id FROM jobs ${where} ORDER BY created_at ASC LIMIT 1`).get(...params);
+  const candidate = db.prepare(`SELECT id FROM jobs ${where} ORDER BY priority DESC, created_at ASC LIMIT 1`).get(...params);
   if (!candidate) return null;
   const started = nowISO();
   const info = db.prepare(`UPDATE jobs SET status='running', started_at=?, worker_id=?, heartbeat_at=? WHERE id = ? AND status='queued'`).run(started, workerId, started, candidate.id);

@@ -75,6 +75,12 @@ npm run build  # Builds frontend to client/dist/
 - **Keyboard Shortcuts**: Fast navigation and actions
 - **Secure Asset Serving**: Signed URLs for photo access
 
+## Maintenance
+
+- Background maintenance jobs keep disk and database in sync: `trash_maintenance`, `manifest_check`, `folder_check`, `manifest_cleaning`.
+- An in-process scheduler enqueues these per project on a cadence (hourly/6h/daily).
+- Manual reconciliation: `POST /api/projects/:folder/commit-changes` moves non‑kept files to `.trash` and enqueues reconciliation jobs.
+
 ## Common Issues
 
 **Port 5000 already in use**:
@@ -102,6 +108,7 @@ See [SECURITY.md](SECURITY.md) for detailed security configuration.
 - **[PROJECT_OVERVIEW.md](PROJECT_OVERVIEW.md)** - Comprehensive developer guide with architecture, API details, and development workflow
 - **[SCHEMA_DOCUMENTATION.md](SCHEMA_DOCUMENTATION.md)** - Database schema and data structure details
 - **[SECURITY.md](SECURITY.md)** - Security implementation and best practices
+  - Note: see “Notes for Security Analysis Team” re: maintenance jobs and `.trash` handling
 
 ## Contributing
 
