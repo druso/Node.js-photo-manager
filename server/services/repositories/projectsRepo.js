@@ -1,16 +1,29 @@
 const { getDb } = require('../db');
+const { makeProjectFolderName } = require('../../utils/projects');
 
 function nowISO() { return new Date().toISOString(); }
 
-function createProject({ project_folder, project_name, schema_version = null }) {
+function createProject({ project_name }) {
   const db = getDb();
   const ts = nowISO();
-  const stmt = db.prepare(`
-    INSERT INTO projects (project_folder, project_name, created_at, updated_at, schema_version)
-    VALUES (?, ?, ?, ?, ?)
-  `);
-  const info = stmt.run(project_folder, project_name, ts, ts, schema_version);
-  return getById(info.lastInsertRowid);
+
+  // Use a transaction to insert a temporary unique folder, then update with slug+id
+  const trx = db.transaction(() => {
+    const tmpFolder = `__tmp__p${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+    const insert = db.prepare(`
+      INSERT INTO projects (project_folder, project_name, created_at, updated_at, schema_version)
+      VALUES (?, ?, ?, ?, ?)
+    `);
+    const info = insert.run(tmpFolder, project_name, ts, ts, null);
+    const id = info.lastInsertRowid;
+
+    const folder = makeProjectFolderName(project_name, id);
+    db.prepare(`UPDATE projects SET project_folder = ? WHERE id = ?`).run(folder, id);
+
+    return getById(id);
+  });
+
+  return trx();
 }
 
 function getById(id) {

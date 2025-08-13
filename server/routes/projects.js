@@ -6,6 +6,7 @@ const router = express.Router();
 // DB repositories
 const projectsRepo = require('../services/repositories/projectsRepo');
 const photosRepo = require('../services/repositories/photosRepo');
+const { isCanonicalProjectFolder } = require('../utils/projects');
 
 // Resolve project directories relative to project root
 // __dirname => <projectRoot>/server/routes
@@ -16,16 +17,12 @@ const PROJECTS_DIR = path.join(PROJECT_ROOT, '.projects');
 // Ensure base directories exist when router loads
 fs.ensureDirSync(PROJECTS_DIR);
 
-// Helpers
-function sanitizeFolderName(name) {
-  return name.replace(/[^a-zA-Z0-9\s-_]/g, '').replace(/\s+/g, '_');
-}
-
 async function ensureProjectDirs(folderName) {
   const projectPath = path.join(PROJECTS_DIR, folderName);
   await fs.ensureDir(projectPath);
   await fs.ensureDir(path.join(projectPath, '.thumb'));
   await fs.ensureDir(path.join(projectPath, '.preview'));
+  await fs.ensureDir(path.join(projectPath, '.trash'));
   return projectPath;
 }
 
@@ -55,15 +52,11 @@ router.post('/', async (req, res) => {
       return res.status(400).json({ error: 'Project name is required' });
     }
 
-    const folderName = sanitizeFolderName(name);
-    const existing = projectsRepo.getByFolder(folderName);
-    if (existing) {
-      return res.status(400).json({ error: 'Project already exists' });
-    }
+    // Fresh-start creation: derive folder as <slug(name)>--p<id> in repo layer
+    const created = projectsRepo.createProject({ project_name: name });
 
-    await ensureProjectDirs(folderName);
-
-    const created = projectsRepo.createProject({ project_folder: folderName, project_name: name, schema_version: '1' });
+    // Create on-disk directories for the final canonical folder
+    await ensureProjectDirs(created.project_folder);
 
     res.json({
       message: 'Project created successfully',
@@ -85,6 +78,9 @@ router.post('/', async (req, res) => {
 router.get('/:folder', async (req, res) => {
   try {
     const { folder } = req.params;
+    if (!isCanonicalProjectFolder(folder)) {
+      return res.status(400).json({ error: 'Invalid project folder format' });
+    }
     const project = projectsRepo.getByFolder(folder);
     if (!project) {
       return res.status(404).json({ error: 'Project not found' });
@@ -131,6 +127,9 @@ router.get('/:folder', async (req, res) => {
 router.delete('/:folder', async (req, res) => {
   try {
     const { folder } = req.params;
+    if (!isCanonicalProjectFolder(folder)) {
+      return res.status(400).json({ error: 'Invalid project folder format' });
+    }
     const project = projectsRepo.getByFolder(folder);
     if (!project) {
       return res.status(404).json({ error: 'Project not found' });

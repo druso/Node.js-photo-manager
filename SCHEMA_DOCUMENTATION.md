@@ -2,12 +2,13 @@
 
 This project uses a normalized SQLite database as the source of truth for all photo metadata and project information.
 
-## SQLite Schema Overview (Current)
+## SQLite Schema Overview
 
 Tables and relationships:
 
 - `projects`
-  - Columns: `id`, `folder` (unique), `created_at`, `updated_at`
+  - Columns: `id` (INTEGER PK), `project_name` (TEXT), `project_folder` (TEXT UNIQUE), `created_at` (TEXT), `updated_at` (TEXT)
+  - `project_folder` format: `<slug(project_name)>--p<id>` (canonical on-disk folder)
 
 - `photos`
   - Columns (selected): `id`, `project_id` (FK), `filename`, `basename`, `ext`, `created_at`, `updated_at`,
@@ -16,7 +17,7 @@ Tables and relationships:
   - Indexes: filename, basename, ext, date, raw_available, orientation
 
 - `tags`
-  - Columns: `id`, `name` (unique)
+  - Columns: `id`, `project_id` (FK), `name`, `UNIQUE(project_id, name)`
 
 - `photo_tags` (many-to-many)
   - Columns: `photo_id` (FK), `tag_id` (FK), PK(photo_id, tag_id)
@@ -32,6 +33,15 @@ Notes:
 
 - Foreign keys and WAL are enabled in `server/services/db.js`.
 - Routes (`projects.js`, `uploads.js`, `assets.js`, `tags.js`, `keep.js`) exclusively use repositories.
+
+### Optional Helper: parseProjectIdFromFolder(folder)
+
+An optional utility function that parses the numeric project id from a canonical folder string `<slug>--p<id>`. It simplifies cases where only the folder is known but the `id` is desired for logging or quick lookups. In the fresh-start model, all folders have the suffix, so no fallbacks are required.
+
+Example behavior:
+```js
+parseProjectIdFromFolder('Vacation_2024--p12') // => 12
+```
 
 ### Async Jobs (Queue)
 

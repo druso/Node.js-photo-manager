@@ -83,6 +83,15 @@ The backend is a Node.js application that exposes a RESTful API for the client.
     *   `events.js`: Event emitter for real-time job updates
 *   **Utilities (`server/utils/`)**: Contains helper functions used across the backend.
 
+#### Project Folders (Fresh Start)
+
+Projects are stored on disk under `<repoRoot>/.projects/<project_folder>/` where `project_folder` is always of the form `<slug(project_name)>--p<id>`. Duplicate human names are allowed; uniqueness is enforced by `project_folder`.
+
+On creation, the server ensures these subdirectories exist:
+- `.thumb` for thumbnails
+- `.preview` for previews
+- `.trash` for temporary removals
+
 ### Database
 
 The application uses **SQLite** with better-sqlite3 for data storage, providing ACID compliance and excellent performance for this use case.
