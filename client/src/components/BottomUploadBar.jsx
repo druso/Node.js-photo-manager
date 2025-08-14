@@ -1,5 +1,6 @@
-import React from 'react';
+import React, { useEffect, useLayoutEffect, useRef } from 'react';
 import { useUpload } from '../upload/UploadContext';
+import { useToast } from '../ui/toast/ToastContext';
 
 const phaseText = (op) => {
   if (!op) return '';
@@ -22,7 +23,36 @@ const phaseText = (op) => {
 
 const BottomUploadBar = () => {
   const { state } = useUpload();
+  const toast = useToast();
+  const rootRef = useRef(null);
   const { operation } = state;
+
+  // Keep toast container offset above this bar while it's potentially visible.
+  // IMPORTANT: Hooks must not be conditional. We run this effect every render
+  // and guard its internals based on current visibility state.
+  useLayoutEffect(() => {
+    const op = operation;
+    const el = rootRef.current;
+    const showBar = !!op && ['preparation', 'uploading', 'post-processing', 'completed', 'error'].includes(op.phase);
+    if (!showBar || !el) {
+      // Ensure any previous offset is cleared when hidden or not mounted
+      toast.clearOffset('bottom-upload-bar');
+      return;
+    }
+    const measure = () => {
+      const h = Math.ceil(el.getBoundingClientRect().height);
+      toast.setOffset('bottom-upload-bar', h);
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    window.addEventListener('resize', measure);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener('resize', measure);
+      toast.clearOffset('bottom-upload-bar');
+    };
+  }, [toast, operation?.phase]);
 
   if (!operation) return null;
 
@@ -42,8 +72,10 @@ const BottomUploadBar = () => {
 
   const label = phaseText(operation);
 
+  // (effect moved above to run unconditionally)
+
   return (
-    <div className="fixed bottom-0 left-0 right-0 z-[999]">
+    <div ref={rootRef} className="fixed bottom-0 left-0 right-0 z-[999]">
       <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 pb-3">
         <div className="rounded-md shadow bg-white/90 backdrop-blur border">
           <div className="px-4 py-2 flex items-center gap-3">

@@ -73,12 +73,14 @@ function enqueueWithItems({ tenant_id, project_id, type, payload = null, items =
   });
 }
 
-function claimNext({ workerId = null, tenant_id = null } = {}) {
+function claimNext({ workerId = null, tenant_id = null, minPriority = null, maxPriority = null } = {}) {
   const db = getDb();
-  // Get oldest queued job (optionally by tenant)
+  // Get next queued job honoring optional tenant and priority range
   const conds = ["status = 'queued'"];
   const params = [];
   if (tenant_id) { conds.push('tenant_id = ?'); params.push(tenant_id); }
+  if (minPriority != null) { conds.push('priority >= ?'); params.push(minPriority); }
+  if (maxPriority != null) { conds.push('priority <= ?'); params.push(maxPriority); }
   const where = `WHERE ${conds.join(' AND ')}`;
   const candidate = db.prepare(`SELECT id FROM jobs ${where} ORDER BY priority DESC, created_at ASC LIMIT 1`).get(...params);
   if (!candidate) return null;

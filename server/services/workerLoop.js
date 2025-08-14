@@ -92,26 +92,50 @@ function startWorkerLoop() {
   running = true;
   const cfg = getConfig();
   const pipeline = cfg.pipeline || {};
-  const parallelJobs = Math.max(1, Number(pipeline.max_parallel_jobs || 1));
+  const totalSlots = Math.max(1, Number(pipeline.max_parallel_jobs || 1));
   const intervalMs = 500;
   const heartbeatMs = Math.max(250, Number(pipeline.heartbeat_ms || 1000));
   const staleSeconds = Math.max(5, Number(pipeline.stale_seconds || 60));
   const maxAttemptsDefault = Math.max(1, Number(pipeline.max_attempts_default || 3));
+  const priorityThreshold = Number(pipeline.priority_threshold != null ? pipeline.priority_threshold : 90);
+  const prioritySlots = Math.max(0, Number(pipeline.priority_lane_slots != null ? pipeline.priority_lane_slots : 1));
+  const normalSlots = Math.max(0, totalSlots - prioritySlots);
+  // Configuration sanity warnings
+  if (Number(pipeline.max_parallel_jobs || 1) < 1) {
+    console.warn('[workerLoop] pipeline.max_parallel_jobs < 1; clamped to 1. Current:', pipeline.max_parallel_jobs);
+  }
+  if (prioritySlots > totalSlots) {
+    console.warn('[workerLoop] priority_lane_slots exceeds max_parallel_jobs; priority will be capped by available slots. priority_slots:', prioritySlots, 'total_slots:', totalSlots);
+  }
+  if (totalSlots > 0 && normalSlots === 0) {
+    console.warn('[workerLoop] Normal lane has zero slots (max_parallel_jobs:', totalSlots, ', priority_lane_slots:', prioritySlots, '). Normal-priority jobs may starve. Consider lowering priority_lane_slots or increasing max_parallel_jobs.');
+  }
   const workerId = `inproc-${process.pid || '1'}`;
-  const active = new Set();
+  const activePriority = new Set();
+  const activeNormal = new Set();
 
   function tick() {
     try {
       // Crash recovery: requeue stale running jobs (heartbeat expired)
       try { jobsRepo.requeueStaleRunning({ staleSeconds }); } catch {}
-      // Launch up to parallelJobs concurrently
-      while (active.size < parallelJobs) {
-        const job = jobsRepo.claimNext({ workerId });
+      // 1) Fill priority lane
+      while (activePriority.size < prioritySlots) {
+        const job = jobsRepo.claimNext({ workerId, minPriority: priorityThreshold });
         if (!job) break;
-        active.add(job.id);
+        activePriority.add(job.id);
         emitJobUpdate({ id: job.id, status: 'running' });
         Promise.resolve(handleJob(job, { heartbeatMs, maxAttemptsDefault, workerId })).finally(() => {
-          active.delete(job.id);
+          activePriority.delete(job.id);
+        });
+      }
+      // 2) Fill normal lane
+      while (activeNormal.size < normalSlots) {
+        const job = jobsRepo.claimNext({ workerId, maxPriority: priorityThreshold - 1 });
+        if (!job) break;
+        activeNormal.add(job.id);
+        emitJobUpdate({ id: job.id, status: 'running' });
+        Promise.resolve(handleJob(job, { heartbeatMs, maxAttemptsDefault, workerId })).finally(() => {
+          activeNormal.delete(job.id);
         });
       }
     } catch (_) {

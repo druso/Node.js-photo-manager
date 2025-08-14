@@ -21,10 +21,19 @@ const Settings = ({ project, config, onConfigUpdate, onProjectDelete, onClose, o
       copy.processing = copy.processing || {};
       copy.processing.thumbnail = copy.processing.thumbnail || { maxDim: 200, quality: 80 };
       copy.processing.preview = copy.processing.preview || { maxDim: 6000, quality: 80 };
-      // Ensure keep defaults
-      copy.keep_defaults = copy.keep_defaults || { jpg: true, raw: false };
       // Ensure new keyboard shortcuts exist
       copy.keyboard_shortcuts = copy.keyboard_shortcuts || {};
+      if (!('next_photo' in copy.keyboard_shortcuts)) copy.keyboard_shortcuts.next_photo = 'ArrowRight';
+      if (!('prev_photo' in copy.keyboard_shortcuts)) copy.keyboard_shortcuts.prev_photo = 'ArrowLeft';
+      if (!('zoom_in' in copy.keyboard_shortcuts)) copy.keyboard_shortcuts.zoom_in = '=';
+      if (!('zoom_out' in copy.keyboard_shortcuts)) copy.keyboard_shortcuts.zoom_out = '-';
+      if (!('view_grid' in copy.keyboard_shortcuts)) copy.keyboard_shortcuts.view_grid = 'g';
+      if (!('view_table' in copy.keyboard_shortcuts)) copy.keyboard_shortcuts.view_table = 't';
+      if (!('toggle_filters' in copy.keyboard_shortcuts)) copy.keyboard_shortcuts.toggle_filters = 'f';
+      if (!('select_all' in copy.keyboard_shortcuts)) copy.keyboard_shortcuts.select_all = 'a';
+      if (!('toggle_select' in copy.keyboard_shortcuts)) copy.keyboard_shortcuts.toggle_select = 's';
+      if (!('close_viewer' in copy.keyboard_shortcuts)) copy.keyboard_shortcuts.close_viewer = 'Escape';
+      if (!('toggle_info' in copy.keyboard_shortcuts)) copy.keyboard_shortcuts.toggle_info = 'i';
       if (!('cancel_keep' in copy.keyboard_shortcuts)) copy.keyboard_shortcuts.cancel_keep = 'Delete';
       if (!('keep_jpg_only' in copy.keyboard_shortcuts)) copy.keyboard_shortcuts.keep_jpg_only = 'j';
       if (!('keep_raw_and_jpg' in copy.keyboard_shortcuts)) copy.keyboard_shortcuts.keep_raw_and_jpg = 'r';
@@ -109,7 +118,6 @@ const Settings = ({ project, config, onConfigUpdate, onProjectDelete, onClose, o
           copy.processing = copy.processing || {};
           copy.processing.thumbnail = copy.processing.thumbnail || { maxDim: 200, quality: 80 };
           copy.processing.preview = copy.processing.preview || { maxDim: 6000, quality: 80 };
-          copy.keep_defaults = copy.keep_defaults || { jpg: true, raw: false };
           copy.keyboard_shortcuts = copy.keyboard_shortcuts || {};
           if (!('next_photo' in copy.keyboard_shortcuts)) copy.keyboard_shortcuts.next_photo = 'ArrowRight';
           if (!('prev_photo' in copy.keyboard_shortcuts)) copy.keyboard_shortcuts.prev_photo = 'ArrowLeft';
@@ -288,20 +296,7 @@ const Settings = ({ project, config, onConfigUpdate, onProjectDelete, onClose, o
           </button>
           {openSection === 'other' && (
             <div className="pb-4 space-y-4">
-              <div className="space-y-3">
-                <h3 className="text-sm font-semibold">Keep Defaults</h3>
-                <label className="flex items-center gap-2">
-                  <input type="checkbox" checked={!!localConfig.keep_defaults?.jpg}
-                    onChange={(e) => handleConfigChange('keep_defaults', 'jpg', e.target.checked)} />
-                  <span className="text-gray-700">Keep JPG by default</span>
-                </label>
-                <label className="flex items-center gap-2">
-                  <input type="checkbox" checked={!!localConfig.keep_defaults?.raw}
-                    onChange={(e) => handleConfigChange('keep_defaults', 'raw', e.target.checked)} />
-                  <span className="text-gray-700">Keep RAW by default</span>
-                </label>
-                <p className="text-xs text-gray-500">Defaults used for newly added photos during ingestion.</p>
-              </div>
+              {/* Keep Defaults removed: keep flags now default to actual file availability */}
               <div className="space-y-2">
                 <h3 className="text-sm font-semibold">General</h3>
                 <label className="block">
@@ -524,48 +519,20 @@ const Settings = ({ project, config, onConfigUpdate, onProjectDelete, onClose, o
               </button>
               {openSection === 'other' && (
                 <div className="px-4 pb-4 space-y-4">
-                  <div className="space-y-3">
-                    <h3 className="text-sm font-semibold">Keep Defaults</h3>
-                    <label className="flex items-center gap-2">
-                      <input
-                        type="checkbox"
-                        checked={!!localConfig.keep_defaults?.jpg}
-                        onChange={(e) => handleConfigChange('keep_defaults', 'jpg', e.target.checked)}
-                      />
-                      <span className="text-gray-700">Keep JPG by default</span>
-                    </label>
-                    <label className="flex items-center gap-2">
-                      <input
-                        type="checkbox"
-                        checked={!!localConfig.keep_defaults?.raw}
-                        onChange={(e) => handleConfigChange('keep_defaults', 'raw', e.target.checked)}
-                      />
-                      <span className="text-gray-700">Keep RAW by default</span>
-                    </label>
-                    <p className="text-xs text-gray-500">Defaults used for newly added photos during ingestion.</p>
-                  </div>
-
+                  {/* Keep Defaults removed: keep flags now default to actual file availability */}
                   <div className="space-y-2">
                     <h3 className="text-sm font-semibold">General</h3>
                     <label className="block">
                       <span className="text-gray-700">Lazy Load Threshold</span>
-                      <input
-                        type="number"
-                        value={localConfig.photo_grid.lazy_load_threshold}
+                      <input type="number" value={localConfig.photo_grid.lazy_load_threshold}
                         onChange={(e) => handleConfigChange('photo_grid', 'lazy_load_threshold', parseInt(e.target.value, 10) || 0)}
-                        className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-md"
-                      />
+                        className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-md" />
                     </label>
                     <label className="block">
                       <span className="text-gray-700">Viewer Preload Count</span>
-                      <input
-                        type="number"
-                        min={0}
-                        max={10}
-                        value={localConfig.viewer?.preload_count ?? 1}
+                      <input type="number" min={0} max={10} value={localConfig.viewer?.preload_count ?? 1}
                         onChange={(e) => handleConfigChange('viewer', 'preload_count', Math.max(0, parseInt(e.target.value, 10) || 0))}
-                        className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-md"
-                      />
+                        className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-md" />
                       <span className="block text-xs text-gray-500 mt-1">Number of next/previous images to preload in the fullscreen viewer.</span>
                     </label>
                   </div>
@@ -586,32 +553,23 @@ const Settings = ({ project, config, onConfigUpdate, onProjectDelete, onClose, o
                 <div className="px-4 pb-4 space-y-3">
                   <label className="block">
                     <span className="text-gray-700">Default View Mode</span>
-                    <select
-                      value={localConfig.ui?.default_view_mode || 'grid'}
+                    <select value={localConfig.ui?.default_view_mode || 'grid'}
                       onChange={(e) => handleConfigChange('ui', 'default_view_mode', e.target.value)}
-                      className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-md"
-                    >
+                      className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-md">
                       <option value="grid">Grid</option>
                       <option value="table">Table</option>
                     </select>
                   </label>
                   <label className="flex items-center gap-2">
-                    <input
-                      type="checkbox"
-                      checked={!!localConfig.ui?.filters_collapsed_default}
-                      onChange={(e) => handleConfigChange('ui', 'filters_collapsed_default', e.target.checked)}
-                    />
+                    <input type="checkbox" checked={!!localConfig.ui?.filters_collapsed_default}
+                      onChange={(e) => handleConfigChange('ui', 'filters_collapsed_default', e.target.checked)} />
                     <span className="text-gray-700">Collapse filters by default</span>
                   </label>
                   <label className="flex items-center gap-2">
-                    <input
-                      type="checkbox"
-                      checked={localConfig.ui?.remember_last_project !== false}
-                      onChange={(e) => handleConfigChange('ui', 'remember_last_project', e.target.checked)}
-                    />
+                    <input type="checkbox" checked={localConfig.ui?.remember_last_project !== false}
+                      onChange={(e) => handleConfigChange('ui', 'remember_last_project', e.target.checked)} />
                     <span className="text-gray-700">Remember last opened project</span>
                   </label>
-                  
                 </div>
               )}
             </section>

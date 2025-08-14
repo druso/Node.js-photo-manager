@@ -16,6 +16,12 @@ Tables and relationships:
     `thumbnail_status`, `preview_status`, `orientation`, `meta_json`
   - Indexes: filename, basename, ext, date, raw_available, orientation
 
+  Semantics of availability vs keep flags:
+  - `jpg_available`, `raw_available`, `other_available`: reflect files actually present on disk.
+  - `keep_jpg`, `keep_raw`: user intent flags. By default they mirror availability and are automatically realigned
+    during ingestion and `upload_postprocess` so that new variants don’t create spurious pending deletions.
+  - Manual changes to `keep_*` are honored until either Commit (destructive) or Revert (non‑destructive) is invoked.
+
 - `tags`
   - Columns: `id`, `project_id` (FK), `name`, `UNIQUE(project_id, name)`
 
@@ -51,12 +57,14 @@ Durable background jobs are stored in two tables: `jobs` and `job_items`.
   - Columns: `id`, `tenant_id`, `project_id` (FK), `type`, `status`, `created_at`, `started_at`, `finished_at`,
     `progress_total`, `progress_done`, `payload_json`, `error_message`, `worker_id`, `heartbeat_at`,
     `attempts`, `max_attempts`, `last_error_at`, `priority`.
-  - Indexes: `(project_id, created_at DESC)`, `(status)`, `(tenant_id, created_at DESC)`, `(tenant_id, status)`, `(priority DESC, created_at ASC)`.
+  - Indexes: `(project_id, created_at DESC)`, `(status)`, `(tenant_id, created_at DESC)`, `(tenant_id, status)`, `(status, priority DESC, created_at ASC)`.
   - Status values: `queued`, `running`, `completed`, `failed`, `canceled`.
   - Progress: `progress_total` and `progress_done` are nullable; workers should set both (or leave null for indeterminate).
   - Payload: arbitrary JSON (stringified) for worker‑specific params.
 
   - Priority: higher `priority` values are claimed first; ties break on oldest `created_at`.
+    The worker loop implements two lanes with separate capacity: a priority lane (claims with `priority >= threshold`) and a normal lane.
+    See `pipeline.priority_lane_slots` and `pipeline.priority_threshold` in configuration.
 
 - `job_items`
   - Columns: `id`, `tenant_id`, `job_id` (FK), `photo_id` (FK nullable), `filename`, `status`, `message`,
@@ -66,6 +74,7 @@ Durable background jobs are stored in two tables: `jobs` and `job_items`.
 
 - Source of truth: `server/services/db.js` (DDL), repositories in `server/services/repositories/jobsRepo.js`.
 - Worker loop: `server/services/workerLoop.js` dispatches by `job.type` to worker modules under `server/services/workers/`.
+- Claiming: `jobsRepo.claimNext({ minPriority?, maxPriority? })` lets the worker select from a priority range (used by the two lanes).
 - Events/SSE: `server/services/events.js` provides `emitJobUpdate` and `onJobUpdate`; `server/routes/jobs.js` exposes `GET /api/jobs/stream`.
 
 #### Maintenance Jobs
@@ -120,8 +129,10 @@ SELECT * FROM jobs WHERE status = 'running' AND (strftime('%s','now') - strftime
 
 #### Frontend Expectations
 
-- SSE payloads include updated job fields; the UI merges by `id` and refreshes list on terminal states.
-- `App.jsx` triggers a project reload on job completion so thumbnails/previews appear without manual refresh.
+- SSE payloads include both job-level updates and item-level updates from `derivativesWorker`.
+- The UI merges item-level updates into `projectData.photos` in-place to avoid full grid refreshes and preserve scroll/viewer context.
+- `App.jsx` avoids full project reload on job completion when SSE is active; a fallback refetch is performed only if SSE wasn't connected.
+- `Thumbnail.jsx` no longer probes asset URLs while pending; final `<img>` uses a cache-busting query param derived from `photo.updated_at`.
 
 ---
 
@@ -130,10 +141,14 @@ SELECT * FROM jobs WHERE status = 'running' AND (strftime('%s','now') - strftime
 - Thumbnails: `<project>/.thumb/<filename>.jpg`
 - Previews: `<project>/.preview/<filename>.jpg`
 
+Deletions:
+
+- When JPG originals are moved to `.trash` via Commit (`POST /api/projects/:folder/commit-changes`), corresponding derivatives are deleted immediately (not moved to `.trash`).
+- `folder_check` moves only unaccepted files to `.trash` and does not remove derivatives; only accepted files ever have derivatives.
+
 ### Related Backend Endpoints
 
-- POST `/api/projects/:folder/generate-thumbnails?force=true|false`
-- POST `/api/projects/:folder/generate-previews?force=true|false`
+- POST `/api/projects/:folder/process` — queue thumbnail/preview generation (supports optional `{ force, filenames[] }` payload)
 - GET `/api/projects/:folder/thumbnail/:filename` → serves generated thumbnail JPG
 - GET `/api/projects/:folder/preview/:filename` → serves generated preview JPG
 

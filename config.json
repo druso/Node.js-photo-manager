@@ -56,15 +56,13 @@
       "quality": 30
     }
   },
-  "keep_defaults": {
-    "jpg": true,
-    "raw": false
-  },
   "pipeline": {
-    "max_parallel_jobs": 1,
+    "max_parallel_jobs": 2,
     "max_parallel_items_per_job": 1,
     "heartbeat_ms": 1000,
     "stale_seconds": 60,
-    "max_attempts_default": 3
+    "max_attempts_default": 3,
+    "priority_lane_slots": 1,
+    "priority_threshold": 90
   }
 }

@@ -9,18 +9,21 @@ import React from 'react';
 // - alt: alt text
 export default function Thumbnail({ photo, projectFolder, className = '', rounded = true, alt, objectFit = 'cover' }) {
   const isRawFile = /\.(arw|cr2|nef|dng|raw)$/i.test(photo.filename);
+
   const hasThumbnail = photo.thumbnail_status === 'generated';
-  const thumbnailPending = photo.thumbnail_status === 'pending';
+  const thumbnailPending = photo.thumbnail_status === 'pending' || (!photo.thumbnail_status && !hasThumbnail);
   const thumbnailFailed = photo.thumbnail_status === 'failed';
 
   const commonClasses = `${className} ${rounded ? 'rounded-md' : ''}`.trim();
   const fitClass = objectFit === 'contain' ? 'object-contain' : 'object-cover';
+  // Use DB-updated timestamp to break cache when a thumbnail/preview gets generated
+  const versionParam = encodeURIComponent(photo.updated_at || '0');
 
   // If a thumbnail exists, always show it (even for RAW files)
   if (hasThumbnail) {
     return (
       <img
-        src={`/api/projects/${projectFolder}/thumbnail/${photo.filename}`}
+        src={`/api/projects/${projectFolder}/thumbnail/${photo.filename}?v=${versionParam}`}
         alt={alt || photo.filename}
         className={`${commonClasses} ${fitClass}`}
         loading="lazy"

@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { updateKeep } from '../api/keepApi';
+import { useToast } from '../ui/toast/ToastContext';
 
 const PhotoViewer = ({ projectData, projectFolder, startIndex, onClose, config, selectedPhotos, onToggleSelect, onKeepUpdated, onCurrentIndexChange }) => {
   // All hooks are called at the top level, unconditionally.
@@ -18,8 +19,7 @@ const PhotoViewer = ({ projectData, projectFolder, startIndex, onClose, config, 
   // Removed image transition animations per request
   const pointerRef = useRef({ x: 0, y: 0 });
   const positionRef = useRef(position);
-  const [toast, setToast] = useState({ visible: false, text: '' });
-  const toastTimerRef = useRef(null);
+  const toast = useToast();
 
   const photos = projectData?.photos || [];
   const currentPhoto = photos[currentIndex];
@@ -94,19 +94,7 @@ const PhotoViewer = ({ projectData, projectFolder, startIndex, onClose, config, 
     fallbackTriedRef.current = false;
   }, [photos.length]);
 
-  const showToast = useCallback((text) => {
-    if (toastTimerRef.current) {
-      clearTimeout(toastTimerRef.current);
-      toastTimerRef.current = null;
-    }
-    setToast({ visible: true, text });
-    toastTimerRef.current = setTimeout(() => {
-      setToast(prev => ({ ...prev, visible: false }));
-      toastTimerRef.current = null;
-    }, 1200);
-  }, []);
-
-  useEffect(() => () => { if (toastTimerRef.current) clearTimeout(toastTimerRef.current); }, []);
+  // Toasts handled globally via ToastProvider
   
   // Persist Details panel visibility for single-tab session
   useEffect(() => {
@@ -133,7 +121,7 @@ const PhotoViewer = ({ projectData, projectFolder, startIndex, onClose, config, 
     try {
       const total = (projectData?.photos?.length || photos.length || 1);
       msg += ` • 1 of ${total}`;
-      showToast(msg);
+      toast.show({ emoji: '📝', message: msg, variant: 'notification' });
       console.log('Sending keep update for', currentPhoto.filename, target);
       await updateKeep(projectFolder, [{ filename: currentPhoto.filename, ...target }]);
       // notify parent to update in-memory data so lists/grid refresh without full reload
@@ -147,7 +135,7 @@ const PhotoViewer = ({ projectData, projectFolder, startIndex, onClose, config, 
       console.error('Viewer keep error:', e);
       alert(e.message || 'Failed to update keep flags');
     }
-  }, [currentPhoto, projectFolder, showToast, onKeepUpdated, nextPhoto]);
+  }, [currentPhoto, projectFolder, toast, onKeepUpdated, nextPhoto]);
 
   const prevPhoto = useCallback(() => {
     if (photos.length === 0) return;
@@ -538,14 +526,7 @@ const PhotoViewer = ({ projectData, projectFolder, startIndex, onClose, config, 
           </div>
         </div>
       </div>
-      {/* Toast notification */}
-      <div
-        className={`pointer-events-none fixed bottom-6 right-6 transition-all duration-200 z-50 ${toast.visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-3'}`}
-      >
-        <div className="px-4 py-3 rounded-lg bg-black bg-opacity-85 text-white text-base shadow-lg border-2 border-blue-400">
-          {toast.text}
-        </div>
-      </div>
+      {/* Toasts are rendered by the global ToastContainer */}
 
       {/* Detail sidebar (mobile + desktop) */}
       <div

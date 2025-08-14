@@ -78,7 +78,7 @@ The backend is a Node.js application that exposes a RESTful API for the client.
 *   **Business Logic (`server/services/`)**: This directory contains the core application logic:
     *   `db.js`: SQLite database initialization with WAL mode and foreign keys
     *   `repositories/`: Data access layer (projects, photos, tags, jobs)
-    *   `workerLoop.js`: Background job processor with crash recovery
+    *   **Worker Loop**: Background job processor with crash recovery and configuration sanity warnings (e.g., zero normal-lane slots)
     *   `workers/`: Individual worker implementations (derivatives generation)
     *   `events.js`: Event emitter for real-time job updates
 *   **Utilities (`server/utils/`)**: Contains helper functions used across the backend.
@@ -110,7 +110,7 @@ Refer to `SCHEMA_DOCUMENTATION.md` for detailed table structures and relationshi
 *   **Multi-format Support**: Handles JPG, PNG, TIFF, and various RAW formats (CR2, NEF, ARW, DNG)
 *   **Project Organization**: Photos are organized into projects (albums/shoots)
 *   **Metadata Extraction**: Automatic EXIF data parsing for timestamps, camera settings, etc.
-*   **Keep/Discard System**: Intelligent handling of RAW+JPG pairs with user preferences
+*   **Keep/Discard System**: Deterministic handling of RAW+JPG pairs. By default, `keep_jpg` and `keep_raw` mirror actual file availability and are automatically realigned during uploads and post‑processing. Users can change intent and later Commit or Revert.
 
 ### Image Processing
 *   **Automatic Thumbnails**: Generated asynchronously for fast grid viewing
@@ -123,7 +123,13 @@ Refer to `SCHEMA_DOCUMENTATION.md` for detailed table structures and relationshi
 *   **Grid and Table Views**: Multiple viewing modes for photo browsing
 *   **Full-screen Viewer**: Detailed photo viewing with zoom and navigation
 *   **Keyboard Shortcuts**: Comprehensive keyboard navigation (see configuration)
-*   **Real-time Updates**: Live job progress via Server-Sent Events
+ *   **Real-time Updates**: Live job progress via Server-Sent Events
+ *   **Incremental Thumbnails (SSE)**: Pending thumbnails update via item-level SSE events; no client-side probing of asset URLs
+*   **Optimistic Updates**: Keep/Tag/Revert actions update the UI immediately without a full data refetch, preserving browsing context.
+*   **Scroll Preservation**: Grid/table and viewer preserve scroll position and context during incremental updates. Selection is maintained unless an action explicitly clears it.
+*   **Layout Stability**: Thumbnail cells use constant border thickness; selection changes only color/ring, avoiding micro layout shifts that can nudge scroll.
+ *   **Grid Lazy-Load Reset Policy**: The grid’s visible window only resets when changing projects (or lazy threshold), not on incremental data updates.
+ *   **Scroll/Viewer Preservation**: Window/main scroll and open viewer are preserved across background refreshes and fallback refetches.
 
 ### Tagging System
 *   **Flexible Tagging**: Add custom tags to photos for organization
@@ -179,13 +185,23 @@ Scheduler (`server/services/scheduler.js`) cadence:
 - Every 6h (staggered by 30m): `folder_check` (95)
 - Daily: `manifest_cleaning` (80)
 
-Manual reconciliation endpoint:
+Manual reconciliation endpoints:
 
 - `POST /api/projects/:folder/commit-changes`
   - Moves non‑kept files to `.trash` based on `keep_jpg`/`keep_raw` flags
+  - Deletes generated derivatives for JPGs moved to `.trash` (removes `.thumb/<base>.jpg` and `.preview/<base>.jpg` immediately)
   - Updates DB availability flags accordingly
   - Enqueues `manifest_check`, `folder_check`, and `manifest_cleaning`
   - See implementation in `server/routes/maintenance.js`
+- `POST /api/projects/:folder/revert-changes`
+  - Non‑destructive. Resets `keep_jpg := jpg_available` and `keep_raw := raw_available` for all photos in the project.
+  - Clears any pending destructive actions without moving files.
+  - See implementation in `server/routes/maintenance.js`
+
+Client behavior after reconciliation endpoints:
+
+- After a successful `POST /revert-changes`, the client optimistically updates in-memory photo state to set `keep_jpg`/`keep_raw` from availability, avoiding a full refetch and preserving scroll/selection.
+- After a successful `POST /commit-changes`, the UI avoids hard reloads; asset changes propagate via background jobs/SSE and normal data refreshes, minimizing disruptive updates.
 
 ## 7. Getting Started
 
@@ -201,6 +217,125 @@ Manual reconciliation endpoint:
     git clone <repository-url>
     cd Node.js-photo-manager
     ```
+
+## 12. UI Animations
+
+Centralized CSS animations live in `client/src/styles/animations.css` and are imported globally from `client/src/index.css`.
+
+Available utility classes:
+
+- `animate-fadeInScale`: Small popovers/menus fade + scale in (150ms).
+- `animate-slideDownFade`: Dropdowns slide down + fade (140ms).
+- `animate-slideInRightFade`: Right drawers slide-in + fade (180ms).
+- `animate-fadeIn`: Simple fade-in (e.g., backdrops) (160ms).
+
+Usage:
+
+- Add the class to the element that mounts when shown. Examples:
+  - `client/src/components/OperationsMenu.jsx` uses `animate-slideDownFade` on the dropdown panel.
+  - `client/src/components/SettingsProcessesModal.jsx` uses `animate-slideInRightFade` on the drawer and `animate-fadeIn` on the backdrop.
+  - `client/src/App.jsx` uses `animate-fadeInScale` when swapping toolbar controls with the Actions menu.
+
+Adding new animations:
+
+- Define keyframes and a class in `client/src/styles/animations.css`, then apply the class where needed.
+
+### 12.1 Global Toast Notifications
+
+A centralized toast system provides consistent, reusable notifications across the frontend.
+
+- Location:
+  - Provider/Hook: `client/src/ui/toast/ToastContext.jsx`
+  - Container: `client/src/ui/toast/ToastContainer.jsx`
+  - Presets: `client/src/ui/toast/toastPresets.js`
+- Wiring:
+  - `client/src/main.jsx` wraps `<App />` with `<ToastProvider>`
+- Variants: `notification` (default), `info`, `success`, `warning`, `error`
+- Defaults: auto‑dismiss (2s info/success/notification, 4s warning, 6s error), max stack 3
+- UX: pause on hover, manual close button, accessible roles (`status`/`alert`)
+- Animations: slide-in from side on enter; slide-up + fade on exit
+
+Usage from any component:
+
+```jsx
+import { useToast } from '../ui/toast/ToastContext';
+
+function ExampleButton() {
+  const toast = useToast();
+  return (
+    <button onClick={() => toast.show({ emoji: '✅', message: 'Saved', variant: 'success' })}>
+      Save
+    </button>
+  );
+}
+```
+
+Toast patterns (recommended):
+
+- Use `variant: 'success'` for completed actions that change state; keep short (≈2s) and include an emoji ✅.
+- Use `variant: 'error'` for failures; longer duration (≈6s) and include ⚠️. Provide a next step if possible.
+- Use `variant: 'info'` for transient status messages (e.g., queued) or `notification` for neutral updates.
+- Prefer `toast.promise()` for async flows so the pending/success/error states are consistent.
+- Keep messages concise; the first word should be the action/result (e.g., "Uploaded", "Deleted", "Failed").
+- Register offsets for any fixed-position bars/toolbars to avoid overlap.
+- Accessibility: animated toasts use `status` (non-interruptive) by default; critical failures can use `alert`.
+
+Promise helper:
+
+```jsx
+const toast = useToast();
+await toast.promise(
+  apiCall(),
+  {
+    pending: { emoji: '⏳', message: 'Uploading…', variant: 'info' },
+    success: { emoji: '✅', message: 'Upload complete', variant: 'success' },
+    error:   { emoji: '⚠️', message: 'Upload failed', variant: 'error' }
+  }
+);
+```
+
+Position and durations can be customized via `<ToastProvider position="bottom-right" max={3} defaultDurations={{ info: 2000, success: 2000, notification: 2000, warning: 4000, error: 6000 }} />`.
+
+Offsetting toasts to avoid overlapping UI:
+
+- The toast system supports dynamic top/bottom offsets so bars/toolbars can reserve space.
+- API: `toast.setOffset(name, pxOrObject)` and `toast.clearOffset(name)`.
+  - `pxOrObject` can be a number (interpreted as bottom offset) or `{ top?: number, bottom?: number }`.
+
+Example: bottom upload bar reserves space automatically (implemented in `BottomUploadBar.jsx`). For custom components like a top toolbar:
+
+```jsx
+import { useLayoutEffect, useRef } from 'react';
+import { useToast } from '../ui/toast/ToastContext';
+
+function TopToolbar() {
+  const toast = useToast();
+  const ref = useRef(null);
+  useLayoutEffect(() => {
+    if (!ref.current) return;
+    const el = ref.current;
+    const measure = () => toast.setOffset('top-toolbar', { top: Math.ceil(el.getBoundingClientRect().height) });
+    measure();
+    const ro = new ResizeObserver(measure); ro.observe(el);
+    window.addEventListener('resize', measure);
+    return () => { ro.disconnect(); window.removeEventListener('resize', measure); toast.clearOffset('top-toolbar'); };
+  }, [toast]);
+  return <div ref={ref}>/* toolbar */</div>;
+}
+```
+
+Additionally, the commit/revert bottom bar registers a bottom offset so toasts never cover it and do not affect page scroll.
+
+### 12.2 Incremental Thumbnail Availability
+
+The grid shows thumbnails as soon as they become available while a batch job is still running.
+
+- Implementation: Item-level Server-Sent Events (`GET /api/jobs/stream`) emit updates of the form `{ type: 'item', project_folder, filename, thumbnail_status, preview_status, updated_at }` from `derivativesWorker` as each file completes.
+- UI handling: `client/src/App.jsx` patches the affected photo in-place within `projectData.photos` to avoid full-grid re-renders and preserve scroll/selection.
+- Asset caching: The final `<img>` for thumbnails appends `?v=<photo.updated_at>` to break negative caches once generated.
+- No probing: `Thumbnail.jsx` no longer probes asset URLs while pending, reducing 404s and network noise.
+
+Fallback behavior: If SSE is not yet connected, the client performs light polling (every ~3s) while any items are pending; scroll and open viewer state are preserved across these refetches.
 
 2.  **Install Backend Dependencies**:
     ```bash
@@ -285,9 +420,13 @@ The application's behavior is controlled by the `config.json` file (not in sourc
   "max_parallel_items_per_job": 1,
   "heartbeat_ms": 1000,
   "stale_seconds": 60,
-  "max_attempts_default": 3
+  "max_attempts_default": 3,
+  "priority_lane_slots": 1,
+  "priority_threshold": 90
 }
 ```
+
+- The worker loop runs two lanes: a priority lane (jobs with `priority >= priority_threshold`) and a normal lane. Priority lane has its own slots (`priority_lane_slots`) so lightweight maintenance jobs are not blocked by long-running normal jobs.
 
 #### Keyboard Shortcuts
 ```json
@@ -332,7 +471,10 @@ The backend exposes a comprehensive REST API for all frontend operations:
     *   `GET /api/projects/:folder/files-zip/:filename` - Download ZIP (requires token)
 *   **Jobs**: `GET/POST /api/projects/:folder/jobs` - Background job management
 *   **Tags**: `PUT /api/projects/:folder/tags` - Batch tag updates
-*   **Keep**: `PUT /api/projects/:folder/keep` - RAW/JPG keep decisions
+*   **Keep**: `PUT /api/projects/:folder/keep` - RAW/JPG keep decisions (intent)
+*   **Reconcile**:
+    * `POST /api/projects/:folder/commit-changes` - Apply current intent by moving non‑kept files to `.trash`
+    * `POST /api/projects/:folder/revert-changes` - Reset intent to current availability (non‑destructive)
 *   **Config**: `GET/POST /api/config`, `POST /api/config/restore` - Configuration management
 
 ### Real-time Features

@@ -1,4 +1,5 @@
 const express = require('express');
+require('./server/utils/logger');
 const multer = require('multer');
 const sharp = require('sharp');
 const cors = require('cors');

@@ -23,11 +23,22 @@ export default function SettingsProcessesModal({
 
   return (
     <div className="fixed inset-0 z-50 flex" onClick={onClose}>
+      {/* Fixed Close at top-right matching hamburger position and size */}
+      <button
+        onClick={onClose}
+        aria-label="Close options"
+        title="Close options"
+        className="fixed top-4 right-4 sm:right-6 lg:right-8 inline-flex items-center justify-center rounded-md border shadow-sm px-3 py-2 text-sm font-medium bg-white text-gray-700 hover:bg-gray-50 border-gray-300 z-[60]"
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <path strokeLinecap="round" strokeLinejoin="round" d="M6 6l12 12M18 6L6 18" />
+        </svg>
+      </button>
       {/* Backdrop */}
-      <div className="flex-1 bg-black/40" />
+      <div className="flex-1 bg-black/40 animate-fadeIn" />
       {/* Right-docked drawer */}
       <aside
-        className="ml-auto h-screen w-full md:w-[480px] lg:w-[560px] xl:w-[640px] bg-white shadow-xl border-l flex flex-col"
+        className="ml-auto h-screen w-full md:w-[480px] lg:w-[560px] xl:w-[640px] bg-white shadow-xl border-l flex flex-col animate-slideInRightFade"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header with tabs and Close */}
@@ -46,7 +57,7 @@ export default function SettingsProcessesModal({
               Processes
             </button>
           </div>
-          <button className="text-gray-600 hover:text-black" onClick={onClose} aria-label="Close">&times;</button>
+          <div aria-hidden="true"></div>
         </div>
 
         {/* Body */}

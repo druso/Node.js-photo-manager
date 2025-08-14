@@ -23,6 +23,14 @@ function moveToTrash(projectFolder, relPath) {
   return true;
 }
 
+function removeDerivatives(projectFolder, baseName) {
+  const projectPath = ensureProjectDirs(projectFolder);
+  const thumb = path.join(projectPath, '.thumb', `${baseName}.jpg`);
+  const preview = path.join(projectPath, '.preview', `${baseName}.jpg`);
+  try { if (fs.existsSync(thumb)) fs.removeSync(thumb); } catch (_) {}
+  try { if (fs.existsSync(preview)) fs.removeSync(preview); } catch (_) {}
+}
+
 function buildAcceptPredicate() {
   try {
     const cfg = getConfig();
@@ -80,6 +88,7 @@ module.exports = {
   PROJECTS_DIR,
   ensureProjectDirs,
   moveToTrash,
+  removeDerivatives,
   listAcceptedFiles,
   statMtimeSafe,
   buildAcceptPredicate,

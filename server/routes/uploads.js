@@ -174,9 +174,11 @@ router.post('/:folder/upload', async (req, res) => {
 
           // Upsert into SQLite repository
           const existing = photosRepo.getByProjectAndFilename(project.id, originalName);
-          const keepDefaults = (() => {
-            try { const cfg = getConfig(); return (cfg && cfg.keep_defaults) || { jpg: true, raw: false }; } catch (_) { return { jpg: true, raw: false }; }
-          })();
+
+          // Compute merged availability after this upload
+          const jpgAvailable = existing ? (existing.jpg_available || fileType === 'jpg') : (fileType === 'jpg');
+          const rawAvailable = existing ? (existing.raw_available || fileType === 'raw') : (fileType === 'raw');
+          const otherAvailable = existing ? (existing.other_available || fileType === 'other') : (fileType === 'other');
 
           const photoPayload = {
             manifest_id: existing?.manifest_id || undefined,
@@ -184,11 +186,12 @@ router.post('/:folder/upload', async (req, res) => {
             basename: originalName,
             ext: ext ? ext.replace(/^\./, '') : null,
             date_time_original: metadata.date_time_original || existing?.date_time_original || null,
-            jpg_available: existing ? (existing.jpg_available || fileType === 'jpg') : (fileType === 'jpg'),
-            raw_available: existing ? (existing.raw_available || fileType === 'raw') : (fileType === 'raw'),
-            other_available: existing ? (existing.other_available || fileType === 'other') : (fileType === 'other'),
-            keep_jpg: existing ? !!existing.keep_jpg : !!keepDefaults.jpg,
-            keep_raw: existing ? !!existing.keep_raw : !!keepDefaults.raw,
+            jpg_available: jpgAvailable,
+            raw_available: rawAvailable,
+            other_available: otherAvailable,
+            // keep flags ALWAYS align to availability on upload
+            keep_jpg: !!jpgAvailable,
+            keep_raw: !!rawAvailable,
             thumbnail_status: (fileType === 'jpg' || (existing && existing.thumbnail_status === 'failed')) ? thumbnailStatus : (existing?.thumbnail_status || null),
             preview_status: (fileType === 'jpg' || (existing && existing.preview_status === 'failed')) ? previewStatus : (existing?.preview_status || null),
             orientation: metadata.orientation ?? existing?.orientation ?? null,

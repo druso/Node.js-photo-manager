@@ -4,7 +4,7 @@ const fs = require('fs-extra');
 const projectsRepo = require('../services/repositories/projectsRepo');
 const photosRepo = require('../services/repositories/photosRepo');
 const jobsRepo = require('../services/repositories/jobsRepo');
-const { ensureProjectDirs, moveToTrash } = require('../services/fsUtils');
+const { ensureProjectDirs, moveToTrash, removeDerivatives } = require('../services/fsUtils');
 
 const router = express.Router();
 router.use(express.json());
@@ -43,6 +43,8 @@ router.post('/:folder/commit-changes', async (req, res) => {
             try { fs.moveSync(full, path.join(projectPath, '.trash', path.basename(full)), { overwrite: true }); } catch {}
           }
         }
+        // Remove derivatives immediately (no trash for these)
+        try { removeDerivatives(project.project_folder, p.filename); } catch {}
         photosRepo.upsertPhoto(project.id, {
           manifest_id: p.manifest_id,
           filename: p.filename,
@@ -101,6 +103,45 @@ router.post('/:folder/commit-changes', async (req, res) => {
   } catch (err) {
     console.error('commit-changes failed:', err);
     res.status(500).json({ error: 'Failed to commit changes' });
+  }
+});
+
+// POST /api/projects/:folder/revert-changes
+router.post('/:folder/revert-changes', async (req, res) => {
+  try {
+    const { folder } = req.params;
+    const project = projectsRepo.getByFolder(folder);
+    if (!project) return res.status(404).json({ error: 'Project not found' });
+
+    const page = photosRepo.listPaged({ project_id: project.id, limit: 100000 });
+    let updated = 0;
+    for (const p of page.items) {
+      const nextKeepJpg = !!p.jpg_available;
+      const nextKeepRaw = !!p.raw_available;
+      if (p.keep_jpg !== nextKeepJpg || p.keep_raw !== nextKeepRaw) {
+        photosRepo.upsertPhoto(project.id, {
+          manifest_id: p.manifest_id,
+          filename: p.filename,
+          basename: p.basename || p.filename,
+          ext: p.ext,
+          date_time_original: p.date_time_original,
+          jpg_available: !!p.jpg_available,
+          raw_available: !!p.raw_available,
+          other_available: !!p.other_available,
+          keep_jpg: nextKeepJpg,
+          keep_raw: nextKeepRaw,
+          thumbnail_status: p.thumbnail_status,
+          preview_status: p.preview_status,
+          orientation: p.orientation,
+          meta_json: p.meta_json,
+        });
+        updated++;
+      }
+    }
+    res.json({ updated });
+  } catch (err) {
+    console.error('revert-changes failed:', err);
+    res.status(500).json({ error: 'Failed to revert changes' });
   }
 });
 

@@ -7,8 +7,9 @@ const PhotoGridView = ({ projectData, projectFolder, onPhotoSelect, selectedPhot
   const [containerWidth, setContainerWidth] = useState(0);
 
   useEffect(() => {
+    // Reset only when switching projects or the threshold changes
     setVisibleCount(lazyLoadThreshold);
-  }, [projectData, lazyLoadThreshold]);
+  }, [projectFolder, lazyLoadThreshold]);
 
   // Lazy-load more items when near bottom of page scroll
   useEffect(() => {
@@ -129,7 +130,7 @@ const PhotoGridView = ({ projectData, projectFolder, onPhotoSelect, selectedPhot
               return (
                 <div
                   key={`${photo.id}-${photo.filename}`}
-                  className={`relative bg-gray-200 overflow-hidden cursor-pointer group ${borderClass} ${isSelected ? 'border-2 border-blue-600 ring-2 ring-blue-400' : 'border-transparent'} transition-all flex-none`}
+                  className={`relative bg-gray-200 overflow-hidden cursor-pointer group ${borderClass} border-2 ${isSelected ? 'border-blue-600 ring-2 ring-blue-400' : 'border-transparent ring-0'} transition-all flex-none`}
                   style={{ width: `${w}px`, height: `${Math.round(h)}px`, marginRight }}
                   onClick={() => onToggleSelection(photo)}
                 >

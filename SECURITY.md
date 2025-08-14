@@ -17,8 +17,8 @@
 ### 🟡 **MEDIUM PRIORITY** (Next cycle)
 
 **3. Rate Limiting** 🔧 *2-4h*
-- **Risk**: Abuse of commit-changes endpoint
-- **Action**: Add express-rate-limit to `/api/projects/:folder/commit-changes`
+- **Risk**: Abuse of commit/revert endpoints
+- **Action**: Add express-rate-limit to `/api/projects/:folder/commit-changes` and `/api/projects/:folder/revert-changes`
 
 **4. Job Queue Limits** 🔧 *4-6h*
 - **Risk**: Memory exhaustion from unlimited jobs
@@ -27,6 +27,13 @@
 **5. Audit Logging** 🔧 *6-8h*
 - **Risk**: Limited forensics capability
 - **Action**: Structured logs for file ops, job failures
+
+**6. Asset Endpoint Throttling & Caching** 🔧 *1-2h*
+- **Risk**: Increased request volume from frontend probing of pending thumbnails could be abused to cause excess load
+- **Action**:
+  - Add lightweight rate limiting to `GET /api/projects/:folder/thumbnail/:filename` and `.../preview/:filename` (IP + project tuple)
+  - Configure `Cache-Control: public, max-age=60` on 200 responses; consider short negative caching using `Retry-After` or `Cache-Control: no-store, must-revalidate` on 404 to avoid long stale negatives
+  - Ensure responses include `ETag` and honor `If-None-Match` to reduce bytes on revalidation
 
 ### 🟢 **LOW PRIORITY** (Future)
 
@@ -64,6 +71,15 @@
 - Operations confined to project subdirectories
 - Filename sanitization
 - Atomic database + file transactions
+
+**Assets (Thumbnails/Previews)**:
+- Served without signed tokens (only originals require signatures)
+- Frontend may probe pending assets periodically to surface images incrementally
+- Consider rate limits and short-lived caching headers to mitigate abuse and bandwidth spikes
+
+**Commit/Revert Endpoints**:
+- Commit is destructive: moves files to `.trash` and updates availability; ensure intent is authenticated/authorized in future multi-user mode.
+- Revert is non-destructive: resets `keep_*` to match `*_available`; still subject to rate limiting and auth once implemented.
 
 ### ⚠️ **Current Gaps**
 
@@ -111,3 +127,33 @@
 3. **Cleanup**: Remove temporary notes after assessment
 
 This ensures all functionality receives security review before deployment.
+
+---
+
+## New Development Notes (Pending Security Review)
+
+1) SSE Item-Level Updates for Derivatives
+
+- Change: Backend now emits item-level SSE messages from `derivativesWorker` of the form `{ type: 'item', project_folder, filename, thumbnail_status, preview_status, updated_at }` via `GET /api/jobs/stream`.
+- Rationale: Enables granular UI updates without full grid refreshes and eliminates client-side asset probing.
+- Security considerations:
+  - CORS: Ensure `GET /api/jobs/stream` respects production CORS allowlist.
+  - Exposure: Messages contain only non-sensitive status metadata (no PII/secrets). Confirm no internal paths or secrets are included.
+  - Abuse: SSE is a single long-lived connection; consider per-IP connection limits and timeouts.
+
+2) Removal of Client Probing for Thumbnails
+
+- Change: Client no longer probes thumbnail URLs while pending; uses SSE events + light fallback polling.
+- Benefit: Reduces 404 request volume and potential amplification vectors.
+- Security considerations:
+  - Asset endpoints still should retain light rate limiting and standard caching headers as above.
+
+3) Worker Loop Configuration Warnings
+
+- Change: Added runtime warnings for misconfigurations that could starve normal lane.
+- Security considerations: Logging only; no impact on exposure.
+
+Action requested (Security Team):
+
+- Review SSE endpoint CORS/rate limiting posture and document any required production settings.
+- Re-evaluate the need/severity of asset endpoint throttling given probing removal; keep minimal rate limits and caching guidance.

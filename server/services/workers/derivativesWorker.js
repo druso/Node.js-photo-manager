@@ -54,6 +54,19 @@ async function runGenerateDerivatives({ job, onProgress }) {
   jobsRepo.updateProgress(job.id, { done });
   emitJobUpdate({ id: job.id, status: 'running', progress_done: done, progress_total: items.length });
 
+  // Helper: compute availability by probing filesystem for known extensions
+  const jpgExts = ['jpg', 'jpeg'];
+  const rawExts = ['raw','cr2','nef','arw','dng','raf','orf','rw2'];
+
+  const existsAny = (base, exts) => {
+    for (const e of exts) {
+      const p1 = path.join(projectPath, `${base}.${e}`);
+      const p2 = path.join(projectPath, `${base}.${e.toUpperCase()}`);
+      if (fs.existsSync(p1) || fs.existsSync(p2)) return true;
+    }
+    return false;
+  };
+
   for (const item of items) {
     if (item.status !== 'pending') continue;
     jobsRepo.updateItemStatus(item.id, { status: 'running' });
@@ -61,7 +74,41 @@ async function runGenerateDerivatives({ job, onProgress }) {
       const entry = all.find(p => p.id === item.photo_id || p.filename === item.filename);
       if (!entry) {
         jobsRepo.updateItemStatus(item.id, { status: 'skipped', message: 'photo not found' });
+        // notify client immediately for item resolution
+        emitJobUpdate({
+          type: 'item',
+          project_folder: project.project_folder,
+          filename: item.filename || (entry && entry.filename),
+          thumbnail_status: 'failed',
+          preview_status: 'failed',
+          updated_at: new Date().toISOString(),
+        });
         continue;
+      }
+      // Recompute availability and align keep flags before derivative generation
+      try {
+        const jpgExists = existsAny(entry.filename, jpgExts);
+        const rawExists = existsAny(entry.filename, rawExts);
+        const otherExists = !jpgExists && !rawExists ? false : (entry.other_available ? true : false);
+        // Upsert: ensure availability and keep flags reflect filesystem
+        photosRepo.upsertPhoto(project.id, {
+          manifest_id: entry.manifest_id,
+          filename: entry.filename,
+          basename: entry.basename || entry.filename,
+          ext: entry.ext,
+          date_time_original: entry.date_time_original,
+          jpg_available: jpgExists,
+          raw_available: rawExists,
+          other_available: otherExists,
+          keep_jpg: !!jpgExists,
+          keep_raw: !!rawExists,
+          thumbnail_status: entry.thumbnail_status,
+          preview_status: entry.preview_status,
+          orientation: entry.orientation,
+          meta_json: entry.meta_json,
+        });
+      } catch (_) {
+        // non-fatal
       }
       const sourceFile = supportedSourcePath(projectPath, entry);
       if (!sourceFile) {
@@ -70,6 +117,14 @@ async function runGenerateDerivatives({ job, onProgress }) {
           preview_status: entry.preview_status || 'failed',
         });
         jobsRepo.updateItemStatus(item.id, { status: 'skipped', message: 'no supported source' });
+        emitJobUpdate({
+          type: 'item',
+          project_folder: project.project_folder,
+          filename: entry.filename,
+          thumbnail_status: entry.thumbnail_status || 'failed',
+          preview_status: entry.preview_status || 'failed',
+          updated_at: new Date().toISOString(),
+        });
       } else {
         // Thumbnail
         if (effectiveForce || entry.thumbnail_status === 'pending' || entry.thumbnail_status === 'failed' || !entry.thumbnail_status) {
@@ -92,6 +147,17 @@ async function runGenerateDerivatives({ job, onProgress }) {
           }
         }
         jobsRepo.updateItemStatus(item.id, { status: 'done' });
+        // emit item-level update for UI without full refetch
+        const updatedAt = new Date().toISOString();
+        emitJobUpdate({
+          type: 'item',
+          project_folder: project.project_folder,
+          filename: entry.filename,
+          // we just wrote statuses to DB; reflect optimistic values
+          thumbnail_status: 'generated',
+          preview_status: 'generated',
+          updated_at: updatedAt,
+        });
       }
       done += 1;
       const updated = jobsRepo.updateProgress(job.id, { done });

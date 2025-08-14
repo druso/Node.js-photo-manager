@@ -126,8 +126,9 @@ async function runFolderCheck(job) {
         jpg_available: !!availability.jpg,
         raw_available: !!availability.raw,
         other_available: !!availability.other,
-        keep_jpg: true,
-        keep_raw: false,
+        // keep flags default to availability
+        keep_jpg: !!availability.jpg,
+        keep_raw: !!availability.raw,
         thumbnail_status: null,
         preview_status: null,
         orientation: null,

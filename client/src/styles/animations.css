@@ -1,0 +1,55 @@
+/* Centralized UI animations for menus, drawers, and subtle transitions */
+
+/* Fade + slight scale-in (good for small popovers/menus) */
+@keyframes fadeInScale {
+  0% { opacity: 0; transform: scale(0.98); }
+  100% { opacity: 1; transform: scale(1); }
+}
+.animate-fadeInScale { animation: fadeInScale 150ms ease-out both; }
+
+/* Slide down + fade (dropdowns) */
+@keyframes slideDownFade {
+  0% { opacity: 0; transform: translateY(-4px) scale(0.98); }
+  100% { opacity: 1; transform: translateY(0) scale(1); }
+}
+.animate-slideDownFade { animation: slideDownFade 140ms ease-out both; }
+
+/* Slide in from right + fade (right drawers) */
+@keyframes slideInRightFade {
+  0% { opacity: 0; transform: translateX(16px); }
+  100% { opacity: 1; transform: translateX(0); }
+}
+.animate-slideInRightFade { animation: slideInRightFade 180ms ease-out both; }
+
+/* Simple fade-in (e.g., backdrops) */
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+.animate-fadeIn { animation: fadeIn 160ms ease-out both; }
+
+/* Toast animations */
+@keyframes toastInRight {
+  0% { opacity: 0; transform: translateX(16px); }
+  100% { opacity: 1; transform: translateX(0); }
+}
+.animate-toastInRight { animation: toastInRight 200ms cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+
+@keyframes toastInLeft {
+  0% { opacity: 0; transform: translateX(-16px); }
+  100% { opacity: 1; transform: translateX(0); }
+}
+.animate-toastInLeft { animation: toastInLeft 200ms cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+
+@keyframes toastOutUp {
+  0% { opacity: 1; transform: translateY(0); }
+  100% { opacity: 0; transform: translateY(-8px); }
+}
+.animate-toastOutUp { animation: toastOutUp 200ms ease-in both; }
+
+/* Reduced motion: prefer subtle fades over slides */
+@keyframes fadeOut { from { opacity: 1; } to { opacity: 0; } }
+.animate-fadeOut { animation: fadeOut 120ms ease-out both; }
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-toastInRight,
+  .animate-toastInLeft { animation: fadeIn 120ms ease-out both; }
+  .animate-toastOutUp { animation: fadeOut 120ms ease-out both; }
+}

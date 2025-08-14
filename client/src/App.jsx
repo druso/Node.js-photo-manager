@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
+import React, { useEffect, useMemo, useRef, useState, useCallback, useLayoutEffect } from 'react';
 import { listProjects, getProject, createProject } from './api/projectsApi';
 import ProjectSelector from './components/ProjectSelector';
 import PhotoDisplay from './components/PhotoDisplay';
@@ -10,10 +10,12 @@ import PhotoViewer from './components/PhotoViewer';
 // Settings rendered via SettingsProcessesModal
 import UniversalFilter from './components/UniversalFilter';
 import { UploadProvider } from './upload/UploadContext';
+import { useUpload } from './upload/UploadContext';
 import UploadConfirmModal from './components/UploadConfirmModal';
 import BottomUploadBar from './components/BottomUploadBar';
 import GlobalDragDrop from './components/GlobalDragDrop';
 import './App.css';
+import { useToast } from './ui/toast/ToastContext';
 
 function App() {
   const [projects, setProjects] = useState([]);
@@ -43,13 +45,60 @@ function App() {
   // Grid/table preview size: 's' | 'm' | 'l'
   const [sizeLevel, setSizeLevel] = useState('m');
 
+  // Commit and revert flows
+  const [showCommitModal, setShowCommitModal] = useState(false);
+  const [committing, setCommitting] = useState(false);
+  // Track the opener to restore focus when modal closes
+  const commitOpenerElRef = useRef(null);
+
+  const handleCommitChanges = () => {
+    if (!selectedProject) return;
+    // Save current focus to restore later
+    try { commitOpenerElRef.current = document.activeElement; } catch {}
+    setShowCommitModal(true);
+  };
+
+  const confirmCommitChanges = async () => {
+    if (!selectedProject) return;
+    setCommitting(true);
+    try {
+      await toast.promise(
+        (async () => {
+          const res = await fetch(`/api/projects/${encodeURIComponent(selectedProject.folder)}/commit-changes`, { method: 'POST' });
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          await fetchProjectData(selectedProject.folder);
+        })(),
+        {
+          pending: { emoji: '🗑️', message: 'Committing…', variant: 'info' },
+          success: { emoji: '✅', message: 'Committed pending deletions', variant: 'success' },
+          error:   { emoji: '⚠️', message: 'Commit failed', variant: 'error' }
+        }
+      );
+      setShowCommitModal(false);
+    } catch (e) {
+      console.error('Commit changes failed', e);
+    } finally {
+      setCommitting(false);
+    }
+  };
+
 
   // Refs
   const mainRef = useRef(null);
   const initialSavedYRef = useRef(null);
+  const windowScrollRestoredRef = useRef(false);
   const prefsLoadedOnceRef = useRef(false);
   const viewerRestoredRef = useRef(false);
   const DEBUG_PERSIST = false; // set true to see console logs
+  // Per-project session keys
+  const scrollKeys = useMemo(() => {
+    const folder = selectedProject?.folder || '__none__';
+    return {
+      win: `window_scroll_y::${folder}`,
+      main: `main_scroll_top::${folder}`,
+      viewer: `viewer_state::${folder}`,
+    };
+  }, [selectedProject?.folder]);
 
   // Track if UI prefs were loaded so config defaults don't overwrite them
   const uiPrefsLoadedRef = useRef(false);
@@ -58,6 +107,77 @@ function App() {
   const [uiPrefsReady, setUiPrefsReady] = useState(false);
   // When creating a new project, remember which one to auto-select after the projects list refreshes
   const pendingSelectProjectRef = useRef(null);
+  // Toast offset for commit/revert bar
+  const toast = useToast();
+  const commitBarRef = useRef(null);
+  // Track whether SSE stream is connected (to reduce fallback polling)
+  const sseReadyRef = useRef(false);
+
+  // A11y: commit modal focus trap
+  const commitModalRef = useRef(null);
+  useEffect(() => {
+    if (!showCommitModal) return;
+    const modal = commitModalRef.current;
+    if (!modal) return;
+    const focusable = modal.querySelectorAll(
+      'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+    );
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    const onKeyDown = (e) => {
+      if (e.key === 'Escape') { e.preventDefault(); setShowCommitModal(false); }
+      if (e.key === 'Tab' && focusable.length) {
+        if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); return; }
+        if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); return; }
+      }
+    };
+    document.addEventListener('keydown', onKeyDown);
+    // Initial focus
+    if (first && typeof first.focus === 'function') first.focus();
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [showCommitModal]);
+
+  // Restore focus to the opener when modal closes
+  useEffect(() => {
+    if (!showCommitModal && commitOpenerElRef.current) {
+      try { commitOpenerElRef.current.focus(); } catch {}
+      commitOpenerElRef.current = null;
+    }
+  }, [showCommitModal]);
+
+  // Pending destructive actions: assets available but marked not to keep
+  const pendingDeletes = useMemo(() => {
+    const photos = projectData?.photos || [];
+    let jpg = 0, raw = 0;
+    for (const p of photos) {
+      if (p.jpg_available && p.keep_jpg === false) jpg++;
+      if (p.raw_available && p.keep_raw === false) raw++;
+    }
+    return { jpg, raw, total: jpg + raw };
+  }, [projectData]);
+
+  // Reserve space for the commit/revert bottom bar so toasts don't overlap it
+  useLayoutEffect(() => {
+    if (!selectedProject || !pendingDeletes || pendingDeletes.total <= 0) {
+      toast.clearOffset('commit-revert-bar');
+      return;
+    }
+    const el = commitBarRef.current;
+    if (!el) return;
+    const measure = () => {
+      const h = Math.ceil(el.getBoundingClientRect().height);
+      toast.setOffset('commit-revert-bar', h);
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    window.addEventListener('resize', measure);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener('resize', measure);
+      toast.clearOffset('commit-revert-bar');
+    };
+  }, [toast, selectedProject, pendingDeletes?.total]);
 
   // Load UI prefs from localStorage on mount
   useEffect(() => {
@@ -121,36 +241,32 @@ function App() {
     }
   }, [uiPrefsReady]);
 
-  // Persist and restore window scroll position (single-tab session)
+  // Persist and restore window scroll position (per project, sessionStorage)
   useEffect(() => {
-    const savedY = sessionStorage.getItem('window_scroll_y');
-    if (savedY) {
-      initialSavedYRef.current = parseInt(savedY, 10) || 0;
-    }
+    // Load saved Y for current project
+    const key = scrollKeys.win;
+    const savedY = key ? sessionStorage.getItem(key) : null;
+    if (savedY != null) initialSavedYRef.current = parseInt(savedY, 10) || 0;
     const onScroll = () => {
-      sessionStorage.setItem('window_scroll_y', String(window.scrollY || window.pageYOffset || 0));
+      try {
+        sessionStorage.setItem(scrollKeys.win, String(window.scrollY || window.pageYOffset || 0));
+      } catch {}
     };
     window.addEventListener('scroll', onScroll, { passive: true });
-    const onLoad = () => {
-      if (initialSavedYRef.current != null) {
-        try { window.scrollTo(0, initialSavedYRef.current); } catch {}
-      }
-    };
-    window.addEventListener('load', onLoad, { passive: true });
     return () => window.removeEventListener('scroll', onScroll);
-  }, []);
+  }, [scrollKeys.win]);
 
-  // Re-apply saved window scroll after content renders (e.g., photos list ready)
+  // Re-apply saved window scroll once after initial content render
   useEffect(() => {
+    if (windowScrollRestoredRef.current) return;
     if (initialSavedYRef.current == null) return;
     if (activeTab !== 'view') return;
-    // defer to next paint to ensure layout is ready
     const y = initialSavedYRef.current;
     let raf1 = requestAnimationFrame(() => {
       let raf2 = requestAnimationFrame(() => {
         try { window.scrollTo(0, y); } catch {}
+        windowScrollRestoredRef.current = true; // only do this once
       });
-      // store id so cleanup can cancel
       (window.__raf2 ||= []).push(raf2);
     });
     (window.__raf1 ||= []).push(raf1);
@@ -160,22 +276,21 @@ function App() {
     };
   }, [activeTab, projectData, config]);
 
-  // (moved below filteredProjectData declaration to avoid TDZ)
-  // Persist and restore main scroll position (single-tab session)
+  // Persist and restore main scroll position (per project, sessionStorage)
   useEffect(() => {
     const el = mainRef.current;
     if (!el) return;
     // restore
-    const saved = sessionStorage.getItem('main_scroll_top');
-    if (saved) {
+    const saved = sessionStorage.getItem(scrollKeys.main);
+    if (saved != null) {
       try { el.scrollTop = parseInt(saved, 10) || 0; } catch {}
     }
     const onScroll = () => {
-      sessionStorage.setItem('main_scroll_top', String(el.scrollTop));
+      try { sessionStorage.setItem(scrollKeys.main, String(el.scrollTop)); } catch {}
     };
     el.addEventListener('scroll', onScroll, { passive: true });
     return () => el.removeEventListener('scroll', onScroll);
-  }, []);
+  }, [scrollKeys.main]);
 
   const toggleSort = (key) => {
     if (sortKey === key) {
@@ -259,6 +374,23 @@ function App() {
   };
 
   const fetchProjectData = async (projectFolder) => {
+    // Capture UI state to restore after data updates
+    const savedWindowY = (() => {
+      const live = window.scrollY || window.pageYOffset || 0;
+      const saved = sessionStorage.getItem(scrollKeys.win);
+      return saved != null ? parseInt(saved, 10) || live : live;
+    })();
+    const mainEl = mainRef.current;
+    const savedMainY = (() => {
+      const live = mainEl ? mainEl.scrollTop : 0;
+      const saved = sessionStorage.getItem(scrollKeys.main);
+      return saved != null ? parseInt(saved, 10) || live : live;
+    })();
+    const savedViewer = (() => {
+      try { return JSON.parse(sessionStorage.getItem(scrollKeys.viewer) || 'null') || viewerState || { isOpen: false }; }
+      catch { return viewerState || { isOpen: false }; }
+    })();
+
     setLoading(true);
     try {
       const data = await getProject(projectFolder);
@@ -266,9 +398,48 @@ function App() {
     } catch (error) {
       console.error('Error fetching project data:', error);
     } finally {
+      // Restore scroll and viewer context on next frame(s); retry a couple frames for layout settle
+      try {
+        requestAnimationFrame(() => {
+          try { window.scrollTo(0, savedWindowY); } catch {}
+          if (mainEl) { try { mainEl.scrollTop = savedMainY; } catch {} }
+          if (savedViewer && savedViewer.isOpen) {
+            setViewerState(prev => ({ ...(prev || {}), ...savedViewer, isOpen: true }));
+          }
+          // second tick in case images/layout shift
+          requestAnimationFrame(() => {
+            try { window.scrollTo(0, savedWindowY); } catch {}
+            if (mainEl) { try { mainEl.scrollTop = savedMainY; } catch {} }
+          });
+        });
+      } catch {}
       setLoading(false);
     }
   };
+
+  // Persist viewer state per project (sessionStorage)
+  useEffect(() => {
+    if (!selectedProject) return;
+    try {
+      sessionStorage.setItem(scrollKeys.viewer, JSON.stringify(viewerState || { isOpen: false }));
+    } catch {}
+  }, [viewerState, selectedProject, scrollKeys.viewer]);
+
+  // Attempt viewer restore on project selection (once per project)
+  useEffect(() => {
+    if (!selectedProject) return;
+    if (viewerRestoredRef.current) return;
+    try {
+      const saved = sessionStorage.getItem(scrollKeys.viewer);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed && parsed.isOpen) {
+          setViewerState(prev => ({ ...(prev || {}), ...parsed, isOpen: true }));
+        }
+      }
+      viewerRestoredRef.current = true;
+    } catch {}
+  }, [selectedProject, scrollKeys.viewer]);
 
   const handleProjectSelect = (project) => {
     // Handle null/invalid project selection (e.g., dropdown placeholder)
@@ -284,16 +455,52 @@ function App() {
     setSelectedPhotos(new Set()); // Clear selection when switching projects
   };
 
-  // Auto-refresh thumbnails when any job completes (e.g., generate_derivatives/upload_postprocess)
+  // Auto-refresh and fine-grained updates via SSE
   useEffect(() => {
     const close = openJobStream((evt) => {
+      // Mark SSE as active upon any message (hello, item, job)
+      sseReadyRef.current = true;
+
+      // 1) Fine-grained item updates: avoid full grid refresh
+      if (evt && evt.type === 'item' && selectedProject && evt.project_folder === selectedProject.folder) {
+        setProjectData((prev) => {
+          if (!prev || !Array.isArray(prev.photos)) return prev;
+          const idx = prev.photos.findIndex(p => p.filename === evt.filename);
+          if (idx === -1) return prev;
+          const updated = { ...prev.photos[idx] };
+          if (evt.thumbnail_status) updated.thumbnail_status = evt.thumbnail_status;
+          if (evt.preview_status) updated.preview_status = evt.preview_status;
+          if (evt.updated_at) updated.updated_at = evt.updated_at;
+          const photos = prev.photos.slice();
+          photos[idx] = updated;
+          return { ...prev, photos };
+        });
+        return; // handled
+      }
+
+      // 2) Avoid full refetch on job completion when SSE is active; item events already updated the grid
       if (evt && evt.status === 'completed' && selectedProject) {
-        fetchProjectData(selectedProject.folder);
+        if (!sseReadyRef.current) {
+          // Only refetch if SSE wasn't reliably connected
+          fetchProjectData(selectedProject.folder);
+        }
       }
     });
-    return () => close && close();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    return () => close();
   }, [selectedProject]);
+
+  // Fallback polling: while any thumbnail is pending and SSE not yet delivering, periodically refetch
+  useEffect(() => {
+    if (!selectedProject) return;
+    const photos = projectData?.photos || [];
+    const anyPending = photos.some(p => p && (p.thumbnail_status === 'pending' || !p.thumbnail_status));
+    if (!anyPending) return;
+    if (sseReadyRef.current) return; // SSE active; rely on item-level updates instead
+    const id = setInterval(() => {
+      fetchProjectData(selectedProject.folder);
+    }, 3000);
+    return () => clearInterval(id);
+  }, [selectedProject, projectData]);
 
   const handleProjectCreate = async (projectName) => {
     try {
@@ -331,6 +538,33 @@ function App() {
       fetchProjectData(selectedProject.folder);
     }
   };
+
+  // Optimistic bulk updates to avoid full refetches after actions
+  const handleKeepBulkUpdated = useCallback((updates) => {
+    // updates: [{ filename, keep_jpg, keep_raw }]
+    setProjectData(prev => {
+      if (!prev || !Array.isArray(prev.photos)) return prev;
+      const byName = new Map(updates.map(u => [u.filename, u]));
+      const photos = prev.photos.map(p => {
+        const u = byName.get(p.filename);
+        return u ? { ...p, keep_jpg: u.keep_jpg, keep_raw: u.keep_raw } : p;
+      });
+      return { ...prev, photos };
+    });
+  }, []);
+
+  const handleTagsBulkUpdated = useCallback((updates) => {
+    // updates: [{ filename, tags }]
+    setProjectData(prev => {
+      if (!prev || !Array.isArray(prev.photos)) return prev;
+      const byName = new Map(updates.map(u => [u.filename, u]));
+      const photos = prev.photos.map(p => {
+        const u = byName.get(p.filename);
+        return u ? { ...p, tags: Array.isArray(u.tags) ? u.tags : (p.tags || []) } : p;
+      });
+      return { ...prev, photos };
+    });
+  }, []);
 
   const handleProjectDeleted = () => {
     // Force page refresh to ensure clean state after project deletion
@@ -593,6 +827,37 @@ function App() {
     (activeFilters.orientation && activeFilters.orientation !== 'any')
   );
 
+  
+
+  const handleRevertChanges = async () => {
+    if (!selectedProject) return;
+    try {
+      await toast.promise(
+        (async () => {
+          const res = await fetch(`/api/projects/${encodeURIComponent(selectedProject.folder)}/revert-changes`, { method: 'POST' });
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          // Optimistically reflect revert: keep flags back to availability
+          setProjectData(prev => {
+            if (!prev || !Array.isArray(prev.photos)) return prev;
+            const photos = prev.photos.map(p => ({
+              ...p,
+              keep_jpg: !!p.jpg_available,
+              keep_raw: !!p.raw_available,
+            }));
+            return { ...prev, photos };
+          });
+        })(),
+        {
+          pending: { emoji: '↩️', message: 'Reverting…', variant: 'info' },
+          success: { emoji: '✅', message: 'Reverted keep flags to availability', variant: 'success' },
+          error:   { emoji: '⚠️', message: 'Revert failed', variant: 'error' }
+        }
+      );
+    } catch (e) {
+      console.error('Revert changes failed', e);
+    }
+  };
+
   // Keyboard shortcuts: use config.keyboard_shortcuts with sensible defaults
   useEffect(() => {
     const onKeyDown = (e) => {
@@ -628,6 +893,47 @@ function App() {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [selectedProject, activeTab, filteredProjectData, setViewMode, setSelectedPhotos, setFiltersCollapsed, config]);
 
+  // Lightweight upload button using UploadContext; disabled when no project selected
+  const UploadButton = ({ disabled }) => {
+    const { actions } = useUpload();
+    const inputRef = useRef(null);
+    const onPick = () => {
+      if (disabled) return;
+      if (inputRef.current) inputRef.current.click();
+    };
+    const onChange = (e) => {
+      const files = Array.from(e.target.files || []);
+      if (files.length > 0) {
+        actions.startAnalyze(files);
+      }
+      // reset so selecting the same files again still triggers change
+      e.target.value = '';
+    };
+    return (
+      <>
+        <input
+          ref={inputRef}
+          type="file"
+          multiple
+          accept="image/*,.raw,.cr2,.nef,.arw,.dng,.tiff,.tif"
+          className="hidden"
+          onChange={onChange}
+        />
+        <button
+          onClick={onPick}
+          disabled={disabled}
+          className={`inline-flex items-center justify-center px-3 py-2 rounded-md ${disabled ? 'bg-gray-200 text-gray-500 cursor-not-allowed' : 'bg-blue-600 text-white hover:bg-blue-700'}`}
+          title={disabled ? 'Select a project to enable uploads' : 'Upload photos'}
+          aria-label="Upload photos"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="h-5 w-5">
+            <path fillRule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" clipRule="evenodd" />
+          </svg>
+        </button>
+      </>
+    );
+  };
+
   return (
     <UploadProvider projectFolder={selectedProject?.folder} onCompleted={handlePhotosUploaded}>
     <div className="min-h-screen bg-gray-50" ref={mainRef}>
@@ -641,28 +947,33 @@ function App() {
                 Druso Photo Manager
               </h1>
               
-              {/* Right Controls: Create project + Panel (hamburger opens panel) */}
+              {/* Right Controls: Upload (+) and Options (hamburger) */}
               <div className="flex items-center space-x-2">
-                <button
-                  onClick={() => setShowCreateProject(true)}
-                  className="inline-flex items-center justify-center px-3 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
-                  title="Create project"
-                  aria-label="Create project"
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="h-5 w-5">
-                    <path fillRule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" clipRule="evenodd" />
-                  </svg>
-                </button>
-                <button
-                  onClick={() => { setOptionsTab('settings'); setShowOptionsModal(true); }}
-                  className="inline-flex items-center justify-center rounded-md border shadow-sm px-3 py-2 text-sm font-medium bg-white text-gray-700 hover:bg-gray-50 border-gray-300"
-                  title="Options"
-                  aria-label="Options"
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
-                  </svg>
-                </button>
+                <UploadButton disabled={!selectedProject} />
+                {showOptionsModal ? (
+                  <button
+                    onClick={() => setShowOptionsModal(false)}
+                    className="inline-flex items-center justify-center rounded-md border shadow-sm px-3 py-2 text-sm font-medium bg-white text-gray-700 hover:bg-gray-50 border-gray-300"
+                    title="Close options"
+                    aria-label="Close options"
+                  >
+                    {/* X icon sized exactly like hamburger (h-5 w-5) */}
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M6 6l12 12M18 6L6 18" />
+                    </svg>
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => { setOptionsTab('settings'); setShowOptionsModal(true); }}
+                    className="inline-flex items-center justify-center rounded-md border shadow-sm px-3 py-2 text-sm font-medium bg-white text-gray-700 hover:bg-gray-50 border-gray-300"
+                    title="Options"
+                    aria-label="Options"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+                    </svg>
+                  </button>
+                )}
               </div>
             </div>
           </div>
@@ -778,72 +1089,90 @@ function App() {
 
                   {/* Right: View toggle + Operations */}
                   <div className="flex items-center gap-2">
-                    <div className="flex space-x-2">
-                      {/* Gallery (grid) icon */}
-                      <button
-                        onClick={() => setViewMode('grid')}
-                        className={`px-2.5 py-1.5 rounded-md ${viewMode === 'grid' ? 'bg-blue-500 text-white' : 'bg-gray-200 text-gray-700'}`}
-                        title="Gallery view"
-                        aria-label="Gallery view"
-                      >
-                        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-                          <path d="M3 3h6v6H3V3zm8 0h6v6h-6V3zM3 11h6v6H3v-6zm8 6v-6h6v6h-6z" />
-                        </svg>
-                      </button>
-                      {/* Details (table/list) icon */}
-                      <button
-                        onClick={() => setViewMode('table')}
-                        className={`px-2.5 py-1.5 rounded-md ${viewMode === 'table' ? 'bg-blue-500 text-white' : 'bg-gray-200 text-gray-700'}`}
-                        title="Details view"
-                        aria-label="Details view"
-                      >
-                        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-                          <path d="M3 5h14v2H3V5zm0 4h14v2H3V9zm0 4h14v2H3v-2z" />
-                        </svg>
-                      </button>
-                    </div>
-                    {/* Size control: s/m/l */}
-                    {selectedProject && (
-                      <div className="ml-2 hidden md:inline-flex rounded-md overflow-hidden border">
-                        <button
-                          className={`px-2 py-1 text-sm ${sizeLevel === 's' ? 'bg-gray-900 text-white' : 'bg-white text-gray-700 hover:bg-gray-100'}`}
-                          onClick={() => setSizeLevel('s')}
-                          title="Small previews"
-                          aria-label="Small previews"
-                        >
-                          S
-                        </button>
-                        <button
-                          className={`px-2 py-1 text-sm border-l ${sizeLevel === 'm' ? 'bg-gray-900 text-white' : 'bg-white text-gray-700 hover:bg-gray-100'}`}
-                          onClick={() => setSizeLevel('m')}
-                          title="Medium previews"
-                          aria-label="Medium previews"
-                        >
-                          M
-                        </button>
-                        <button
-                          className={`px-2 py-1 text-sm border-l ${sizeLevel === 'l' ? 'bg-gray-900 text-white' : 'bg-white text-gray-700 hover:bg-gray-100'}`}
-                          onClick={() => setSizeLevel('l')}
-                          title="Large previews"
-                          aria-label="Large previews"
-                        >
-                          L
-                        </button>
+                    {selectedPhotos.size === 0 ? (
+                      <div key="controls" className="flex items-center gap-2 transition-all duration-150 ease-out transform opacity-100 scale-100 animate-fadeInScale">
+                        <div className="flex space-x-2">
+                          {/* Gallery (grid) icon */}
+                          <button
+                            onClick={() => setViewMode('grid')}
+                            className={`px-2.5 py-1.5 rounded-md ${viewMode === 'grid' ? 'bg-blue-500 text-white' : 'bg-gray-200 text-gray-700'}`}
+                            title="Gallery view"
+                            aria-label="Gallery view"
+                          >
+                            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                              <path d="M3 3h6v6H3V3zm8 0h6v6H11V3zM3 11h6v6H3v-6zm8 6h6v-6H11v6z" />
+                            </svg>
+                          </button>
+                          {/* Details (table/list) icon */}
+                          <button
+                            onClick={() => setViewMode('table')}
+                            className={`px-2.5 py-1.5 rounded-md ${viewMode === 'table' ? 'bg-blue-500 text-white' : 'bg-gray-200 text-gray-700'}`}
+                            title="Details view"
+                            aria-label="Details view"
+                          >
+                            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                              <path d="M3 5h14v2H3V5zm0 4h14v2H3V9zm0 4h14v2H3v-2z" />
+                            </svg>
+                          </button>
+                        </div>
+                        {/* Size control: s/m/l */}
+                        {selectedProject && (
+                          <div className="ml-2 hidden md:inline-flex rounded-md overflow-hidden border">
+                            <button
+                              className={`px-2 py-1 text-sm ${sizeLevel === 's' ? 'bg-gray-900 text-white' : 'bg-white text-gray-700 hover:bg-gray-100'}`}
+                              onClick={() => setSizeLevel('s')}
+                              title="Small previews"
+                              aria-label="Small previews"
+                            >
+                              S
+                            </button>
+                            <button
+                              className={`px-2 py-1 text-sm border-l ${sizeLevel === 'm' ? 'bg-gray-900 text-white' : 'bg-white text-gray-700 hover:bg-gray-100'}`}
+                              onClick={() => setSizeLevel('m')}
+                              title="Medium previews"
+                              aria-label="Medium previews"
+                            >
+                              M
+                            </button>
+                            <button
+                              className={`px-2 py-1 text-sm border-l ${sizeLevel === 'l' ? 'bg-gray-900 text-white' : 'bg-white text-gray-700 hover:bg-gray-100'}`}
+                              onClick={() => setSizeLevel('l')}
+                              title="Large previews"
+                              aria-label="Large previews"
+                            >
+                              L
+                            </button>
+                          </div>
+                        )}
+                        {/* Mobile: single size cycle button */}
+                        {selectedProject && (
+                          <button
+                            className="ml-2 md:hidden px-2.5 py-1 text-xs rounded-md bg-gray-200 text-gray-800 hover:bg-gray-300"
+                            onClick={() => setSizeLevel(prev => (prev === 's' ? 'm' : prev === 'm' ? 'l' : 's'))}
+                            title="Change preview size"
+                            aria-label="Change preview size"
+                          >
+                            Size {sizeLevel.toUpperCase()}
+                          </button>
+                        )}
                       </div>
+                    ) : (
+                      selectedProject && (
+                        <div key="actions" className="transition-all duration-150 ease-out transform opacity-100 scale-100 animate-fadeInScale">
+                          <OperationsMenu
+                            projectFolder={selectedProject.folder}
+                            projectData={filteredProjectData}
+                            selectedPhotos={selectedPhotos}
+                            setSelectedPhotos={setSelectedPhotos}
+                            onTagsUpdated={handleTagsUpdated}
+                            onKeepBulkUpdated={handleKeepBulkUpdated}
+                            onTagsBulkUpdated={handleTagsBulkUpdated}
+                            config={config}
+                            trigger="label"
+                          />
+                        </div>
+                      )
                     )}
-                    {/* Mobile: single size cycle button */}
-                    {selectedProject && (
-                      <button
-                        className="ml-2 md:hidden px-2.5 py-1 text-xs rounded-md bg-gray-200 text-gray-800 hover:bg-gray-300"
-                        onClick={() => setSizeLevel(prev => (prev === 's' ? 'm' : prev === 'm' ? 'l' : 's'))}
-                        title="Change preview size"
-                        aria-label="Change preview size"
-                      >
-                        Size {sizeLevel.toUpperCase()}
-                      </button>
-                    )}
-
-                    {/* Actions menu moved to floating FAB; removed from toolbar */}
                   </div>
                 </div>
               </div>
@@ -863,6 +1192,22 @@ function App() {
           </div>
         )}
       </div>
+      {/* Empty state when there are no projects */}
+      {projects.length === 0 && (
+        <div className="w-full px-4 sm:px-6 lg:px-8">
+          <div className="max-w-xl mx-auto mt-10 bg-white border rounded-lg shadow-sm p-6 text-center">
+            <div className="text-4xl mb-2">📁</div>
+            <h2 className="text-xl font-semibold mb-2">No projects yet</h2>
+            <p className="text-gray-600 mb-4">Create your first project to start importing and managing photos.</p>
+            <button
+              onClick={() => setShowCreateProject(true)}
+              className="inline-flex items-center justify-center px-4 py-2 rounded-md bg-blue-600 text-white hover:bg-blue-700"
+            >
+              Create project
+            </button>
+          </div>
+        </div>
+      )}
       {loading ? (
         <div className="flex justify-center items-center py-12">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500"></div>
@@ -874,7 +1219,13 @@ function App() {
 
           {activeTab === 'view' && (
             <div>
-              {/* Grid sorting controls */}
+              {/* If no project selected, show a gentle prompt */}
+              {!selectedProject && projects.length > 0 && (
+                <div className="mt-10 text-center text-gray-600">Select a project from the dropdown to begin.</div>
+              )}
+              {selectedProject && (
+                <>
+                {/* Grid sorting controls */}
               {viewMode === 'grid' && (
                 <div className="flex items-center gap-2 mb-2 px-1">
                   <span className="text-xs text-gray-500 mr-2">Sort:</span>
@@ -907,10 +1258,57 @@ function App() {
                 onSortChange={toggleSort}
                 sizeLevel={sizeLevel}
               />
+              </>
+              )}
             </div>
           )}
-
-          {/* Tag tab removed; tagging via OperationsMenu */}
+        </div>
+      )}
+      {/* Commit confirmation modal */}
+      {showCommitModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center" role="presentation">
+          <div className="absolute inset-0 bg-black/40" aria-hidden="true" onClick={() => setShowCommitModal(false)} />
+          <div
+            ref={commitModalRef}
+            className="relative bg-white rounded-lg shadow-xl w-full max-w-md mx-4"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="commit-modal-title"
+            aria-describedby="commit-modal-desc"
+            aria-busy={committing ? 'true' : 'false'}
+          >
+            <div className="px-6 py-4 border-b">
+              <h3 id="commit-modal-title" className="text-lg font-semibold">Commit pending deletions</h3>
+            </div>
+            <div className="px-6 py-4 space-y-2">
+              <p id="commit-modal-desc" className="text-sm text-gray-700">This will move files marked not to keep into the project's .trash folder.</p>
+              <div className="text-sm text-gray-600">
+                <div>Total pending: <span className="font-medium">{pendingDeletes.total}</span></div>
+                <div className="text-xs">JPG: {pendingDeletes.jpg} · RAW: {pendingDeletes.raw}</div>
+              </div>
+            </div>
+            <div className="px-6 py-4 border-t flex justify-end gap-2">
+              <button
+                type="button"
+                className="px-4 py-2 rounded-md bg-gray-200 text-gray-800 hover:bg-gray-300"
+                onClick={() => setShowCommitModal(false)}
+                disabled={committing}
+                aria-label="Cancel commit"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="px-4 py-2 rounded-md bg-red-600 text-white hover:bg-red-700 disabled:opacity-50"
+                onClick={confirmCommitChanges}
+                disabled={committing || pendingDeletes.total === 0}
+                aria-disabled={committing || pendingDeletes.total === 0 ? 'true' : 'false'}
+                aria-label="Confirm commit pending deletions"
+              >
+                {committing ? 'Committing…' : 'Commit'}
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
@@ -1001,18 +1399,40 @@ function App() {
       <UploadConfirmModal />
       <BottomUploadBar />
       {selectedProject?.folder && <GlobalDragDrop />}
-
-      {/* Floating Actions FAB: only show when some images are selected */}
-      {selectedProject && selectedPhotos.size > 0 && (
-        <OperationsMenu
-          projectFolder={selectedProject.folder}
-          projectData={filteredProjectData}
-          selectedPhotos={selectedPhotos}
-          setSelectedPhotos={setSelectedPhotos}
-          onTagsUpdated={handleTagsUpdated}
-          config={config}
-          variant="fab"
-        />
+      {/* Persistent bottom bar for pending commit/revert */}
+      {selectedProject && pendingDeletes.total > 0 && (
+        <div ref={commitBarRef} className="fixed bottom-0 inset-x-0 z-30">
+          <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+            <div className="mb-3 rounded-lg shadow-lg border bg-white">
+              <div className="px-4 py-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                <div className="flex items-center gap-3 text-sm" aria-live="polite">
+                  <span className="inline-flex items-center justify-center px-2 py-0.5 text-xs font-medium rounded-full bg-red-100 text-red-800">
+                    Pending deletions: {pendingDeletes.total}
+                  </span>
+                  <span className="text-xs text-gray-600">JPG: {pendingDeletes.jpg} · RAW: {pendingDeletes.raw}</span>
+                </div>
+                <div className="w-full grid grid-cols-2 gap-2 sm:w-auto sm:flex sm:items-center">
+                  <button
+                    onClick={handleRevertChanges}
+                    className="w-full px-3 py-2 rounded-md border text-sm bg-white text-gray-700 hover:bg-gray-50 border-gray-300 whitespace-nowrap"
+                    title="Revert keep flags to match actual file availability"
+                    aria-label="Revert changes to match file availability"
+                  >
+                    Revert Changes
+                  </button>
+                  <button
+                    onClick={handleCommitChanges}
+                    className="w-full px-3 py-2 rounded-md text-sm bg-red-600 text-white hover:bg-red-700"
+                    title="Move unkept available files to .trash"
+                    aria-label={`Commit ${pendingDeletes.total} pending deletions`}
+                  >
+                    Commit ({pendingDeletes.total})
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
     </div>
     </UploadProvider>
