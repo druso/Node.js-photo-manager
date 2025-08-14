@@ -1,5 +1,7 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import DateRangePicker from './DateRangePicker';
+import { filterTriggerClass } from './ui/controlClasses';
+import SelectModal from './ui/SelectModal';
 
 const UniversalFilter = ({ 
   projectData, 
@@ -11,11 +13,34 @@ const UniversalFilter = ({
     keepType: 'any' // any | none | jpg_only | raw_jpg
   },
   onFilterChange, 
-  disabled = false
+  disabled = false,
+  onClose
 }) => {
 
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [suggestions, setSuggestions] = useState([]);
+  const [openSelect, setOpenSelect] = useState(null); // 'orientation' | 'fileType' | 'keepType' | null
+  const [isDateOpen, setIsDateOpen] = useState(false);
+  const panelRef = useRef(null);
+
+  const orientationOptions = [
+    { value: 'any', label: 'Any' },
+    { value: 'vertical', label: 'Vertical' },
+    { value: 'horizontal', label: 'Horizontal' },
+  ];
+  const fileTypeOptions = [
+    { value: 'any', label: 'Any (no filter)' },
+    { value: 'jpg_only', label: 'JPG only' },
+    { value: 'raw_only', label: 'RAW only' },
+    { value: 'both', label: 'Both' },
+  ];
+  const keepTypeOptions = [
+    { value: 'any', label: 'Show all (no filter)' },
+    { value: 'any_kept', label: 'Any kept (JPG only or RAW+JPG)' },
+    { value: 'jpg_only', label: 'Keep JPG only' },
+    { value: 'raw_jpg', label: 'Keep RAW + JPG' },
+    { value: 'none', label: 'Keep none (planned delete)' },
+  ];
 
   // Generate suggestions from manifest data
   const allSuggestions = useMemo(() => {
@@ -98,14 +123,42 @@ const UniversalFilter = ({
     (filters.fileType && filters.fileType !== 'any') || 
     (filters.keepType && filters.keepType !== 'any') ||
     filters.orientation !== 'any';
+  const resetEnabled = hasActiveFilters && !disabled;
+
+  // Derive available dates (YYYY-MM-DD) from photos to highlight in date picker
+  const availableDates = useMemo(() => {
+    const set = new Set();
+    const photos = projectData?.photos || [];
+    for (const p of photos) {
+      const dt = p?.date_time_original || p?.metadata?.date_time_original;
+      if (!dt) continue;
+      const isoDay = new Date(dt).toISOString().slice(0, 10);
+      if (isoDay) set.add(isoDay);
+    }
+    return Array.from(set);
+  }, [projectData]);
+
+  // Close filter panel on outside click when no sub-modals are open
+  useEffect(() => {
+    const handleDown = (e) => {
+      if (!panelRef.current) return;
+      const clickedInside = panelRef.current.contains(e.target);
+      const anyModalOpen = !!openSelect || isDateOpen;
+      if (!clickedInside && !anyModalOpen) {
+        if (typeof onClose === 'function') onClose();
+      }
+    };
+    document.addEventListener('mousedown', handleDown);
+    return () => document.removeEventListener('mousedown', handleDown);
+  }, [openSelect, isDateOpen, onClose]);
 
   return (
-    <div className={`${disabled ? 'bg-gray-50' : 'bg-white'}`}>
+    <div ref={panelRef} className={`${disabled ? 'bg-gray-50' : 'bg-white'}`}>
       <div className="w-full p-4 space-y-6">
-        {/* All Filters in organized layout */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-          {/* Text Search with Suggestions */}
-          <div className="relative col-span-2 lg:col-span-2">
+        {/* Text Search */}
+        <div className="grid grid-cols-2 gap-4">
+          {/* Text Search with Suggestions (full width) */}
+          <div className="relative col-span-2">
             <label htmlFor="textSearch" className="block text-sm font-medium text-gray-700 mb-1">
               Filter by filename or tag
             </label>
@@ -137,79 +190,134 @@ const UniversalFilter = ({
               </div>
             )}
           </div>
-
-          {/* File Types Available Dropdown */}
+          {/* Date taken (left) */}
           <div>
-            <label htmlFor="fileType" className="block text-sm font-medium text-gray-700 mb-1">
-              File types available
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Date taken
             </label>
-            <select
-              id="fileType"
-              value={filters.fileType}
-              onChange={(e) => updateFilters({ ...filters, fileType: e.target.value })}
-              className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+            <DateRangePicker
+              dateRange={filters.dateRange}
+              onDateRangeChange={(range) => updateFilters({ ...filters, dateRange: range })}
               disabled={disabled}
-            >
-              <option value="any">Any (no filter)</option>
-              <option value="jpg_only">JPG only</option>
-              <option value="raw_only">RAW only</option>
-              <option value="both">Both</option>
-            </select>
+              onOpenChange={setIsDateOpen}
+              availableDates={availableDates}
+            />
           </div>
 
-          {/* File Types To Keep Dropdown */}
-          <div>
-            <label htmlFor="keepType" className="block text-sm font-medium text-gray-700 mb-1">
-              File types to keep
-            </label>
-            <select
-              id="keepType"
-              value={filters.keepType}
-              onChange={(e) => updateFilters({ ...filters, keepType: e.target.value })}
-              className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
-              disabled={disabled}
-            >
-              <option value="any">Show all (no filter)</option>
-              <option value="any_kept">Any kept (JPG only or RAW+JPG)</option>
-              <option value="jpg_only">Keep JPG only</option>
-              <option value="raw_jpg">Keep RAW + JPG</option>
-              <option value="none">Keep none (planned delete)</option>
-            </select>
-          </div>
-
-          {/* Orientation */}
+          {/* Orientation (right of Date taken) */}
           <div>
             <label htmlFor="orientation" className="block text-sm font-medium text-gray-700 mb-1">
               Orientation
             </label>
-            <select
-              id="orientation"
-              value={filters.orientation}
-              onChange={(e) => updateFilters({ ...filters, orientation: e.target.value })}
-              className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+            <button
+              type="button"
+              onClick={() => !disabled && setOpenSelect('orientation')}
               disabled={disabled}
+              className={`w-full ${filterTriggerClass} justify-between ${disabled ? 'text-gray-400 border-gray-200 cursor-not-allowed' : ''}`}
             >
-              <option value="any">Any</option>
-              <option value="vertical">Vertical</option>
-              <option value="horizontal">Horizontal</option>
-            </select>
+              <span className="truncate">
+                {orientationOptions.find(o => o.value === filters.orientation)?.label || 'Any'}
+              </span>
+              <svg className="h-4 w-4 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+            </button>
+          </div>
+
+          {/* File types available (left on second row) */}
+          <div>
+            <label htmlFor="fileType" className="block text-sm font-medium text-gray-700 mb-1">
+              File types available
+            </label>
+            <button
+              type="button"
+              onClick={() => !disabled && setOpenSelect('fileType')}
+              disabled={disabled}
+              className={`w-full ${filterTriggerClass} justify-between ${disabled ? 'text-gray-400 border-gray-200 cursor-not-allowed' : ''}`}
+            >
+              <span className="truncate">
+                {fileTypeOptions.find(o => o.value === filters.fileType)?.label || 'Any (no filter)'}
+              </span>
+              <svg className="h-4 w-4 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+            </button>
+          </div>
+
+          {/* File types to keep (right on second row) */}
+          <div>
+            <label htmlFor="keepType" className="block text-sm font-medium text-gray-700 mb-1">
+              File types to keep
+            </label>
+            <button
+              type="button"
+              onClick={() => !disabled && setOpenSelect('keepType')}
+              disabled={disabled}
+              className={`w-full ${filterTriggerClass} justify-between ${disabled ? 'text-gray-400 border-gray-200 cursor-not-allowed' : ''}`}
+            >
+              <span className="truncate">
+                {keepTypeOptions.find(o => o.value === filters.keepType)?.label || 'Show all (no filter)'}
+              </span>
+              <svg className="h-4 w-4 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+            </button>
           </div>
         </div>
-        
-        {/* Date Range Filter - Full Width Below */}
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            Date taken
-          </label>
-          <DateRangePicker
-            dateRange={filters.dateRange}
-            onDateRangeChange={(range) => updateFilters({ ...filters, dateRange: range })}
-            disabled={disabled}
-          />
-        </div>
-
 
       </div>
+      {/* Footer actions */}
+      <div className="border-t px-4 py-3">
+        <div className="grid grid-cols-2 gap-3">
+          {/* Reset on the left - red outline when enabled, toned down when disabled */}
+          <button
+            type="button"
+            className={`w-full px-4 py-2 rounded-md border transition-colors ${
+              resetEnabled
+                ? 'border-red-300 text-red-600 hover:bg-red-50 hover:border-red-400'
+                : 'border-gray-200 text-gray-300 cursor-not-allowed bg-white'
+            }`}
+            onClick={clearAllFilters}
+            disabled={!resetEnabled}
+            aria-disabled={!resetEnabled ? 'true' : 'false'}
+            aria-label="Reset filters"
+          >
+            Reset
+          </button>
+          {/* Close on the right - gray filled */}
+          <button
+            type="button"
+            className="w-full px-4 py-2 rounded-md bg-gray-200 text-gray-800 hover:bg-gray-300 disabled:opacity-50"
+            onClick={() => { if (typeof onClose === 'function') onClose(); }}
+            aria-label="Close filters"
+          >
+            Close
+          </button>
+        </div>
+      </div>
+
+      {/* Modal selects */}
+      {openSelect === 'orientation' && (
+        <SelectModal
+          title="Orientation"
+          options={orientationOptions}
+          value={filters.orientation}
+          onSelect={(val) => updateFilters({ ...filters, orientation: val })}
+          onClose={() => setOpenSelect(null)}
+        />
+      )}
+      {openSelect === 'fileType' && (
+        <SelectModal
+          title="File types available"
+          options={fileTypeOptions}
+          value={filters.fileType}
+          onSelect={(val) => updateFilters({ ...filters, fileType: val })}
+          onClose={() => setOpenSelect(null)}
+        />
+      )}
+      {openSelect === 'keepType' && (
+        <SelectModal
+          title="File types to keep"
+          options={keepTypeOptions}
+          value={filters.keepType}
+          onSelect={(val) => updateFilters({ ...filters, keepType: val })}
+          onClose={() => setOpenSelect(null)}
+        />
+      )}
     </div>
   );
 };

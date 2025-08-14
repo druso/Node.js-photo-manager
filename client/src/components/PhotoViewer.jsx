@@ -127,10 +127,7 @@ const PhotoViewer = ({ projectData, projectFolder, startIndex, onClose, config, 
       // notify parent to update in-memory data so lists/grid refresh without full reload
       onKeepUpdated && onKeepUpdated({ filename: currentPhoto.filename, ...target });
       console.log('Keep update success');
-      // If cancelled (both false), advance to next photo for quicker review
-      if (target.keep_jpg === false && target.keep_raw === false) {
-        nextPhoto();
-      }
+      // Do not auto-advance on delete; only show toast and stay on current index
     } catch (e) {
       console.error('Viewer keep error:', e);
       alert(e.message || 'Failed to update keep flags');
@@ -211,8 +208,25 @@ const PhotoViewer = ({ projectData, projectFolder, startIndex, onClose, config, 
 
   // This effect handles closing the viewer if the data becomes invalid
   useEffect(() => {
-    if (startIndex === -1 || !photos[currentIndex]) {
+    // If the viewer was opened with an invalid startIndex, close immediately
+    if (startIndex === -1) {
       onClose();
+      return;
+    }
+    // If the photo list is empty, close the viewer
+    if (!photos || photos.length === 0) {
+      onClose();
+      return;
+    }
+    // If currentIndex is out of bounds after filtering, clamp to last valid index
+    if (currentIndex >= photos.length) {
+      setCurrentIndex(photos.length - 1);
+      return;
+    }
+    // If current slot became undefined due to a transient update, clamp to a valid index
+    if (!photos[currentIndex]) {
+      const clamped = Math.max(0, Math.min(currentIndex, photos.length - 1));
+      setCurrentIndex(clamped);
     }
   }, [photos, currentIndex, startIndex, onClose]);
 

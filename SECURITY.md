@@ -157,3 +157,21 @@ Action requested (Security Team):
 
 - Review SSE endpoint CORS/rate limiting posture and document any required production settings.
 - Re-evaluate the need/severity of asset endpoint throttling given probing removal; keep minimal rate limits and caching guidance.
+
+4) Filter Panel Footer Buttons (Close/Reset)
+
+- Change: Added non-destructive UI controls to the filters panel (`Close` to collapse the panel, `Reset` to clear active filters; disabled when no filters are active).
+- Rationale: Improves UX and mobile ergonomics; no backend interaction.
+- Security considerations: UI-only; no new endpoints, no changes to request surface. No additional review required.
+
+5) Filters Layout Reorder + Popover Date Picker
+
+- Change: Reordered filters within `UniversalFilter.jsx` to improve scanability: Row 0 text search (full width); Row 1 date taken (new dual‑month popover with presets) + orientation; Row 2 file types available + file types to keep. Replaced separate From/To inputs with a single popover range picker component (`DualMonthRangePopover.jsx`).
+- Rationale: More intuitive filtering and faster selection.
+- Security considerations: UI-only; no backend changes or new endpoints. No expansion of attack surface. No additional review required.
+
+6) Viewer Delete Behavior (No Auto-Advance)
+
+- Change: The photo viewer no longer auto-advances when the user plans a delete (sets keep none). The current index is clamped when the filtered photo list changes to avoid premature viewer close.
+- Rationale: Prevents double-skip when filters hide deleted items and eliminates transient UI errors from rapid close/reopen.
+- Security considerations: UI-only; no new endpoints, no change to request patterns or data exposure. No additional review required.

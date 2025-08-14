@@ -50,6 +50,10 @@ function App() {
   const [committing, setCommitting] = useState(false);
   // Track the opener to restore focus when modal closes
   const commitOpenerElRef = useRef(null);
+  // Revert modal state
+  const [showRevertModal, setShowRevertModal] = useState(false);
+  const [reverting, setReverting] = useState(false);
+  const revertOpenerElRef = useRef(null);
 
   const handleCommitChanges = () => {
     if (!selectedProject) return;
@@ -119,23 +123,61 @@ function App() {
     if (!showCommitModal) return;
     const modal = commitModalRef.current;
     if (!modal) return;
+    const previouslyFocused = document.activeElement;
     const focusable = modal.querySelectorAll(
-      'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+      'a[href], button:not([disabled]), textarea, input, select, [tabindex]:not([tabindex="-1"])'
     );
     const first = focusable[0];
     const last = focusable[focusable.length - 1];
     const onKeyDown = (e) => {
-      if (e.key === 'Escape') { e.preventDefault(); setShowCommitModal(false); }
-      if (e.key === 'Tab' && focusable.length) {
-        if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); return; }
-        if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); return; }
+      if (e.key === 'Tab') {
+        if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+        else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+      }
+      if (e.key === 'Escape') setShowCommitModal(false);
+    };
+    first && first.focus();
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('keydown', onKeyDown);
+      if (commitOpenerElRef.current && document.contains(commitOpenerElRef.current)) {
+        try { commitOpenerElRef.current.focus(); } catch {}
+      } else if (previouslyFocused) {
+        try { previouslyFocused.focus(); } catch {}
       }
     };
-    document.addEventListener('keydown', onKeyDown);
-    // Initial focus
-    if (first && typeof first.focus === 'function') first.focus();
-    return () => document.removeEventListener('keydown', onKeyDown);
   }, [showCommitModal]);
+
+  // A11y: revert modal focus trap
+  const revertModalRef = useRef(null);
+  useEffect(() => {
+    if (!showRevertModal) return;
+    const modal = revertModalRef.current;
+    if (!modal) return;
+    const previouslyFocused = document.activeElement;
+    const focusable = modal.querySelectorAll(
+      'a[href], button:not([disabled]), textarea, input, select, [tabindex]:not([tabindex="-1"])'
+    );
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    const onKeyDown = (e) => {
+      if (e.key === 'Tab') {
+        if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+        else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+      }
+      if (e.key === 'Escape') setShowRevertModal(false);
+    };
+    first && first.focus();
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('keydown', onKeyDown);
+      if (revertOpenerElRef.current && document.contains(revertOpenerElRef.current)) {
+        try { revertOpenerElRef.current.focus(); } catch {}
+      } else if (previouslyFocused) {
+        try { previouslyFocused.focus(); } catch {}
+      }
+    };
+  }, [showRevertModal]);
 
   // Restore focus to the opener when modal closes
   useEffect(() => {
@@ -829,8 +871,15 @@ function App() {
 
   
 
-  const handleRevertChanges = async () => {
+  const openRevertConfirm = () => {
     if (!selectedProject) return;
+    try { revertOpenerElRef.current = document.activeElement; } catch {}
+    setShowRevertModal(true);
+  };
+
+  const confirmRevertChanges = async () => {
+    if (!selectedProject) return;
+    setReverting(true);
     try {
       await toast.promise(
         (async () => {
@@ -853,8 +902,11 @@ function App() {
           error:   { emoji: '⚠️', message: 'Revert failed', variant: 'error' }
         }
       );
+      setShowRevertModal(false);
     } catch (e) {
       console.error('Revert changes failed', e);
+    } finally {
+      setReverting(false);
     }
   };
 
@@ -1180,12 +1232,13 @@ function App() {
 
             {/* Filters Panel */}
             {!filtersCollapsed && (
-              <div className="bg-white border-t">
+              <div className="bg-white border-t animate-slideDownFade">
                 <UniversalFilter
                   projectData={projectData}
                   filters={activeFilters}
                   onFilterChange={setActiveFilters}
                   disabled={loading}
+                  onClose={() => setFiltersCollapsed(true)}
                 />
               </div>
             )}
@@ -1205,6 +1258,50 @@ function App() {
             >
               Create project
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* Revert confirmation modal */}
+      {showRevertModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center" role="presentation">
+          <div className="absolute inset-0 bg-black/40" aria-hidden="true" onClick={() => setShowRevertModal(false)} />
+          <div
+            ref={revertModalRef}
+            className="relative bg-white rounded-lg shadow-xl w-full max-w-md mx-4"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="revert-modal-title"
+            aria-describedby="revert-modal-desc"
+            aria-busy={reverting ? 'true' : 'false'}
+          >
+            <div className="px-6 py-4 border-b">
+              <h3 id="revert-modal-title" className="text-lg font-semibold">Revert keep flags</h3>
+            </div>
+            <div className="px-6 py-4 space-y-2">
+              <p id="revert-modal-desc" className="text-sm text-gray-700">This will reset all keep flags to match the actual file availability in the project.</p>
+            </div>
+            <div className="px-6 py-4 border-t flex justify-end gap-2">
+              <button
+                type="button"
+                className="px-4 py-2 rounded-md bg-gray-200 text-gray-800 hover:bg-gray-300"
+                onClick={() => setShowRevertModal(false)}
+                disabled={reverting}
+                aria-label="Cancel revert"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="px-4 py-2 rounded-md bg-gray-600 text-white hover:bg-gray-700 disabled:opacity-50"
+                onClick={confirmRevertChanges}
+                disabled={reverting}
+                aria-disabled={reverting ? 'true' : 'false'}
+                aria-label="Confirm revert keep flags"
+              >
+                {reverting ? 'Reverting…' : 'Revert'}
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -1411,9 +1508,26 @@ function App() {
                   </span>
                   <span className="text-xs text-gray-600">JPG: {pendingDeletes.jpg} · RAW: {pendingDeletes.raw}</span>
                 </div>
-                <div className="w-full grid grid-cols-2 gap-2 sm:w-auto sm:flex sm:items-center">
+                <div className="w-full grid grid-cols-3 gap-2 sm:w-auto sm:flex sm:items-center">
+                  {/* Preview Mode toggle switch - syncs with keepType any_kept */}
+                  <div className="w-full flex items-center gap-2">
+                    <span className="text-sm text-gray-700 select-none">Preview Mode</span>
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={activeFilters.keepType === 'any_kept'}
+                      onClick={() => setActiveFilters(prev => ({ ...prev, keepType: (prev.keepType === 'any_kept' ? 'any' : 'any_kept') }))}
+                      className={`${activeFilters.keepType === 'any_kept' ? 'bg-blue-600' : 'bg-gray-200'} relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2`}
+                      title="Toggle preview of photos that will be kept (JPG-only or RAW+JPG)"
+                    >
+                      <span
+                        aria-hidden="true"
+                        className={`${activeFilters.keepType === 'any_kept' ? 'translate-x-5' : 'translate-x-0'} pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out`}
+                      />
+                    </button>
+                  </div>
                   <button
-                    onClick={handleRevertChanges}
+                    onClick={openRevertConfirm}
                     className="w-full px-3 py-2 rounded-md border text-sm bg-white text-gray-700 hover:bg-gray-50 border-gray-300 whitespace-nowrap"
                     title="Revert keep flags to match actual file availability"
                     aria-label="Revert changes to match file availability"

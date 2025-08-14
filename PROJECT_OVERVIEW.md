@@ -123,6 +123,7 @@ Refer to `SCHEMA_DOCUMENTATION.md` for detailed table structures and relationshi
 *   **Grid and Table Views**: Multiple viewing modes for photo browsing
 *   **Full-screen Viewer**: Detailed photo viewing with zoom and navigation
 *   **Keyboard Shortcuts**: Comprehensive keyboard navigation (see configuration)
+    - Viewer behavior: planning a delete (keep none) no longer auto-advances; the viewer stays on the current image and shows a toast. When filters change the visible list, the current index is clamped to a valid photo instead of closing.
  *   **Real-time Updates**: Live job progress via Server-Sent Events
  *   **Incremental Thumbnails (SSE)**: Pending thumbnails update via item-level SSE events; no client-side probing of asset URLs
 *   **Optimistic Updates**: Keep/Tag/Revert actions update the UI immediately without a full data refetch, preserving browsing context.
@@ -130,6 +131,12 @@ Refer to `SCHEMA_DOCUMENTATION.md` for detailed table structures and relationshi
 *   **Layout Stability**: Thumbnail cells use constant border thickness; selection changes only color/ring, avoiding micro layout shifts that can nudge scroll.
  *   **Grid Lazy-Load Reset Policy**: The grid’s visible window only resets when changing projects (or lazy threshold), not on incremental data updates.
  *   **Scroll/Viewer Preservation**: Window/main scroll and open viewer are preserved across background refreshes and fallback refetches.
+*   **Filter Panel UX**: The filters panel includes bottom actions: a gray "Close" button to collapse the panel, and a blue "Reset" button that becomes enabled only when at least one filter is active. Buttons share the full width (50% each) for clear mobile ergonomics.
+*   **Filters Layout**: Within the panel, filters are organized for quicker scanning:
+    - Row 0 (full width): Text search with suggestions
+    - Row 1: Date taken (new popover range picker with two months + presets), Orientation
+    - Row 2: File types available, File types to keep
+  The date range picker is a single trigger button that opens a dual‑month popover with quick‑select presets (Today, Last 7 days, This month, etc.).
 
 ### Tagging System
 *   **Flexible Tagging**: Add custom tags to photos for organization
@@ -175,7 +182,7 @@ Job types:
 
 - `trash_maintenance`: Remove files in `.trash` older than 24h.
 - `manifest_check`: Verify DB availability flags (`jpg_available`, `raw_available`) against files on disk and fix discrepancies.
-- `folder_check`: Scan the project folder for untracked files; enqueue `upload_postprocess` for accepted files; move unaccepted files to `.trash`.
+- `folder_check`: Scan the project folder for untracked files; enqueue `upload_postprocess` only for newly discovered bases (not already present in the manifest); move unaccepted files to `.trash`.
 - `manifest_cleaning`: Delete rows where both JPG and RAW are unavailable.
 
 Scheduler (`server/services/scheduler.js`) cadence:

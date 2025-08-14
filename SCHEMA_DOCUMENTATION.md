@@ -83,7 +83,7 @@ High‑priority, idempotent maintenance jobs operate per project:
 
 - `trash_maintenance`: remove files in `.trash` older than 24h
 - `manifest_check`: reconcile DB availability flags with files on disk
-- `folder_check`: scan project folder for untracked files; enqueue `upload_postprocess` for accepted ones; move others to `.trash`
+- `folder_check`: scan project folder for untracked files; enqueue `upload_postprocess` only for newly discovered bases (not already in the manifest); move others to `.trash`
 - `manifest_cleaning`: delete photo rows with no JPG or RAW available
 
 Scheduler (`server/services/scheduler.js`) enqueues these periodically for all projects. See `PROJECT_OVERVIEW.md` for schedule details.

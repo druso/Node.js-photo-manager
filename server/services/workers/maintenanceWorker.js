@@ -117,7 +117,7 @@ async function runFolderCheck(job) {
   for (const [base, availability] of discoveredBases.entries()) {
     const existing = photosRepo.getByProjectAndFilename(project.id, base);
     if (!existing) {
-      // Upsert minimal record so downstream processing can proceed uniformly
+      // New base discovered on disk but not in manifest: create minimal row and schedule processing
       photosRepo.upsertPhoto(project.id, {
         filename: base,
         basename: base,
@@ -134,9 +134,11 @@ async function runFolderCheck(job) {
         orientation: null,
         meta_json: null,
       });
+      // Only enqueue postprocess for truly new bases
+      toProcess.push({ filename: base });
+    } else {
+      // Existing record present: do not enqueue here. Availability corrections are handled by manifest_check; orphan cleanup by manifest_cleaning.
     }
-    // Schedule derivative generation for discovered base
-    toProcess.push({ filename: base });
   }
 
   if (toProcess.length) {
