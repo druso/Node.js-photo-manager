@@ -17,6 +17,32 @@ This document summarizes the background job pipeline, supported job types, their
 - Heartbeats, crash recovery (`requeueStaleRunning`), and bounded retries (`max_attempts_default`) are handled by `workerLoop.js`.
 - Live job updates via SSE: `GET /api/jobs/stream` (also item-level events from `derivativesWorker`).
 
+## At a glance: Tasks → Steps and Priorities
+
+- Upload Post-Process (`upload_postprocess` task)
+  - `upload_postprocess` (90)
+  - `manifest_check` (95)
+  - `folder_check` (95)
+
+- Commit Changes (`change_commit` task)
+  - `file_removal` (100)
+  - `manifest_check` (95)
+  - `folder_check` (95)
+  - `manifest_cleaning` (80)
+
+- Maintenance (`maintenance` task)
+  - `trash_maintenance` (100)
+  - `manifest_check` (95)
+  - `folder_check` (95)
+  - `manifest_cleaning` (80)
+
+- Delete Project (`project_delete` task)
+  - `project_stop_processes` (100)
+  - `project_delete_files` (100)
+  - `project_cleanup_db` (95)
+
+Lane behavior: steps with priority ≥ `pipeline.priority_threshold` run in the priority lane and can preempt normal jobs. See `config.json` for `pipeline.priority_lane_slots` and `pipeline.priority_threshold`.
+
 ## Supported Job Types
 
 - generate_derivatives
@@ -48,6 +74,11 @@ This document summarizes the background job pipeline, supported job types, their
   - Worker: `maintenanceWorker.runManifestCleaning()`.
   - Purpose: periodic manifest/database cleanup.
   - Payload: none currently.
+
+- file_removal
+  - Worker: `fileRemovalWorker.runFileRemoval()`.
+  - Purpose: remove non-kept originals/derivatives during Commit; idempotent and safe to retry.
+  - Payload: carries task metadata (bound to the `change_commit` task step).
 
 - project_stop_processes (part of task `project_delete`)
   - Worker: `projectDeletionWorker.stopProcesses()`.
@@ -83,14 +114,14 @@ Note: Any other `type` will be failed by `workerLoop` as Unknown.
 
 ### Maintenance
 
-- Scheduled in `server/services/scheduler.js` for each project:
-  - `trash_maintenance` (priority 100, hourly)
-  - `manifest_check` (priority 95, every 6h)
-  - `folder_check` (priority 95, every 6h)
-  - `manifest_cleaning` (priority 80, daily)
-- Can also be triggered manually via `server/routes/maintenance.js`.
-- Lane behavior:
-  - High priorities (>= threshold, default 90) run in the priority lane ensuring quick reconciliation independent of long-running normal jobs.
+- Scheduler model (see `server/services/scheduler.js`): kicks off the `maintenance` task hourly for each project.
+- Task composition (see `server/services/task_definitions.json` → `maintenance.steps`):
+  - `trash_maintenance` (priority 100)
+  - `manifest_check` (priority 95)
+  - `folder_check` (priority 95)
+  - `manifest_cleaning` (priority 80)
+- Manual triggering: maintenance flows can be initiated via `server/routes/maintenance.js` where applicable.
+- Lane behavior: high priorities (>= threshold, default 90) run in the priority lane to keep reconciliation snappy even if normal jobs are long-running.
 
 ### Change Commit (Commit/Revert Toolbar)
 
@@ -118,3 +149,18 @@ Note: Any other `type` will be failed by `workerLoop` as Unknown.
 - List jobs: `GET /api/projects/:folder/jobs` (filters: `status`, `type`).
 - Job detail: `GET /api/jobs/:id` (includes items summary).
 - SSE stream: `GET /api/jobs/stream` for real-time updates.
+
+## Project Deletion Task
+
+- Endpoint: `DELETE /api/projects/:folder`
+  - Performs a soft-delete (`projects.status='canceled'`, `archived_at` set) and enqueues the high-priority `project_delete` task so the UI removal is immediate while cleanup runs asynchronously.
+
+- Task steps (see `server/services/task_definitions.json` → `project_delete.steps`):
+  1) `project_stop_processes` — priority 100
+     - Marks project archived and cancels queued/running jobs for the project.
+  2) `project_delete_files` — priority 100
+     - Deletes on-disk folder `.projects/<project_folder>/`.
+  3) `project_cleanup_db` — priority 95
+     - Cleans related DB rows (`photos`, `tags`, `photo_tags`) while retaining the archived `projects` row.
+
+- Lane behavior: priorities ≥ threshold (default 90) run in the priority lane, ensuring deletion tasks preempt normal jobs.

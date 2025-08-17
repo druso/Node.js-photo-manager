@@ -11,7 +11,18 @@ const app = express();
 const PORT = process.env.PORT || 5000;
 
 // Middleware
-app.use(cors());
+// Production CORS allowlist (configurable via ALLOWED_ORIGINS comma-separated). Defaults to localhost:3000 for dev.
+const rawAllowed = process.env.ALLOWED_ORIGINS || 'http://localhost:3000';
+const allowedOrigins = rawAllowed.split(',').map(s => s.trim()).filter(Boolean);
+app.use(cors({
+  origin: function(origin, cb) {
+    // Allow same-origin/non-browser (no Origin header)
+    if (!origin) return cb(null, true);
+    if (allowedOrigins.includes(origin)) return cb(null, true);
+    return cb(new Error('CORS: Origin not allowed'));
+  },
+  credentials: false
+}));
 app.use(express.json());
 app.use(express.static('public'));
 
@@ -41,6 +52,14 @@ fs.ensureDirSync(PROJECTS_DIR);
 const CONFIG_PATH = path.join(__dirname, 'config.json');
 const { getConfig } = require('./server/services/config');
 let config = getConfig();
+
+// Fail fast if DOWNLOAD_SECRET is not set properly in production when signed downloads are required
+const REQUIRE_SIGNED = process.env.REQUIRE_SIGNED_DOWNLOADS !== 'false';
+const DOWNLOAD_SECRET = process.env.DOWNLOAD_SECRET || 'dev-download-secret-change-me';
+if (process.env.NODE_ENV === 'production' && REQUIRE_SIGNED && DOWNLOAD_SECRET === 'dev-download-secret-change-me') {
+  console.error('[SECURITY] DOWNLOAD_SECRET is using the insecure default in production. Set a strong secret in the environment.');
+  process.exit(1);
+}
 
 // Configure multer for file uploads
 const storage = multer.memoryStorage();

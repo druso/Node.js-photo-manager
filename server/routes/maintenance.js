@@ -2,6 +2,7 @@ const express = require('express');
 const projectsRepo = require('../services/repositories/projectsRepo');
 const photosRepo = require('../services/repositories/photosRepo');
 const tasksOrchestrator = require('../services/tasksOrchestrator');
+const { rateLimit } = require('../utils/rateLimit');
 
 const router = express.Router();
 router.use(express.json());
@@ -16,7 +17,8 @@ function extVariants(name, exts) {
 }
 
 // POST /api/projects/:folder/commit-changes
-router.post('/:folder/commit-changes', async (req, res) => {
+// Limit: 10 requests per 5 minutes per IP
+router.post('/:folder/commit-changes', rateLimit({ windowMs: 5 * 60 * 1000, max: 10 }), async (req, res) => {
   try {
     const { folder } = req.params;
     const project = projectsRepo.getByFolder(folder);
@@ -31,7 +33,8 @@ router.post('/:folder/commit-changes', async (req, res) => {
 });
 
 // POST /api/projects/:folder/revert-changes
-router.post('/:folder/revert-changes', async (req, res) => {
+// Limit: 10 requests per 5 minutes per IP
+router.post('/:folder/revert-changes', rateLimit({ windowMs: 5 * 60 * 1000, max: 10 }), async (req, res) => {
   try {
     const { folder } = req.params;
     const project = projectsRepo.getByFolder(folder);

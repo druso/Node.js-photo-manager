@@ -8,6 +8,8 @@ const { onJobUpdate } = require('../services/events');
 
 const router = express.Router();
 router.use(express.json());
+const ipConnCounts = new Map(); // ip -> count
+const MAX_SSE_PER_IP = Number(process.env.SSE_MAX_CONN_PER_IP || 2);
 
 // POST /api/projects/:folder/jobs -> start a task for a project (no standalone jobs)
 router.post('/projects/:folder/jobs', (req, res) => {
@@ -67,6 +69,13 @@ router.get('/jobs/:id(\\d+)', (req, res) => {
 
 // GET /api/jobs/stream -> SSE for job updates
 router.get('/jobs/stream', (req, res) => {
+  const ip = req.ip || req.connection?.remoteAddress || 'unknown';
+  const current = ipConnCounts.get(ip) || 0;
+  if (current >= MAX_SSE_PER_IP) {
+    return res.status(429).json({ error: 'Too many SSE connections from this IP' });
+  }
+  ipConnCounts.set(ip, current + 1);
+
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
@@ -81,13 +90,30 @@ router.get('/jobs/stream', (req, res) => {
   };
 
   const off = onJobUpdate(send);
+  // Heartbeat every 25s to keep intermediaries alive
+  const heartbeat = setInterval(() => {
+    try { res.write(`: ping\n\n`); } catch (_) {}
+  }, 25 * 1000);
 
-  req.on('close', () => {
-    off();
+  // Idle timeout: close after 5 minutes to prevent pinned resources
+  const idleTimeoutMs = Number(process.env.SSE_IDLE_TIMEOUT_MS || (5 * 60 * 1000));
+  const idleTimer = setTimeout(() => {
+    try { res.write(`event: bye\ndata: {"reason":"idle_timeout"}\n\n`); } catch (_) {}
     try { res.end(); } catch (_) {}
-  });
+  }, idleTimeoutMs);
 
-  // initial heartbeat
+  function cleanup() {
+    clearInterval(heartbeat);
+    clearTimeout(idleTimer);
+    off();
+    const cur = ipConnCounts.get(ip) || 1;
+    if (cur <= 1) ipConnCounts.delete(ip); else ipConnCounts.set(ip, cur - 1);
+  }
+
+  req.on('close', cleanup);
+
+  // initial heartbeat and hello
+  try { res.write(`: ping\n\n`); } catch (_) {}
   send({ type: 'hello' });
 });
 

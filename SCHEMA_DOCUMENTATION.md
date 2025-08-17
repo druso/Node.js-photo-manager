@@ -116,10 +116,10 @@ High‑priority, idempotent maintenance jobs operate per project:
 
 - `trash_maintenance`: remove files in `.trash` older than 24h
 - `manifest_check`: reconcile DB availability flags with files on disk
-- `folder_check`: scan project folder for untracked files; enqueue `upload_postprocess` only for newly discovered bases (not already in the manifest); move others to `.trash`
+- `folder_check`: scan project folder for untracked files; enqueue `upload_postprocess` for accepted ones; move others to `.trash`
 - `manifest_cleaning`: delete photo rows with no JPG or RAW available
 
-Scheduler (`server/services/scheduler.js`) enqueues these periodically for all projects. See `PROJECT_OVERVIEW.md` for schedule details.
+Scheduling: `server/services/scheduler.js` triggers a unified hourly `maintenance` task for each project (with an initial kick shortly after startup). The task encapsulates the above steps with priorities. See the canonical jobs catalog in `JOBS_OVERVIEW.md` for exact composition and priorities.
 
 #### Job Lifecycle
 
@@ -195,3 +195,11 @@ See implementations in `server/routes/uploads.js` and `server/routes/assets.js`.
 ## Database File Location
 
 The SQLite database is located at `.projects/db/user_0.sqlite` and is automatically created on first run.
+
+---
+
+## Related Links
+
+- `./PROJECT_OVERVIEW.md` — Architecture, workflows, API overview
+- `./SECURITY.md` — Protections, gaps, and prioritized interventions
+- `./JOBS_OVERVIEW.md` — Job catalog and how flows use them

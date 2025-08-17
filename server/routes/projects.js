@@ -9,6 +9,7 @@ const photosRepo = require('../services/repositories/photosRepo');
 const jobsRepo = require('../services/repositories/jobsRepo');
 const tasksOrchestrator = require('../services/tasksOrchestrator');
 const { isCanonicalProjectFolder } = require('../utils/projects');
+const { rateLimit } = require('../utils/rateLimit');
 
 // Resolve project directories relative to project root
 // __dirname => <projectRoot>/server/routes
@@ -49,7 +50,8 @@ router.get('/', async (req, res) => {
 });
 
 // PATCH /api/projects/:id - rename display name only
-router.patch('/:id', async (req, res) => {
+// Limit: 10 requests per 5 minutes per IP
+router.patch('/:id', rateLimit({ windowMs: 5 * 60 * 1000, max: 10 }), async (req, res) => {
   try {
     const id = Number(req.params.id);
     if (!Number.isInteger(id) || id <= 0) {
@@ -163,7 +165,8 @@ router.get('/:folder', async (req, res) => {
 });
 
 // DELETE /api/projects/:folder - delete project
-router.delete('/:folder', async (req, res) => {
+// Limit: 10 requests per 5 minutes per IP
+router.delete('/:folder', rateLimit({ windowMs: 5 * 60 * 1000, max: 10 }), async (req, res) => {
   try {
     const { folder } = req.params;
     if (!isCanonicalProjectFolder(folder)) {

@@ -77,9 +77,9 @@ npm run build  # Builds frontend to client/dist/
 
 ## Maintenance
 
-- Background maintenance jobs keep disk and database in sync: `trash_maintenance`, `manifest_check`, `folder_check`, `manifest_cleaning`.
-- An in-process scheduler enqueues these per project on a cadence (hourly/6h/daily).
-- Manual reconciliation: `POST /api/projects/:folder/commit-changes` moves non‑kept files to `.trash` and enqueues reconciliation jobs.
+- Background maintenance keeps disk and database in sync via a unified hourly `maintenance` task per project, which encapsulates: `trash_maintenance` (100), `manifest_check` (95), `folder_check` (95), `manifest_cleaning` (80).
+- Manual reconciliation: `POST /api/projects/:folder/commit-changes` moves non‑kept files to `.trash` and enqueues the reconciliation steps. See the canonical jobs catalog in `JOBS_OVERVIEW.md`.
+- Worker pipeline uses two lanes: a priority lane (maintenance, deletion) and a normal lane. Keys: `pipeline.priority_lane_slots`, `pipeline.priority_threshold`. See details in `PROJECT_OVERVIEW.md`.
 
 ## Common Issues
 
@@ -100,6 +100,7 @@ cd client && npm run dev
 
 - **`REQUIRE_SIGNED_DOWNLOADS`** (default: `true`) - Controls token verification for file downloads
 - **`DOWNLOAD_SECRET`** - HMAC secret for signed URLs (change in production)
+- **`ALLOWED_ORIGINS`** - Comma-separated list of allowed CORS origins (e.g. `http://localhost:3000,https://app.example.com`). Defaults to `http://localhost:3000` for dev.
 
 See [SECURITY.md](SECURITY.md) for detailed security configuration.
 
@@ -109,6 +110,7 @@ See [SECURITY.md](SECURITY.md) for detailed security configuration.
 - **[SCHEMA_DOCUMENTATION.md](SCHEMA_DOCUMENTATION.md)** - Database schema and data structure details
 - **[SECURITY.md](SECURITY.md)** - Security implementation and best practices
   - Note: see “Notes for Security Analysis Team” re: maintenance jobs and `.trash` handling
+- **[JOBS_OVERVIEW.md](JOBS_OVERVIEW.md)** - Job types, options, and how file upload/maintenance/commit flows use them
 
 ## Contributing
 

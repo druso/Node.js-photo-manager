@@ -210,10 +210,12 @@ Job types:
 
 Scheduler (`server/services/scheduler.js`) cadence:
 
-- Hourly: `trash_maintenance` (priority 100)
-- Every 6h: `manifest_check` (95)
-- Every 6h (staggered by 30m): `folder_check` (95)
-- Daily: `manifest_cleaning` (80)
+- Hourly kickoff of the unified `maintenance` task per project. This task encapsulates:
+  - `trash_maintenance` (priority 100)
+  - `manifest_check` (95)
+  - `folder_check` (95)
+  - `manifest_cleaning` (80)
+  See `server/services/scheduler.js` and the canonical jobs catalog in `JOBS_OVERVIEW.md`.
 
 Manual reconciliation endpoints:
 
@@ -221,7 +223,7 @@ Manual reconciliation endpoints:
   - Moves non‑kept files to `.trash` based on `keep_jpg`/`keep_raw` flags
   - Deletes generated derivatives for JPGs moved to `.trash` (removes `.thumb/<base>.jpg` and `.preview/<base>.jpg` immediately)
   - Updates DB availability flags accordingly
-  - Enqueues `manifest_check`, `folder_check`, and `manifest_cleaning`
+  - Enqueues reconciliation jobs (`manifest_check`, `folder_check`, `manifest_cleaning`) as defined in the canonical jobs catalog (`JOBS_OVERVIEW.md`)
   - Emits incremental SSE (`item_removed`, `manifest_changed` with `removed_filenames`) for UI reconciliation
   - See implementation in `server/routes/maintenance.js`
 - `POST /api/projects/:folder/revert-changes`
@@ -658,3 +660,7 @@ Key strengths:
 - **Production-ready** security and performance features
 
 For detailed information on specific subsystems, refer to the dedicated documentation files mentioned throughout this overview.
+
+### Related Links
+
+- `./JOBS_OVERVIEW.md` — Job catalog (types, priorities, lanes) and task compositions used by Upload, Commit, Maintenance, and Project Deletion flows

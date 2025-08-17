@@ -2,6 +2,7 @@ const express = require('express');
 const path = require('path');
 const fs = require('fs-extra');
 const crypto = require('crypto');
+const { rateLimit } = require('../utils/rateLimit');
 const { signPayload, verifyToken } = require('../utils/signedUrl');
 const projectsRepo = require('../services/repositories/projectsRepo');
 const photosRepo = require('../services/repositories/photosRepo');
@@ -51,23 +52,60 @@ function requireValidToken(req, res, next) {
   return next();
 }
 
+function computeETagForFile(fp) {
+  try {
+    const stat = fs.statSync(fp);
+    // Weak ETag based on size + mtime
+    return `W/"${stat.size}-${Number(stat.mtimeMs).toString(16)}"`;
+  } catch (_) {
+    return null;
+  }
+}
+
+function setCacheHeadersOn200(res) {
+  res.setHeader('Cache-Control', 'public, max-age=60');
+}
+
+function setNegativeCacheHeaders(res) {
+  // avoid stale negatives; let client revalidate soon
+  res.setHeader('Cache-Control', 'no-store, must-revalidate');
+}
+
 // GET /api/projects/:folder/thumbnail/:filename
-router.get('/:folder/thumbnail/:filename', (req, res) => {
+// Limit: 60 requests per minute per IP
+router.get('/:folder/thumbnail/:filename', rateLimit({ windowMs: 60 * 1000, max: 60 }), (req, res) => {
   const { folder, filename } = req.params;
   const thumbPath = path.join(PROJECTS_DIR, folder, '.thumb', `${filename}.jpg`);
   if (fs.existsSync(thumbPath)) {
+    const etag = computeETagForFile(thumbPath);
+    if (etag && req.headers['if-none-match'] === etag) {
+      setCacheHeadersOn200(res);
+      return res.status(304).end();
+    }
+    setCacheHeadersOn200(res);
+    if (etag) res.setHeader('ETag', etag);
     return res.sendFile(path.resolve(thumbPath));
   }
+  setNegativeCacheHeaders(res);
   return res.status(404).json({ error: 'Thumbnail not found' });
 });
 
 // GET /api/projects/:folder/preview/:filename
-router.get('/:folder/preview/:filename', (req, res) => {
+// Limit: 60 requests per minute per IP
+router.get('/:folder/preview/:filename', rateLimit({ windowMs: 60 * 1000, max: 60 }), (req, res) => {
   const { folder, filename } = req.params;
   const prevPath = path.join(PROJECTS_DIR, folder, '.preview', `${filename}.jpg`);
   if (fs.existsSync(prevPath)) {
+    const etag = computeETagForFile(prevPath);
+    if (etag && req.headers['if-none-match'] === etag) {
+      setCacheHeadersOn200(res);
+      return res.status(304).end();
+    }
+    setCacheHeadersOn200(res);
+    if (etag) res.setHeader('ETag', etag);
     return res.sendFile(path.resolve(prevPath));
   }
+  setNegativeCacheHeaders(res);
   return res.status(404).json({ error: 'Preview not found' });
 });
 

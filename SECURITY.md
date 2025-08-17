@@ -4,21 +4,12 @@
 
 *Maintained by security analyst, prioritized by complexity and risk.*
 
-### 🔴 **HIGH PRIORITY** (Immediate)
+### 🔴 **HIGH PRIORITY** (Do now)
 
-**1. Production CORS Configuration** ⚡ *5 min*
-- **Risk**: Cross-origin attacks
-- **Action**: Replace `app.use(cors())` with origin allowlist in `server.js`
+– Implemented: Production CORS allowlist via `ALLOWED_ORIGINS` and production `DOWNLOAD_SECRET` enforcement in `server.js` (2025-08-17 JST). Keep this section empty going forward; use as a checklist for urgent items only.
 
-**2. Change Default Download Secret** ⚡ *5 min*  
-- **Risk**: Token forgery with known secret
-- **Action**: Set strong `DOWNLOAD_SECRET`: `openssl rand -base64 32`
 
 ### 🟡 **MEDIUM PRIORITY** (Next cycle)
-
-**3. Rate Limiting** 🔧 *2-4h*
-- **Risk**: Abuse of commit/revert endpoints
-- **Action**: Add express-rate-limit to `/api/projects/:folder/commit-changes`, `/api/projects/:folder/revert-changes`, `DELETE /api/projects/:folder` (soft-delete), and `PATCH /api/projects/:id` (rename)
 
 **4. Job Queue Limits** 🔧 *4-6h*
 - **Risk**: Memory exhaustion from unlimited jobs
@@ -27,13 +18,6 @@
 **5. Audit Logging** 🔧 *6-8h*
 - **Risk**: Limited forensics capability
 - **Action**: Structured logs for file ops, job failures, and project rename events (old_name → new_name, id)
-
-**6. Asset Endpoint Throttling & Caching** 🔧 *1-2h*
-- **Risk**: Increased request volume from frontend probing of pending thumbnails could be abused to cause excess load
-- **Action**:
-  - Add lightweight rate limiting to `GET /api/projects/:folder/thumbnail/:filename` and `.../preview/:filename` (IP + project tuple)
-  - Configure `Cache-Control: public, max-age=60` on 200 responses; consider short negative caching using `Retry-After` or `Cache-Control: no-store, must-revalidate` on 404 to avoid long stale negatives
-  - Ensure responses include `ETag` and honor `If-None-Match` to reduce bytes on revalidation
 
 ### 🟢 **LOW PRIORITY** (Future)
 
@@ -74,19 +58,21 @@
 
 **Assets (Thumbnails/Previews)**:
 - Served without signed tokens (only originals require signatures)
-- Frontend may probe pending assets periodically to surface images incrementally
-- Consider rate limits and short-lived caching headers to mitigate abuse and bandwidth spikes
+- Client no longer probes pending assets; availability is driven by SSE item-level updates with light fallback polling
+- Lightweight rate limits and short-lived caching headers implemented to mitigate abuse and bandwidth spikes; ETag/If-None-Match supported with 304 responses
 
 **Commit/Revert Endpoints**:
 - Commit is destructive: moves files to `.trash` and updates availability; ensure intent is authenticated/authorized in future multi-user mode.
-- Revert is non-destructive: resets `keep_*` to match `*_available`; still subject to rate limiting and auth once implemented.
+- Revert is non-destructive: resets `keep_*` to match `*_available`.
+- Rate limiting implemented: 10 requests per 5 minutes per IP on commit, revert, delete, and rename endpoints.
+
+**Realtime (SSE)**:
+- `GET /api/jobs/stream` hardened with per‑IP connection cap (default 2), heartbeat every 25s, and idle timeout (default 5 min). Env overrides: `SSE_MAX_CONN_PER_IP`, `SSE_IDLE_TIMEOUT_MS`.
 
 ### ⚠️ **Current Gaps**
 
 **Access Control**:
 - No authentication on destructive endpoints
-- Permissive CORS (development mode)
-- No rate limiting
 
 **Resource Management**:
 - Unlimited job queue growth
@@ -140,6 +126,7 @@ This ensures all functionality receives security review before deployment.
   - CORS: Ensure `GET /api/jobs/stream` respects production CORS allowlist.
   - Exposure: Messages contain only non-sensitive status metadata (no PII/secrets). Confirm no internal paths or secrets are included.
   - Abuse: SSE is a single long-lived connection; consider per-IP connection limits and timeouts.
+  - Status: Reviewed. Implementation in `server/routes/jobs.js` emits minimal metadata (no secrets/paths). Action required: enforce CORS allowlist and add per‑IP caps + idle timeout (see Medium Priority 3b).
 
 2) Per-Item Removal Events + Optimistic Hide on Commit
 
@@ -149,6 +136,7 @@ This ensures all functionality receives security review before deployment.
   - CORS: Ensure SSE stream adheres to strict allowlist in production.
   - Rate limiting: Light limits on commit/revert endpoints to prevent abuse of destructive ops (already in Suggested Interventions #3).
   - SSE connection policy: cap concurrent SSE streams per IP and set idle timeouts to mitigate resource pinning.
+  - Status: Reviewed. No sensitive data exposure detected; endpoints exist without rate limits. Action required: add rate limits to commit/revert/delete/rename and enforce SSE connection policy.
 
 3) Removal of Client Probing for Thumbnails
 
@@ -156,6 +144,7 @@ This ensures all functionality receives security review before deployment.
 - Benefit: Reduces 404 request volume and potential amplification vectors.
 - Security considerations:
   - Asset endpoints still should retain light rate limiting and standard caching headers as above.
+  - Status: Reviewed. Current `assets.js` does not set caching headers/ETag nor rate limits. Action required: implement lightweight throttling and `Cache-Control`/`ETag` for 200; short negative caching for 404 (see Medium Priority #6).
 
 4) Worker Loop Configuration Warnings
 
