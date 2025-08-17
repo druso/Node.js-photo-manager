@@ -5,6 +5,8 @@ const jobsRepo = require('../services/repositories/jobsRepo');
 const fs = require('fs');
 const path = require('path');
 const { onJobUpdate } = require('../services/events');
+const makeLogger = require('../utils/logger2');
+const log = makeLogger('jobs');
 
 const router = express.Router();
 router.use(express.json());
@@ -23,7 +25,7 @@ router.post('/projects/:folder/jobs', (req, res) => {
     const start = tasksOrchestrator.startTask({ project_id: project.id, type: task_type, source: source || 'api', items: Array.isArray(items) ? items : null });
     return res.status(202).json({ task: start });
   } catch (err) {
-    console.error('Failed to enqueue job:', err);
+    log.error('enqueue_task_failed', { project_folder: req.params && req.params.folder, task_type, error: err && err.message, stack: err && err.stack });
     return res.status(500).json({ error: 'Failed to start task' });
   }
 });
@@ -43,7 +45,7 @@ router.get('/projects/:folder/jobs', (req, res) => {
     });
     return res.json({ jobs });
   } catch (err) {
-    console.error('Failed to list jobs:', err);
+    log.error('list_jobs_failed', { project_folder: req.params && req.params.folder, error: err && err.message, stack: err && err.stack });
     return res.status(500).json({ error: 'Failed to list jobs' });
   }
 });
@@ -62,7 +64,7 @@ router.get('/jobs/:id(\\d+)', (req, res) => {
     }, {});
     return res.json({ job, items_summary: summary, total_items: items.length });
   } catch (err) {
-    console.error('Failed to get job:', err);
+    log.error('get_job_failed', { job_id: req.params && req.params.id, error: err && err.message, stack: err && err.stack });
     return res.status(500).json({ error: 'Failed to get job' });
   }
 });
@@ -125,7 +127,7 @@ router.get('/tasks/definitions', (req, res) => {
     const defs = JSON.parse(raw);
     return res.json(defs);
   } catch (err) {
-    console.error('Failed to load task definitions:', err);
+    log.error('load_task_definitions_failed', { error: err && err.message, stack: err && err.stack });
     return res.status(500).json({ error: 'Failed to load task definitions' });
   }
 });

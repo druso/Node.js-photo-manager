@@ -1,5 +1,7 @@
 const path = require('path');
 const fs = require('fs-extra');
+const makeLogger = require('../utils/logger2');
+const log = makeLogger('config');
 
 const ROOT = path.join(__dirname, '..', '..');
 const CONFIG_PATH = path.join(ROOT, 'config.json');
@@ -38,7 +40,7 @@ function getConfig() {
     }
   } catch (e) {
     // Non-fatal: log and continue returning merged
-    console.warn('Warning: failed to persist merged config:', e.message);
+    log.warn('persist_merged_config_failed', { error: e && e.message });
   }
   return merged;
 }

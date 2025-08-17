@@ -6,6 +6,8 @@ const { runTrashMaintenance, runManifestCheck, runFolderCheck, runManifestCleani
 const { runFileRemoval } = require('./workers/fileRemovalWorker');
 const { emitJobUpdate } = require('./events');
 const tasksOrchestrator = require('./tasksOrchestrator');
+const makeLogger = require('../utils/logger2');
+const log = makeLogger('workerLoop');
 
 let running = false;
 let timer = null;
@@ -179,13 +181,13 @@ function startWorkerLoop() {
   const normalSlots = Math.max(0, totalSlots - prioritySlots);
   // Configuration sanity warnings
   if (Number(pipeline.max_parallel_jobs || 1) < 1) {
-    console.warn('[workerLoop] pipeline.max_parallel_jobs < 1; clamped to 1. Current:', pipeline.max_parallel_jobs);
+    log.warn('config_sanity_max_parallel_clamped', { max_parallel_jobs: pipeline.max_parallel_jobs });
   }
   if (prioritySlots > totalSlots) {
-    console.warn('[workerLoop] priority_lane_slots exceeds max_parallel_jobs; priority will be capped by available slots. priority_slots:', prioritySlots, 'total_slots:', totalSlots);
+    log.warn('config_sanity_priority_slots_exceed_total', { priority_slots: prioritySlots, total_slots: totalSlots });
   }
   if (totalSlots > 0 && normalSlots === 0) {
-    console.warn('[workerLoop] Normal lane has zero slots (max_parallel_jobs:', totalSlots, ', priority_lane_slots:', prioritySlots, '). Normal-priority jobs may starve. Consider lowering priority_lane_slots or increasing max_parallel_jobs.');
+    log.warn('config_sanity_normal_lane_zero', { total_slots: totalSlots, priority_slots: prioritySlots, note: 'Normal-priority jobs may starve' });
   }
   const workerId = `inproc-${process.pid || '1'}`;
   const activePriority = new Set();

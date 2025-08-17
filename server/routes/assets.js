@@ -2,6 +2,8 @@ const express = require('express');
 const path = require('path');
 const fs = require('fs-extra');
 const crypto = require('crypto');
+const makeLogger = require('../utils/logger2');
+const log = makeLogger('assets');
 const { rateLimit } = require('../utils/rateLimit');
 const { signPayload, verifyToken } = require('../utils/signedUrl');
 const projectsRepo = require('../services/repositories/projectsRepo');
@@ -137,7 +139,7 @@ router.get('/:folder/file/:type/:filename', requireValidToken, async (req, res) 
     res.setHeader('Content-Disposition', `attachment; filename="${path.basename(chosenFile)}"`);
     return res.sendFile(path.resolve(chosenFile));
   } catch (err) {
-    console.error('Assets router: error serving specific file:', err);
+    log.error('serve_specific_file_error', { project_folder: folder, filename: filenameParam, type, error: err && err.message, stack: err && err.stack });
     return res.status(500).json({ error: 'Failed to serve file' });
   }
 });
@@ -160,7 +162,7 @@ router.post('/:folder/download-url', express.json(), async (req, res) => {
     const url = buildSignedUrl(folder, type, filename, typeof ttlMs === 'number' ? ttlMs : undefined);
     return res.json({ url });
   } catch (err) {
-    console.error('download-url error:', err);
+    log.error('download_url_error', { project_folder: folder, filename, type, error: err && err.message, stack: err && err.stack });
     return res.status(500).json({ error: 'Failed to mint download URL' });
   }
 });
@@ -193,7 +195,7 @@ router.get('/:folder/files-zip/:filename', requireValidToken, async (req, res) =
     }
     archive.finalize();
   } catch (err) {
-    console.error('Assets router: error creating zip:', err);
+    log.error('create_zip_error', { project_folder: folder, filename: filenameParam, error: err && err.message, stack: err && err.stack });
     return res.status(500).json({ error: 'Failed to create zip' });
   }
 });
@@ -227,7 +229,7 @@ router.get('/:folder/image/:filename', async (req, res) => {
     }
     return res.status(404).json({ error: 'Image file not found on disk' });
   } catch (err) {
-    console.error('Assets router: error serving image:', err);
+    log.error('serve_image_error', { project_folder: folder, filename, error: err && err.message, stack: err && err.stack });
     return res.status(500).json({ error: 'Failed to serve image' });
   }
 });

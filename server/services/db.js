@@ -4,6 +4,8 @@
 const path = require('path');
 const fs = require('fs-extra');
 const Database = require('better-sqlite3');
+const makeLogger = require('../utils/logger2');
+const log = makeLogger('db');
 
 // For now we use a single default user DB. Later this can be parameterized.
 const DB_DIR = path.join(__dirname, '../../.projects/db');
@@ -128,7 +130,7 @@ function applySchema(db) {
   // Projects: add status and archived_at for soft-delete/archive semantics
   ensureColumn(db, 'projects', 'status', "ALTER TABLE projects ADD COLUMN status TEXT");
   ensureColumn(db, 'projects', 'archived_at', "ALTER TABLE projects ADD COLUMN archived_at TEXT");
-  try { db.exec(`CREATE INDEX IF NOT EXISTS idx_projects_status ON projects(status)`); } catch (e) { try { console.warn('[db] failed to create idx_projects_status:', e.message); } catch {} }
+  try { db.exec(`CREATE INDEX IF NOT EXISTS idx_projects_status ON projects(status)`); } catch (e) { try { log.warn('index_create_failed', { index: 'idx_projects_status', error: e && e.message }); } catch {} }
   ensureColumn(db, 'jobs', 'attempts', "ALTER TABLE jobs ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0");
   ensureColumn(db, 'jobs', 'max_attempts', "ALTER TABLE jobs ADD COLUMN max_attempts INTEGER");
   ensureColumn(db, 'jobs', 'last_error_at', "ALTER TABLE jobs ADD COLUMN last_error_at TEXT");
@@ -137,7 +139,7 @@ function applySchema(db) {
   try {
     db.exec(`CREATE INDEX IF NOT EXISTS idx_jobs_status_priority_created ON jobs(status, priority DESC, created_at ASC)`);
   } catch (e) {
-    try { console.warn('[db] failed to create idx_jobs_status_priority_created:', e.message); } catch {}
+    try { log.warn('index_create_failed', { index: 'idx_jobs_status_priority_created', error: e && e.message }); } catch {}
   }
 }
 
@@ -164,6 +166,6 @@ function ensureColumn(db, table, column, alterSql) {
     }
   } catch (e) {
     // Best effort; log and continue
-    try { console.warn(`[db] ensureColumn failed for ${table}.${column}:`, e.message); } catch {}
+    try { log.warn('ensure_column_failed', { table, column, error: e && e.message }); } catch {}
   }
 }

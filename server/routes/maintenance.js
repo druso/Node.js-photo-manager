@@ -3,6 +3,8 @@ const projectsRepo = require('../services/repositories/projectsRepo');
 const photosRepo = require('../services/repositories/photosRepo');
 const tasksOrchestrator = require('../services/tasksOrchestrator');
 const { rateLimit } = require('../utils/rateLimit');
+const makeLogger = require('../utils/logger2');
+const log = makeLogger('maintenance');
 
 const router = express.Router();
 router.use(express.json());
@@ -27,7 +29,7 @@ router.post('/:folder/commit-changes', rateLimit({ windowMs: 5 * 60 * 1000, max:
     const { task_id } = tasksOrchestrator.startTask({ project_id: project.id, type: 'change_commit', source: 'commit' });
     res.json({ started: true, task_id });
   } catch (err) {
-    console.error('commit-changes failed:', err);
+    log.error('commit_changes_failed', { project_folder: req.params && req.params.folder, error: err && err.message, stack: err && err.stack });
     res.status(500).json({ error: 'Failed to commit changes' });
   }
 });
@@ -67,7 +69,7 @@ router.post('/:folder/revert-changes', rateLimit({ windowMs: 5 * 60 * 1000, max:
     }
     res.json({ updated });
   } catch (err) {
-    console.error('revert-changes failed:', err);
+    log.error('revert_changes_failed', { project_folder: req.params && req.params.folder, error: err && err.message, stack: err && err.stack });
     res.status(500).json({ error: 'Failed to revert changes' });
   }
 });

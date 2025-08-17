@@ -1,11 +1,12 @@
 const express = require('express');
 require('./server/utils/logger');
-const multer = require('multer');
-const sharp = require('sharp');
+// Upload handling and image processing are implemented in route/services modules
 const cors = require('cors');
 const path = require('path');
 const fs = require('fs-extra');
-const exifParser = require('exif-parser');
+const requestId = require('./server/middleware/requestId');
+const accessLog = require('./server/middleware/accessLog');
+const errorHandler = require('./server/middleware/errorHandler');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -23,8 +24,12 @@ app.use(cors({
   },
   credentials: false
 }));
+// Correlate requests early
+app.use(requestId());
 app.use(express.json());
 app.use(express.static('public'));
+// Access log
+app.use(accessLog());
 
 // Routers
 const projectsRouter = require('./server/routes/projects');
@@ -44,6 +49,9 @@ app.use('/api/projects', maintenanceRouter);
 const jobsRouter = require('./server/routes/jobs');
 app.use('/api', jobsRouter);
 
+// Centralized error handler (must be after routes)
+app.use(errorHandler);
+
 // Ensure projects directory exists
 const PROJECTS_DIR = path.join(__dirname, '.projects');
 fs.ensureDirSync(PROJECTS_DIR);
@@ -61,62 +69,7 @@ if (process.env.NODE_ENV === 'production' && REQUIRE_SIGNED && DOWNLOAD_SECRET =
   process.exit(1);
 }
 
-// Configure multer for file uploads
-const storage = multer.memoryStorage();
-const upload = multer({ 
-  storage: storage,
-  fileFilter: (req, file, cb) => {
-    const allowedTypes = /jpeg|jpg|png|tiff|tif|raw|cr2|nef|arw|dng/;
-    const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
-    const mimetype = allowedTypes.test(file.mimetype) || file.mimetype.startsWith('image/');
-    
-    if (mimetype && extname) {
-      return cb(null, true);
-    } else {
-      cb(new Error('Only image files are allowed'));
-    }
-  },
-  limits: {
-    fileSize: 100 * 1024 * 1024 // 100MB limit
-  }
-});
-
-
-
-// Utility functions
-const getFileType = (filename) => {
-  const ext = path.extname(filename).toLowerCase();
-  if (['.jpg', '.jpeg'].includes(ext)) return 'jpg';
-  if (['.raw', '.cr2', '.nef', '.arw', '.dng'].includes(ext)) return 'raw';
-  return 'other';
-};
-
-
-
-// Routes
-
-// Get all projects
-// Projects routes moved to server/routes/projects.js
-
-// Create new project
-// Projects routes moved to server/routes/projects.js
-
-// Get project details
-// Projects routes moved to server/routes/projects.js
-
-// Delete project
-// Projects routes moved to server/routes/projects.js
-
-// Upload routes moved to server/routes/uploads.js
-
-// Analyze/upload routes moved to server/routes/uploads.js
-
-// Phase 3: Generate thumbnails for uploaded photos
-// Thumbnail generation moved to server/routes/uploads.js
-
-// Tags routes moved to server/routes/tags.js
-
-// Assets routes moved to server/routes/assets.js
+// Routes are implemented in `server/routes/*`
 
 // Get config (ensure merged defaults)
 app.get('/api/config', (req, res) => {
@@ -145,6 +98,8 @@ app.post('/api/config', async (req, res) => {
 // Restore default config
 app.post('/api/config/restore', async (req, res) => {
   try {
+    // Use config service to ensure consistent defaults restoration (if available)
+    const DEFAULT_CONFIG_PATH = path.join(__dirname, 'config.default.json');
     fs.copySync(DEFAULT_CONFIG_PATH, CONFIG_PATH);
     config = fs.readJsonSync(CONFIG_PATH);
     res.json(config);

@@ -1,5 +1,7 @@
 const path = require('path');
 const fs = require('fs-extra');
+const makeLogger = require('../../utils/logger2');
+const log = makeLogger('maintenance');
 const { getConfig } = require('../config');
 const projectsRepo = require('../repositories/projectsRepo');
 const photosRepo = require('../repositories/photosRepo');
@@ -44,10 +46,10 @@ async function runTrashMaintenance(job) {
         if (now - m.getTime() >= ttlMs) { await fs.remove(full); deleted++; }
       }
     } catch (e) {
-      console.warn('[trash_maintenance] failed', name, e.message);
+      log.warn('trash_maintenance_failed', { project_id: project.id, project_folder: project.project_folder, project_name: project.name, entry: name, error: e.message });
     }
   }
-  console.log(`[trash_maintenance] project ${project.id} deleted ${deleted} files`);
+  log.info('trash_maintenance_done', { project_id: project.id, project_folder: project.project_folder, project_name: project.name, deleted_files: deleted });
 }
 
 async function runManifestCheck(job) {
@@ -80,11 +82,11 @@ async function runManifestCheck(job) {
         orientation: p.orientation,
         meta_json: p.meta_json,
       });
-      console.warn(`[manifest_check] corrected availability for ${base}: jpg=${jpgExists} raw=${rawExists} other=${otherExists}`);
+      log.warn('manifest_check_corrected', { project_id: project.id, project_folder: project.project_folder, project_name: project.name, filename: base, jpg: jpgExists, raw: rawExists, other: otherExists });
       changed++;
     }
   }
-  console.log(`[manifest_check] project ${project.id} updated rows: ${changed}`);
+  log.info('manifest_check_summary', { project_id: project.id, project_folder: project.project_folder, project_name: project.name, updated_rows: changed });
   if (changed > 0) {
     emitJobUpdate({ type: 'manifest_changed', project_folder: project.project_folder, changed });
   }
@@ -113,7 +115,12 @@ async function runFolderCheck(job) {
       discoveredBases.set(base, rec);
     } else {
       // Not accepted -> move to trash
-      try { moveToTrash(project.project_folder, name); console.warn('[folder_check] moved to .trash:', name); } catch (e) { console.warn('[folder_check] failed trash move', name, e.message); }
+      try {
+        moveToTrash(project.project_folder, name);
+        log.warn('folder_check_moved_to_trash', { project_id: project.id, project_folder: project.project_folder, project_name: project.name, entry: name });
+      } catch (e) {
+        log.warn('folder_check_trash_move_failed', { project_id: project.id, project_folder: project.project_folder, project_name: project.name, entry: name, error: e.message });
+      }
     }
   }
 
@@ -159,7 +166,7 @@ async function runFolderCheck(job) {
       items: toProcess,
       priority: 90,
     });
-    console.log(`[folder_check] enqueued upload_postprocess job ${job2.id} for ${toProcess.length} items`);
+    log.info('folder_check_enqueued_postprocess', { project_id: project.id, project_folder: project.project_folder, project_name: project.name, job_id: job2.id, items: toProcess.length });
   }
   if (createdCount > 0) {
     emitJobUpdate({ type: 'manifest_changed', project_folder: project.project_folder, created: createdCount });
@@ -181,7 +188,7 @@ async function runManifestCleaning(job) {
       emitJobUpdate({ type: 'item_removed', project_folder: project.project_folder, filename: p.filename });
     }
   }
-  console.log(`[manifest_cleaning] project ${project.id} removed rows: ${removed}`);
+  log.info('manifest_cleaning_summary', { project_id: project.id, project_folder: project.project_folder, project_name: project.name, removed_rows: removed });
   if (removed > 0) {
     emitJobUpdate({ type: 'manifest_changed', project_folder: project.project_folder, removed, removed_filenames: removedFilenames });
   }

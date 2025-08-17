@@ -1,6 +1,8 @@
 const express = require('express');
 const path = require('path');
 const fs = require('fs-extra');
+const makeLogger = require('../utils/logger2');
+const log = makeLogger('projects');
 const router = express.Router();
 
 // DB repositories
@@ -44,7 +46,7 @@ router.get('/', async (req, res) => {
     }));
     res.json(projects);
   } catch (err) {
-    console.error('Projects router: list failed', err);
+    log.error('projects_list_failed', { error: err && err.message, stack: err && err.stack });
     res.status(500).json({ error: 'Failed to get projects' });
   }
 });
@@ -76,7 +78,7 @@ router.patch('/:id', rateLimit({ windowMs: 5 * 60 * 1000, max: 10 }), async (req
       }
     });
   } catch (err) {
-    console.error('Projects router: rename failed', err);
+    log.error('project_rename_failed', { error: err && err.message, stack: err && err.stack, project_id: req.params && req.params.id });
     res.status(500).json({ error: 'Failed to rename project' });
   }
 });
@@ -106,7 +108,7 @@ router.post('/', async (req, res) => {
       }
     });
   } catch (err) {
-    console.error('Projects router: create failed', err);
+    log.error('project_create_failed', { error: err && err.message, stack: err && err.stack });
     res.status(500).json({ error: 'Failed to create project' });
   }
 });
@@ -159,7 +161,7 @@ router.get('/:folder', async (req, res) => {
 
     res.json(projectData);
   } catch (err) {
-    console.error('Projects router: get details failed', err);
+    log.error('project_get_failed', { error: err && err.message, stack: err && err.stack, project_folder: req.params && req.params.folder });
     res.status(500).json({ error: 'Failed to get project details' });
   }
 });
@@ -184,11 +186,11 @@ router.delete('/:folder', rateLimit({ windowMs: 5 * 60 * 1000, max: 10 }), async
       tasksOrchestrator.startTask({ project_id: project.id, type: 'project_delete', source: 'user', items: null, tenant_id: 'user_0' });
     } catch (e) {
       // If orchestration fails, still return archived so UI removes project; background cleanup might be missing.
-      console.error('Failed to enqueue project_delete task:', e);
+      log.error('enqueue_project_delete_failed', { project_id: project.id, project_folder: project.project_folder, project_name: project.project_name, error: e && e.message, stack: e && e.stack });
     }
     res.json({ message: 'Project deletion queued', folder });
   } catch (err) {
-    console.error('Projects router: delete failed', err);
+    log.error('project_delete_failed', { error: err && err.message, stack: err && err.stack, project_folder: req.params && req.params.folder });
     res.status(500).json({ error: 'Failed to delete project' });
   }
 });

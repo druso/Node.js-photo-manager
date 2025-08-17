@@ -1,6 +1,9 @@
 const express = require('express');
 const path = require('path');
 const fs = require('fs-extra');
+const makeLogger = require('../utils/logger2');
+const log = makeLogger('tags');
+const { rateLimit } = require('../utils/rateLimit');
 
 const projectsRepo = require('../services/repositories/projectsRepo');
 const photosRepo = require('../services/repositories/photosRepo');
@@ -14,7 +17,8 @@ const PROJECTS_DIR = path.join(PROJECT_ROOT, '.projects');
 fs.ensureDirSync(PROJECTS_DIR);
 
 // PUT /api/projects/:folder/tags
-router.put('/:folder/tags', async (req, res) => {
+// Light limit to avoid spamming metadata updates
+router.put('/:folder/tags', rateLimit({ windowMs: 60 * 1000, max: 60 }), async (req, res) => {
   try {
     const { folder } = req.params;
     const { updates } = req.body; // Array of { filename, tags }
@@ -36,13 +40,13 @@ router.put('/:folder/tags', async (req, res) => {
       if (!photo) continue;
 
       if (!Array.isArray(update.tags)) {
-        console.error(`Invalid tags for ${update.filename}: tags must be an array`);
+        log.warn('tags_update_invalid_tags_array', { project_id: project.id, project_folder: project.project_folder, project_name: project.project_name, filename: update.filename });
         continue;
       }
 
       const invalidTags = update.tags.filter(tag => typeof tag !== 'string');
       if (invalidTags.length > 0) {
-        console.error(`Invalid tag types for ${update.filename}: all tags must be strings`);
+        log.warn('tags_update_invalid_tag_types', { project_id: project.id, project_folder: project.project_folder, project_name: project.project_name, filename: update.filename, invalid_count: invalidTags.length });
         continue;
       }
 
@@ -71,7 +75,7 @@ router.put('/:folder/tags', async (req, res) => {
     }
     res.json({ message: `Updated tags for ${updatedCount} photos`, updated_count: updatedCount });
   } catch (err) {
-    console.error('Tags router: error updating tags:', err);
+    log.error('tags_update_failed', { error: err && err.message, stack: err && err.stack });
     res.status(500).json({ error: 'Failed to update tags' });
   }
 });

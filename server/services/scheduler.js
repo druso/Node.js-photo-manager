@@ -1,5 +1,7 @@
 const projectsRepo = require('./repositories/projectsRepo');
 const tasksOrchestrator = require('./tasksOrchestrator');
+const makeLogger = require('../utils/logger2');
+const log = makeLogger('scheduler');
 
 let timers = [];
 
@@ -9,7 +11,7 @@ function startTaskForAllProjects(taskType, source = 'maintenance') {
     try {
       tasksOrchestrator.startTask({ project_id: p.id, type: taskType, source });
     } catch (e) {
-      try { console.warn(`[scheduler] failed to start task ${taskType} for project ${p.id}:`, e.message); } catch {}
+      try { log.warn('start_task_failed', { task_type: taskType, project_id: p.id, project_folder: p.project_folder, project_name: p.project_name, error: e && e.message }); } catch {}
     }
   }
 }

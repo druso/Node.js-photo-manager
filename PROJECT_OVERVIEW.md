@@ -88,6 +88,14 @@ The backend is a Node.js application that exposes a RESTful API for the client.
     *   `workers/`: Individual worker implementations (derivatives generation)
     *   `events.js`: Event emitter for real-time job updates
 *   **Utilities (`server/utils/`)**: Contains helper functions used across the backend.
+    - File acceptance is centralized in `server/utils/acceptance.js` and driven by `config.json → uploader.accepted_files` (extensions, mime_prefixes).
+
+#### Logging
+
+- Backend logging is centralized via `server/utils/logger2.js` producing structured JSON lines.
+- All routes, services, and workers log events with component (`cmp`), event (`evt`), and rich context (e.g., `project_id`, `project_folder`, `project_name`, `job_id`).
+- Levels: `error`, `warn`, `info`, `debug`. Controlled by `LOG_LEVEL` (default `info`).
+- Example event keys: `upload_failed`, `project_delete_failed`, `list_jobs_failed`, `config_sanity_normal_lane_zero`.
 
 #### Project Folders (Fresh Start)
 
@@ -159,8 +167,9 @@ Refer to `SCHEMA_DOCUMENTATION.md` for detailed table structures and relationshi
 
 ### Security
 *   **Signed URLs**: Secure access to photo assets with expiration
-*   **File Type Validation**: Server-side filtering of uploaded files
+*   **File Type Validation**: Centralized server-side filtering via `server/utils/acceptance.js` (config-driven)
 *   **CORS Protection**: Configurable cross-origin access controls
+*   **Rate Limiting**: Destructive endpoints (project rename/delete, commit/revert) capped at 10 requests per 5 minutes per IP
 
 Refer to `SECURITY.md` for detailed security implementation and best practices.
 
@@ -250,125 +259,6 @@ Client behavior after reconciliation endpoints:
     git clone <repository-url>
     cd Node.js-photo-manager
     ```
-
-## 12. UI Animations
-
-Centralized CSS animations live in `client/src/styles/animations.css` and are imported globally from `client/src/index.css`.
-
-Available utility classes:
-
-- `animate-fadeInScale`: Small popovers/menus fade + scale in (150ms).
-- `animate-slideDownFade`: Dropdowns slide down + fade (140ms).
-- `animate-slideInRightFade`: Right drawers slide-in + fade (180ms).
-- `animate-fadeIn`: Simple fade-in (e.g., backdrops) (160ms).
-
-Usage:
-
-- Add the class to the element that mounts when shown. Examples:
-  - `client/src/components/OperationsMenu.jsx` uses `animate-slideDownFade` on the dropdown panel.
-  - `client/src/components/SettingsProcessesModal.jsx` uses `animate-slideInRightFade` on the drawer and `animate-fadeIn` on the backdrop.
-  - `client/src/App.jsx` uses `animate-fadeInScale` when swapping toolbar controls with the Actions menu.
-
-Adding new animations:
-
-- Define keyframes and a class in `client/src/styles/animations.css`, then apply the class where needed.
-
-### 12.1 Global Toast Notifications
-
-A centralized toast system provides consistent, reusable notifications across the frontend.
-
-- Location:
-  - Provider/Hook: `client/src/ui/toast/ToastContext.jsx`
-  - Container: `client/src/ui/toast/ToastContainer.jsx`
-  - Presets: `client/src/ui/toast/toastPresets.js`
-- Wiring:
-  - `client/src/main.jsx` wraps `<App />` with `<ToastProvider>`
-- Variants: `notification` (default), `info`, `success`, `warning`, `error`
-- Defaults: auto‑dismiss (2s info/success/notification, 4s warning, 6s error), max stack 3
-- UX: pause on hover, manual close button, accessible roles (`status`/`alert`)
-- Animations: slide-in from side on enter; slide-up + fade on exit
-
-Usage from any component:
-
-```jsx
-import { useToast } from '../ui/toast/ToastContext';
-
-function ExampleButton() {
-  const toast = useToast();
-  return (
-    <button onClick={() => toast.show({ emoji: '✅', message: 'Saved', variant: 'success' })}>
-      Save
-    </button>
-  );
-}
-```
-
-Toast patterns (recommended):
-
-- Use `variant: 'success'` for completed actions that change state; keep short (≈2s) and include an emoji ✅.
-- Use `variant: 'error'` for failures; longer duration (≈6s) and include ⚠️. Provide a next step if possible.
-- Use `variant: 'info'` for transient status messages (e.g., queued) or `notification` for neutral updates.
-- Prefer `toast.promise()` for async flows so the pending/success/error states are consistent.
-- Keep messages concise; the first word should be the action/result (e.g., "Uploaded", "Deleted", "Failed").
-- Register offsets for any fixed-position bars/toolbars to avoid overlap.
-- Accessibility: animated toasts use `status` (non-interruptive) by default; critical failures can use `alert`.
-
-Promise helper:
-
-```jsx
-const toast = useToast();
-await toast.promise(
-  apiCall(),
-  {
-    pending: { emoji: '⏳', message: 'Uploading…', variant: 'info' },
-    success: { emoji: '✅', message: 'Upload complete', variant: 'success' },
-    error:   { emoji: '⚠️', message: 'Upload failed', variant: 'error' }
-  }
-);
-```
-
-Position and durations can be customized via `<ToastProvider position="bottom-right" max={3} defaultDurations={{ info: 2000, success: 2000, notification: 2000, warning: 4000, error: 6000 }} />`.
-
-Offsetting toasts to avoid overlapping UI:
-
-- The toast system supports dynamic top/bottom offsets so bars/toolbars can reserve space.
-- API: `toast.setOffset(name, pxOrObject)` and `toast.clearOffset(name)`.
-  - `pxOrObject` can be a number (interpreted as bottom offset) or `{ top?: number, bottom?: number }`.
-
-Example: bottom upload bar reserves space automatically (implemented in `BottomUploadBar.jsx`). For custom components like a top toolbar:
-
-```jsx
-import { useLayoutEffect, useRef } from 'react';
-import { useToast } from '../ui/toast/ToastContext';
-
-function TopToolbar() {
-  const toast = useToast();
-  const ref = useRef(null);
-  useLayoutEffect(() => {
-    if (!ref.current) return;
-    const el = ref.current;
-    const measure = () => toast.setOffset('top-toolbar', { top: Math.ceil(el.getBoundingClientRect().height) });
-    measure();
-    const ro = new ResizeObserver(measure); ro.observe(el);
-    window.addEventListener('resize', measure);
-    return () => { ro.disconnect(); window.removeEventListener('resize', measure); toast.clearOffset('top-toolbar'); };
-  }, [toast]);
-  return <div ref={ref}>/* toolbar */</div>;
-}
-```
-
-Additionally, the commit/revert bottom bar registers a bottom offset so toasts never cover it and do not affect page scroll.
-
-### 12.2 Incremental Thumbnail Availability
-
-The grid shows thumbnails as soon as they become available while a batch job is still running.
-
-- Implementation: Item-level Server-Sent Events (`GET /api/jobs/stream`) emit updates of the form `{ type: 'item', project_folder, filename, thumbnail_status, preview_status, updated_at }` from `derivativesWorker` as each file completes.
-- UI handling: `client/src/App.jsx` patches the affected photo in-place within `projectData.photos` to avoid full-grid re-renders and preserve scroll/selection.
-- Asset caching: The final `<img>` for thumbnails appends `?v=<photo.updated_at>` to break negative caches once generated.
-- No probing: `Thumbnail.jsx` no longer probes asset URLs while pending, reducing 404s and network noise.
-
-Fallback behavior: If SSE is not yet connected, the client performs light polling (every ~3s) while any items are pending; scroll and open viewer state are preserved across these refetches.
 
 2.  **Install Backend Dependencies**:
     ```bash
@@ -559,7 +449,10 @@ Notes:
 *   **Error Cases**: Test invalid file types, disk space issues
 
 ### Debugging Tips
-*   **Backend Logs**: Check console output from `npm run dev`
+*   **Backend Logs**: Structured JSON lines from `npm run dev`. Pipe to `jq` for readability:
+```bash
+npm run dev 2>&1 | jq -r '.'
+```
 *   **Frontend Logs**: Use browser developer tools
 *   **Database**: Use SQLite browser tools to inspect data
 *   **Jobs**: Monitor job status in the Processes panel
@@ -664,3 +557,6 @@ For detailed information on specific subsystems, refer to the dedicated document
 ### Related Links
 
 - `./JOBS_OVERVIEW.md` — Job catalog (types, priorities, lanes) and task compositions used by Upload, Commit, Maintenance, and Project Deletion flows
+
+Notes:
+- Destructive endpoints above (PATCH rename, DELETE project, POST commit-changes) are rate-limited at 10 req/5 min/IP.

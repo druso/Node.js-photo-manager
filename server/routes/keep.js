@@ -1,6 +1,9 @@
 const express = require('express');
 const path = require('path');
 const fs = require('fs-extra');
+const makeLogger = require('../utils/logger2');
+const log = makeLogger('keep');
+const { rateLimit } = require('../utils/rateLimit');
 
 const projectsRepo = require('../services/repositories/projectsRepo');
 const photosRepo = require('../services/repositories/photosRepo');
@@ -13,7 +16,8 @@ fs.ensureDirSync(PROJECTS_DIR);
 
 // PUT /api/projects/:folder/keep
 // Body: { updates: [{ filename, keep_jpg, keep_raw }] }
-router.put('/:folder/keep', async (req, res) => {
+// Light rate limit to avoid spamming metadata updates
+router.put('/:folder/keep', rateLimit({ windowMs: 60 * 1000, max: 120 }), async (req, res) => {
   try {
     const { folder } = req.params;
     const { updates } = req.body || {};
@@ -48,7 +52,7 @@ router.put('/:folder/keep', async (req, res) => {
     }
     res.json({ message: `Updated keep flags for ${updatedCount} photos`, updated_count: updatedCount });
   } catch (err) {
-    console.error('Keep router: error updating keep flags:', err);
+    log.error('keep_update_failed', { error: err && err.message, stack: err && err.stack, project_folder: req.params && req.params.folder });
     res.status(500).json({ error: 'Failed to update keep flags' });
   }
 });

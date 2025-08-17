@@ -10,7 +10,7 @@ This application helps photographers manage their photo collections by:
 - **Automatic processing** (thumbnail and preview generation)
 - **Tagging system** for easy organization and searching
 - **Keep/discard workflow** for managing RAW+JPG pairs
-- **Real-time progress tracking** for background processing
+- **Real-time progress tracking** for background
 
 ## Technology
 
@@ -40,9 +40,9 @@ This application helps photographers manage their photo collections by:
 
 3. **Start the application** (requires 2 terminals):
    
-   **Terminal 1 - Backend**:
+   **Terminal 1 - Backend Logs**: Structured JSON lines from `npm run dev`. Pipe to `jq` for readability:
    ```bash
-   npm run dev
+   npm run dev 2>&1 | jq -r '.'
    ```
    
    **Terminal 2 - Frontend**:
@@ -73,7 +73,7 @@ npm run build  # Builds frontend to client/dist/
 - **Real-time Updates**: Live progress tracking for all background tasks
 - **Drag & Drop Upload**: Intuitive file upload interface
 - **Keyboard Shortcuts**: Fast navigation and actions
-- **Secure Asset Serving**: Signed URLs for photo access
+- **Secure Asset Serving**: Signed URLs for photo access; destructive endpoints are rate-limited
 
 ## Maintenance
 
@@ -99,8 +99,18 @@ cd client && npm run dev
 ## Environment Variables
 
 - **`REQUIRE_SIGNED_DOWNLOADS`** (default: `true`) - Controls token verification for file downloads
+- File acceptance is centralized in `server/utils/acceptance.js` and driven by `config.json` → `uploader.accepted_files` (extensions, mime_prefixes)
 - **`DOWNLOAD_SECRET`** - HMAC secret for signed URLs (change in production)
 - **`ALLOWED_ORIGINS`** - Comma-separated list of allowed CORS origins (e.g. `http://localhost:3000,https://app.example.com`). Defaults to `http://localhost:3000` for dev.
+
+### Logging
+
+- Backend uses structured JSON logs via `server/utils/logger2.js`. Levels: `error`, `warn`, `info`, `debug`.
+- Each entry includes component (`cmp`), event (`evt`), and context (e.g., `project_id`, `project_folder`, `project_name`).
+- **`LOG_LEVEL`** (default: `info`) controls verbosity.
+- SSE limits for DoS hardening:
+  - **`SSE_MAX_CONN_PER_IP`** (default: `2`)
+  - **`SSE_IDLE_TIMEOUT_MS`** (default set in code)
 
 See [SECURITY.md](SECURITY.md) for detailed security configuration.
 
@@ -111,6 +121,9 @@ See [SECURITY.md](SECURITY.md) for detailed security configuration.
 - **[SECURITY.md](SECURITY.md)** - Security implementation and best practices
   - Note: see “Notes for Security Analysis Team” re: maintenance jobs and `.trash` handling
 - **[JOBS_OVERVIEW.md](JOBS_OVERVIEW.md)** - Job types, options, and how file upload/maintenance/commit flows use them
+- Tip: File type acceptance helper lives in `server/utils/acceptance.js`; destructive endpoints (project rename/delete, commit/revert) are rate limited (10 req/5 min/IP)
+
+Logging v2: All backend routes/workers use the structured logger. See `PROJECT_OVERVIEW.md` → Logging for details.
 
 ## Contributing
 

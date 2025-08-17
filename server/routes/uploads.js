@@ -1,11 +1,11 @@
 const express = require('express');
 const path = require('path');
 const fs = require('fs-extra');
-const sharp = require('sharp');
+const makeLogger = require('../utils/logger2');
+const log = makeLogger('uploads');
 const exifParser = require('exif-parser');
 const multer = require('multer');
-const { getConfig } = require('../services/config');
-// const { generateDerivative } = require('../utils/imageProcessing');
+const { buildAcceptPredicate } = require('../utils/acceptance');
 const jobsRepo = require('../services/repositories/jobsRepo');
 const tasksOrchestrator = require('../services/tasksOrchestrator');
 
@@ -17,39 +17,13 @@ const router = express.Router();
 // Ensure JSON bodies are parsed for this router (for subset processing requests)
 router.use(express.json());
 
-// In-memory progress is deprecated; durability via jobs table
-
-// Manifest service removed by SQL migration; routes now use repositories
-
 // Resolve project directories relative to project root
 const PROJECT_ROOT = path.join(__dirname, '..', '..');
 const PROJECTS_DIR = path.join(PROJECT_ROOT, '.projects');
 fs.ensureDirSync(PROJECTS_DIR);
 
-// Multer setup (mirror server.js) using configurable accept list
+// Multer setup using configurable accept list (single-source in server/utils/acceptance.js)
 const storage = multer.memoryStorage();
-function buildAcceptPredicate() {
-  try {
-    const cfg = getConfig();
-    const exts = (cfg?.uploader?.accepted_files?.extensions || []).map(e => String(e).toLowerCase());
-    const prefixes = (cfg?.uploader?.accepted_files?.mime_prefixes || []).map(p => String(p).toLowerCase());
-    return (filename, mimetype) => {
-      const ext = path.extname(filename).toLowerCase().replace(/^\./, '');
-      const extOk = exts.length === 0 ? true : exts.includes(ext);
-      const mt = (mimetype || '').toLowerCase();
-      const mimeOk = prefixes.length === 0 ? true : prefixes.some(p => mt.startsWith(p));
-      return extOk && (mimeOk || mt === '');
-    };
-  } catch (_) {
-    // Fallback to common image/RAW types
-    const fallback = new Set(['jpg','jpeg','png','tif','tiff','raw','cr2','nef','arw','dng']);
-    return (filename, mimetype) => {
-      const ext = path.extname(filename).toLowerCase().replace(/^\./, '');
-      return fallback.has(ext) || (mimetype && mimetype.toLowerCase().startsWith('image/'));
-    };
-  }
-}
-
 const upload = multer({
   storage: storage,
   fileFilter: (req, file, cb) => {
@@ -60,6 +34,14 @@ const upload = multer({
   },
   limits: { fileSize: 100 * 1024 * 1024 }
 });
+
+// Small helper
+function getFileType(filename) {
+  const ext = path.extname(filename).toLowerCase();
+  if (['.jpg', '.jpeg'].includes(ext)) return 'jpg';
+  if (['.raw', '.cr2', '.nef', '.arw', '.dng'].includes(ext)) return 'raw';
+  return 'other';
+}
 
 // POST /api/projects/:folder/process (per-image: thumbnail then preview)
 router.post('/:folder/process', async (req, res) => {
@@ -76,18 +58,10 @@ router.post('/:folder/process', async (req, res) => {
     const job = jobsRepo.enqueue({ tenant_id, project_id: project.id, type: 'generate_derivatives', payload, progress_total: null });
     return res.status(202).json({ job });
   } catch (err) {
-    console.error('Error enqueuing generate_derivatives:', err);
+    log.error('enqueue_generate_derivatives_failed', { project_id: project.id, project_folder: project.project_folder, project_name: project.project_name, error: err && err.message, stack: err && err.stack });
     return res.status(500).json({ error: 'Failed to enqueue derivatives job' });
   }
 });
-
-// Small helper
-function getFileType(filename) {
-  const ext = path.extname(filename).toLowerCase();
-  if (['.jpg', '.jpeg'].includes(ext)) return 'jpg';
-  if (['.raw', '.cr2', '.nef', '.arw', '.dng'].includes(ext)) return 'raw';
-  return 'other';
-}
 
 // POST /api/projects/:folder/upload
 router.post('/:folder/upload', async (req, res) => {
@@ -142,7 +116,7 @@ router.post('/:folder/upload', async (req, res) => {
 
           // Defer thumbnail generation
           const isRawFile = /\.(arw|cr2|nef|dng|raw)$/i.test(ext);
-          console.log(`Deferring thumbnail generation for ${sanitizedName} (RAW: ${isRawFile})`);
+          log.debug('defer_thumbnail_generation', { project_id: project.id, project_folder: project.project_folder, project_name: project.project_name, filename: sanitizedName, is_raw: isRawFile });
 
           // Extract EXIF for non-RAW
           let metadata = {};
@@ -164,7 +138,7 @@ router.post('/:folder/upload', async (req, res) => {
                 Object.keys(metadata).forEach(k => metadata[k] === null && delete metadata[k]);
               }
             } catch (err) {
-              console.error(`EXIF parsing error for ${sanitizedName}:`, err.message);
+              log.warn('exif_parse_failed', { project_id: project.id, project_folder: project.project_folder, project_name: project.project_name, filename: sanitizedName, error: err && err.message });
               perFileErrors.push({ filename: sanitizedName, error: 'EXIF parsing failed' });
             }
           }
@@ -203,7 +177,7 @@ router.post('/:folder/upload', async (req, res) => {
           uploadedFiles.push({ filename: sanitizedName, size: file.size, type: fileType });
           basenames.push(originalName);
         } catch (fileErr) {
-          console.error(`Error processing file ${file.originalname}:`, fileErr);
+          log.error('file_process_error', { project_id: project.id, project_folder: project.project_folder, project_name: project.project_name, filename: file.originalname, error: fileErr && fileErr.message, stack: fileErr && fileErr.stack });
           perFileErrors.push({ filename: file.originalname, error: fileErr.message || 'Processing failed' });
         }
       }
@@ -220,7 +194,7 @@ router.post('/:folder/upload', async (req, res) => {
       try {
         tasksOrchestrator.startTask({ project_id: project.id, type: 'upload_postprocess', source: 'upload', items: basenames });
       } catch (e) {
-        console.warn('Failed to start upload_postprocess task:', e.message);
+        log.warn('start_upload_postprocess_failed', { project_id: project.id, project_folder: project.project_folder, project_name: project.project_name, error: e && e.message });
       }
 
       const response = { 
@@ -232,7 +206,7 @@ router.post('/:folder/upload', async (req, res) => {
       }
       res.status(201).json(response);
     } catch (err) {
-      console.error('Error uploading files:', err);
+      log.error('upload_failed', { project_id: project.id, project_folder: project.project_folder, project_name: project.project_name, error: err && err.message, stack: err && err.stack });
       res.status(500).json({ error: 'Failed to upload files' });
     }
   });
@@ -304,29 +278,13 @@ router.post('/:folder/analyze-files', async (req, res) => {
       rejectedFiles: rejected.length
     };
 
-    console.log(`Analysis complete: ${summary.totalImages} images, ${summary.newImages} new, ${summary.completionImages} completions, ${summary.duplicateImages} duplicates`);
+    log.info('analyze_files_summary', { project_id: project.id, project_folder: project.project_folder, project_name: project.project_name, total_images: summary.totalImages, new_images: summary.newImages, completion_images: summary.completionImages, duplicate_images: summary.duplicateImages, rejected_files: summary.rejectedFiles });
 
     res.json({ success: true, imageGroups, summary, rejected });
   } catch (err) {
-    console.error('Error analyzing files:', err);
+    log.error('analyze_files_failed', { project_id: project.id, project_folder: project.project_folder, project_name: project.project_name, error: err && err.message, stack: err && err.stack });
     res.status(500).json({ error: 'Failed to analyze files' });
   }
 });
-
-// POST /api/projects/:folder/generate-thumbnails
-router.post('/:folder/generate-thumbnails', async (req, res) => {
-  const { folder } = req.params;
-  console.warn('[DEPRECATED] /generate-thumbnails called. Returning 410. Prefer /process (per-image).');
-  clearProgress(folder);
-  return res.status(410).json({ error: 'Deprecated: use /api/projects/:folder/process' });
-});
-
-// POST /api/projects/:folder/generate-previews
-router.post('/:folder/generate-previews', async (req, res) => {
-  return res.status(410).json({ error: 'Deprecated: use /api/projects/:folder/process' });
-});
-
-// GET /api/projects/:folder/progress
-// Deprecated: in-memory /progress removed in favor of durable jobs + SSE
 
 module.exports = router;

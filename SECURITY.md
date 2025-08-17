@@ -44,7 +44,7 @@
 - Dual validation (MIME + extension)
 - Path traversal protection (`path.basename()`)
 - 100MB size limits
-- Configurable file type filtering
+- Configurable file type filtering via centralized helper `server/utils/acceptance.js` driven by `config.json → uploader.accepted_files`
 
 **Database Security**:
 - Parameterized queries (SQL injection protection)
@@ -69,6 +69,11 @@
 **Realtime (SSE)**:
 - `GET /api/jobs/stream` hardened with per‑IP connection cap (default 2), heartbeat every 25s, and idle timeout (default 5 min). Env overrides: `SSE_MAX_CONN_PER_IP`, `SSE_IDLE_TIMEOUT_MS`.
 
+**Monitoring & Logging**:
+- Logging v2: All backend routes/services/workers emit structured JSON logs via `server/utils/logger2.js` with levels (`error|warn|info|debug`).
+- Context includes `project_id`, `project_folder`, `project_name`, `job_id` where applicable; events are tagged (e.g., `upload_failed`, `list_jobs_failed`, `project_delete_failed`).
+- Tune via `LOG_LEVEL`.
+
 ### ⚠️ **Current Gaps**
 
 **Access Control**:
@@ -80,9 +85,7 @@
 - Large batch processing (100k+ photos)
 
 **Monitoring**:
-- Limited audit logging
-- Basic error tracking
-- No security event alerting
+- Structured logging now in place across backend (see Security Overview). Next steps focus on surfacing security/audit events and alerting.
 
 ---
 
@@ -99,7 +102,7 @@
 
 ### Security Files
 
-**Backend**: `server/utils/signedUrl.js`, `server/routes/assets.js`, `server/routes/uploads.js`
+**Backend**: `server/utils/signedUrl.js`, `server/utils/acceptance.js`, `server/utils/rateLimit.js`, `server/routes/assets.js`, `server/routes/uploads.js`
 **Config**: `config.json` (file type validation), `.env` (secrets)
 
 ---
