@@ -9,6 +9,7 @@ export default function SettingsProcessesModal({
   onConfigUpdate,
   onProjectDelete,
   onOpenCreateProject,
+  onProjectRenamed,
   initialTab = 'settings', // 'settings' | 'processes'
   onClose,
 }) {
@@ -22,28 +23,17 @@ export default function SettingsProcessesModal({
   }, [onClose]);
 
   return (
-    <div className="fixed inset-0 z-50 flex" onClick={onClose}>
-      {/* Fixed Close at top-right matching hamburger position and size */}
-      <button
-        onClick={onClose}
-        aria-label="Close options"
-        title="Close options"
-        className="fixed top-4 right-4 sm:right-6 lg:right-8 inline-flex items-center justify-center rounded-md border shadow-sm px-3 py-2 text-sm font-medium bg-white text-gray-700 hover:bg-gray-50 border-gray-300 z-[60]"
-      >
-        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-          <path strokeLinecap="round" strokeLinejoin="round" d="M6 6l12 12M18 6L6 18" />
-        </svg>
-      </button>
+    <div className="fixed inset-0 z-50 flex">
       {/* Backdrop */}
-      <div className="flex-1 bg-black/40 animate-fadeIn" />
+      <div className="flex-1 bg-black/40 animate-fadeIn" onClick={onClose} />
       {/* Right-docked drawer */}
       <aside
         className="ml-auto h-screen w-full md:w-[480px] lg:w-[560px] xl:w-[640px] bg-white shadow-xl border-l flex flex-col animate-slideInRightFade"
         onClick={(e) => e.stopPropagation()}
       >
-        {/* Header with tabs and Close */}
-        <div className="flex items-center justify-between px-4 py-3 border-b">
-          <div className="flex items-center gap-3">
+        {/* Header with tabs, New, and Close aligned in one row */}
+        <div className="flex items-center px-4 py-3 border-b">
+          <div className="flex items-center gap-2">
             <button
               className={`px-3 py-1.5 rounded text-sm ${tab==='settings' ? 'bg-gray-900 text-white' : 'bg-gray-100 text-gray-800'}`}
               onClick={() => setTab('settings')}
@@ -57,7 +47,29 @@ export default function SettingsProcessesModal({
               Processes
             </button>
           </div>
-          <div aria-hidden="true"></div>
+          <div className="ml-auto flex items-center gap-2">
+            <button
+              type="button"
+              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-md bg-blue-600 text-white hover:bg-blue-700 text-sm"
+              onClick={() => onOpenCreateProject?.()}
+              title="Create new project"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+              </svg>
+              New
+            </button>
+            <button
+              onClick={onClose}
+              aria-label="Close options"
+              title="Close options"
+              className="inline-flex items-center justify-center rounded-md border shadow-sm px-3 py-1.5 text-sm font-medium bg-white text-gray-700 hover:bg-gray-50 border-gray-300"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M6 6l12 12M18 6L6 18" />
+              </svg>
+            </button>
+          </div>
         </div>
 
         {/* Body */}
@@ -69,6 +81,7 @@ export default function SettingsProcessesModal({
                 config={config}
                 onConfigUpdate={onConfigUpdate}
                 onProjectDelete={onProjectDelete}
+                onProjectRenamed={onProjectRenamed}
                 onClose={onClose}
                 onOpenCreateProject={onOpenCreateProject}
                 embedded

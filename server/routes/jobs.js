@@ -1,34 +1,28 @@
 const express = require('express');
 const projectsRepo = require('../services/repositories/projectsRepo');
+const tasksOrchestrator = require('../services/tasksOrchestrator');
 const jobsRepo = require('../services/repositories/jobsRepo');
+const fs = require('fs');
+const path = require('path');
 const { onJobUpdate } = require('../services/events');
 
 const router = express.Router();
 router.use(express.json());
 
-// POST /api/projects/:folder/jobs -> enqueue a job for a project
+// POST /api/projects/:folder/jobs -> start a task for a project (no standalone jobs)
 router.post('/projects/:folder/jobs', (req, res) => {
   try {
     const { folder } = req.params;
-    const { type, payload } = req.body || {};
-    if (!type) return res.status(400).json({ error: 'type is required' });
+    const { task_type, source, items } = req.body || {};
+    if (!task_type) return res.status(400).json({ error: 'task_type is required (tasks-only API)' });
     const project = projectsRepo.getByFolder(folder);
     if (!project) return res.status(404).json({ error: 'Project not found' });
 
-    const tenant_id = 'user_0';
-
-    // If payload includes filenames, create job_items
-    const filenames = Array.isArray(payload?.filenames) ? payload.filenames : [];
-    if (filenames.length > 0) {
-      const items = filenames.map(fn => ({ filename: fn }));
-      const job = jobsRepo.enqueueWithItems({ tenant_id, project_id: project.id, type, payload, items });
-      return res.status(202).json({ job });
-    }
-    const job = jobsRepo.enqueue({ tenant_id, project_id: project.id, type, payload, progress_total: null });
-    return res.status(202).json({ job });
+    const start = tasksOrchestrator.startTask({ project_id: project.id, type: task_type, source: source || 'api', items: Array.isArray(items) ? items : null });
+    return res.status(202).json({ task: start });
   } catch (err) {
     console.error('Failed to enqueue job:', err);
-    return res.status(500).json({ error: 'Failed to enqueue job' });
+    return res.status(500).json({ error: 'Failed to start task' });
   }
 });
 
@@ -95,6 +89,19 @@ router.get('/jobs/stream', (req, res) => {
 
   // initial heartbeat
   send({ type: 'hello' });
+});
+
+// GET /api/tasks/definitions -> expose task definitions (labels, user_relevant, steps)
+router.get('/tasks/definitions', (req, res) => {
+  try {
+    const p = path.join(__dirname, '..', 'services', 'task_definitions.json');
+    const raw = fs.readFileSync(p, 'utf8');
+    const defs = JSON.parse(raw);
+    return res.json(defs);
+  } catch (err) {
+    console.error('Failed to load task definitions:', err);
+    return res.status(500).json({ error: 'Failed to load task definitions' });
+  }
 });
 
 module.exports = router;

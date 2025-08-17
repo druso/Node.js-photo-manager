@@ -27,3 +27,13 @@ export async function deleteProject(folder) {
   if (!res.ok) throw new Error(await res.text());
   return res.json();
 }
+
+export async function renameProjectById(id, name) {
+  const res = await fetch(`/api/projects/${encodeURIComponent(String(id))}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name })
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}

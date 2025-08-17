@@ -1,0 +1,40 @@
+{
+  "upload_postprocess": {
+    "label": "Upload Post-Process",
+    "user_relevant": true,
+    "steps": [
+      { "type": "upload_postprocess", "priority": 90 },
+      { "type": "manifest_check", "priority": 95 },
+      { "type": "folder_check", "priority": 95 }
+    ]
+  },
+  "change_commit": {
+    "label": "Commit Changes",
+    "user_relevant": true,
+    "steps": [
+      { "type": "file_removal", "priority": 100 },
+      { "type": "manifest_check", "priority": 95 },
+      { "type": "folder_check", "priority": 95 },
+      { "type": "manifest_cleaning", "priority": 80 }
+    ]
+  },
+  "maintenance": {
+    "label": "Maintenance",
+    "user_relevant": false,
+    "steps": [
+      { "type": "trash_maintenance", "priority": 100 },
+      { "type": "manifest_check", "priority": 95 },
+      { "type": "folder_check", "priority": 95 },
+      { "type": "manifest_cleaning", "priority": 80 }
+    ]
+  },
+  "project_delete": {
+    "label": "Delete Project",
+    "user_relevant": true,
+    "steps": [
+      { "type": "project_stop_processes", "priority": 100 },
+      { "type": "project_delete_files", "priority": 100 },
+      { "type": "project_cleanup_db", "priority": 95 }
+    ]
+  }
+}

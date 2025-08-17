@@ -1,14 +1,15 @@
-// Jobs API client for async pipeline
+// Jobs/Tasks API client for async pipeline
 
-export async function enqueueJob(folder, { type, payload } = {}) {
-  if (!type) throw new Error('enqueueJob: type is required');
+// Start a task for a project
+export async function startTask(folder, { task_type, source = 'client', items = null } = {}) {
+  if (!task_type) throw new Error('startTask: task_type is required');
   const res = await fetch(`/api/projects/${encodeURIComponent(folder)}/jobs`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ type, payload: payload || null }),
+    body: JSON.stringify({ task_type, source, items }),
   });
-  if (!res.ok) throw new Error(`enqueueJob failed: ${res.status}`);
-  return res.json(); // { job }
+  if (!res.ok) throw new Error(`startTask failed: ${res.status}`);
+  return res.json(); // { task }
 }
 
 export async function listJobs(folder, { status, type, limit = 50, offset = 0 } = {}) {
@@ -42,4 +43,11 @@ export function openJobStream(onMessage) {
     // Rely on browser's automatic reconnection; keep using relative URL through Vite proxy
   };
   return () => { try { es.close(); } catch (_) {} };
+}
+
+// Fetch task definitions (labels, user_relevant, steps)
+export async function fetchTaskDefinitions() {
+  const res = await fetch('/api/tasks/definitions');
+  if (!res.ok) throw new Error(`fetchTaskDefinitions failed: ${res.status}`);
+  return res.json();
 }

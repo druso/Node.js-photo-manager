@@ -18,7 +18,7 @@
 
 **3. Rate Limiting** 🔧 *2-4h*
 - **Risk**: Abuse of commit/revert endpoints
-- **Action**: Add express-rate-limit to `/api/projects/:folder/commit-changes` and `/api/projects/:folder/revert-changes`
+- **Action**: Add express-rate-limit to `/api/projects/:folder/commit-changes`, `/api/projects/:folder/revert-changes`, `DELETE /api/projects/:folder` (soft-delete), and `PATCH /api/projects/:id` (rename)
 
 **4. Job Queue Limits** 🔧 *4-6h*
 - **Risk**: Memory exhaustion from unlimited jobs
@@ -26,7 +26,7 @@
 
 **5. Audit Logging** 🔧 *6-8h*
 - **Risk**: Limited forensics capability
-- **Action**: Structured logs for file ops, job failures
+- **Action**: Structured logs for file ops, job failures, and project rename events (old_name → new_name, id)
 
 **6. Asset Endpoint Throttling & Caching** 🔧 *1-2h*
 - **Risk**: Increased request volume from frontend probing of pending thumbnails could be abused to cause excess load
@@ -141,14 +141,23 @@ This ensures all functionality receives security review before deployment.
   - Exposure: Messages contain only non-sensitive status metadata (no PII/secrets). Confirm no internal paths or secrets are included.
   - Abuse: SSE is a single long-lived connection; consider per-IP connection limits and timeouts.
 
-2) Removal of Client Probing for Thumbnails
+2) Per-Item Removal Events + Optimistic Hide on Commit
+
+- Change: Backend emits `item_removed` during `manifest_cleaning`; client performs optimistic hide on Commit (marks assets missing, drops rows with no assets) and reconciles via SSE without a hard refresh.
+- Benefit: Eliminates transient 404s and UI flicker; maintains scroll/selection and reduces network volume.
+- Security considerations:
+  - CORS: Ensure SSE stream adheres to strict allowlist in production.
+  - Rate limiting: Light limits on commit/revert endpoints to prevent abuse of destructive ops (already in Suggested Interventions #3).
+  - SSE connection policy: cap concurrent SSE streams per IP and set idle timeouts to mitigate resource pinning.
+
+3) Removal of Client Probing for Thumbnails
 
 - Change: Client no longer probes thumbnail URLs while pending; uses SSE events + light fallback polling.
 - Benefit: Reduces 404 request volume and potential amplification vectors.
 - Security considerations:
   - Asset endpoints still should retain light rate limiting and standard caching headers as above.
 
-3) Worker Loop Configuration Warnings
+4) Worker Loop Configuration Warnings
 
 - Change: Added runtime warnings for misconfigurations that could starve normal lane.
 - Security considerations: Logging only; no impact on exposure.
@@ -175,3 +184,13 @@ Action requested (Security Team):
 - Change: The photo viewer no longer auto-advances when the user plans a delete (sets keep none). The current index is clamped when the filtered photo list changes to avoid premature viewer close.
 - Rationale: Prevents double-skip when filters hide deleted items and eliminates transient UI errors from rapid close/reopen.
 - Security considerations: UI-only; no new endpoints, no change to request patterns or data exposure. No additional review required.
+
+7) Project Deletion Converted to High-Priority Task (Soft Delete)
+
+- Change: `DELETE /api/projects/:folder` now performs a soft-delete (`projects.status='canceled'`, `archived_at` set) and enqueues a high‑priority `project_delete` task (steps: stop processes, delete files, cleanup DB). Frontend hides canceled projects immediately.
+- Benefits: Faster UX, consistent job pipeline handling, orderly cleanup, cancellation of conflicting jobs.
+- Security considerations:
+  - Rate limit the DELETE endpoint (see Medium Priority #3) since it triggers destructive operations.
+  - Ensure only authorized users can delete (future auth); log audit entries (who/when/id/folder).
+  - Worker idempotency: file deletion and DB cleanup must be safe on retries; current implementation is idempotent by checking project status and tolerating missing tables/paths.
+  - Priority lane impact: high‑priority deletion jobs preempt normal processing; confirm lane capacity cannot starve other critical maintenance (keep at least 1 slot for maintenance).

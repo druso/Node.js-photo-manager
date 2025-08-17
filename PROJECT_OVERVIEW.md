@@ -8,6 +8,12 @@ The application is a web-based photo management tool designed for amateur and pr
 
 ## 2. Core Concepts
 
+## 2.a UX Principles (Golden Rules)
+
+- Avoid hard refreshes of the photo list. Prefer incremental, in-place updates to preserve user context (scroll position, selection, open viewer). Perform a full refetch only as a last resort.
+- Preserve continuity of interaction (don’t disrupt focus/selection unless the action explicitly requires it).
+- Minimize flicker and network noise (respect missing states; no probing while pending; cache-bust final images only).
+
 The application is built around a few key concepts:
 
 *   **Projects**: A Project is the primary organizational unit, representing a collection of photos from a single event or shooting session. Think of it as an "album" or a specific shoot. A photo belongs to exactly one Project.
@@ -70,7 +76,7 @@ The backend is a Node.js application that exposes a RESTful API for the client.
 *   **Entry Point**: The main server file is `server.js`.
 *   **API Routes (`server/routes/`)**: This directory defines all the API endpoints. Key files include:
     *   `uploads.js`: Handles file uploads with configurable file type filtering
-    *   `projects.js`: Manages project creation and data retrieval
+    *   `projects.js`: Manages project creation, rename, and data retrieval
     *   `assets.js`: Serves photo assets (previews, thumbnails) with signed URLs
     *   `jobs.js`: Provides endpoints for the worker pipeline and Server-Sent Events
     *   `tags.js`: Manages photo tagging functionality
@@ -85,7 +91,7 @@ The backend is a Node.js application that exposes a RESTful API for the client.
 
 #### Project Folders (Fresh Start)
 
-Projects are stored on disk under `<repoRoot>/.projects/<project_folder>/` where `project_folder` is always of the form `<slug(project_name)>--p<id>`. Duplicate human names are allowed; uniqueness is enforced by `project_folder`.
+Projects are stored on disk under `<repoRoot>/.projects/<project_folder>/` where `project_folder` is always of the form `p<id>` (immutable and decoupled from the display name). Duplicate human names are allowed; uniqueness is enforced by `project_folder`. The numeric `id` is returned by all project APIs and should be used for renames; the folder never changes.
 
 On creation, the server ensures these subdirectories exist:
 - `.thumb` for thumbnails
@@ -125,8 +131,9 @@ Refer to `SCHEMA_DOCUMENTATION.md` for detailed table structures and relationshi
 *   **Keyboard Shortcuts**: Comprehensive keyboard navigation (see configuration)
     - Viewer behavior: planning a delete (keep none) no longer auto-advances; the viewer stays on the current image and shows a toast. When filters change the visible list, the current index is clamped to a valid photo instead of closing.
  *   **Real-time Updates**: Live job progress via Server-Sent Events
- *   **Incremental Thumbnails (SSE)**: Pending thumbnails update via item-level SSE events; no client-side probing of asset URLs
-*   **Optimistic Updates**: Keep/Tag/Revert actions update the UI immediately without a full data refetch, preserving browsing context.
+*   **Incremental Thumbnails (SSE)**: Pending thumbnails update via item-level SSE events; no client-side probing of asset URLs
+*   **Incremental Updates**: The grid updates incrementally to preserve context and avoid disruptive reloads.
+*   **Optimistic Updates**: Keep/Tag/Revert/Commit actions update the UI immediately without a full data refetch, preserving browsing context.
 *   **Scroll Preservation**: Grid/table and viewer preserve scroll position and context during incremental updates. Selection is maintained unless an action explicitly clears it.
 *   **Layout Stability**: Thumbnail cells use constant border thickness; selection changes only color/ring, avoiding micro layout shifts that can nudge scroll.
  *   **Grid Lazy-Load Reset Policy**: The grid’s visible window only resets when changing projects (or lazy threshold), not on incremental data updates.
@@ -148,6 +155,7 @@ Refer to `SCHEMA_DOCUMENTATION.md` for detailed table structures and relationshi
 *   **Job Status Tracking**: Real-time progress monitoring
 *   **Crash Recovery**: Automatic restart of failed jobs
 *   **Extensible Workers**: Easy to add new processing tasks
+*   **Deletion as Task**: Project deletion is handled via a high‑priority task (`project_delete`) to ensure fast cleanup and safe ordering.
 
 ### Security
 *   **Signed URLs**: Secure access to photo assets with expiration
@@ -170,9 +178,21 @@ Refer to `SECURITY.md` for detailed security implementation and best practices.
 
 1.  **Job Polling**: The `workerLoop.js` service periodically polls the `jobs` table for new, unprocessed jobs.
 2.  **Job Execution**: When a new job is found, the worker executes the corresponding task (e.g., the thumbnail generation worker is called).
+    - The pipeline has two lanes. Deletion steps run with priority ≥ threshold so they claim priority slots and run ahead of normal jobs.
 3.  **Processing**: The worker generates the required assets (e.g., a JPEG preview and a smaller thumbnail) and saves them to the appropriate directory.
 4.  **Update Database**: The paths to the newly generated assets are saved in the photo's database record.
 5.  **Job Completion**: The job is marked as `completed` in the `jobs` table.
+
+### Project Deletion Flow
+
+1.  **UI Request**: The user initiates project deletion from the client UI.
+2.  **API Request**: The client sends a `DELETE` request to the `/api/projects/:folder` endpoint on the server.
+3.  **Soft Deletion**: The server sets the project status to `canceled` and archives it.
+4.  **Job Queuing**: A new high-priority job (`project_delete`) is created and added to the `jobs` table in the database.
+5.  **Worker Processing**: The worker executes the `project_delete` job, which includes the following steps:
+    - `project_stop_processes`: Stops any ongoing processes for the project.
+    - `project_delete_files`: Deletes the project files from the file system.
+    - `project_cleanup_db`: Cleans up the project's database records.
 
 ### Maintenance Processes
 
@@ -183,7 +203,10 @@ Job types:
 - `trash_maintenance`: Remove files in `.trash` older than 24h.
 - `manifest_check`: Verify DB availability flags (`jpg_available`, `raw_available`) against files on disk and fix discrepancies.
 - `folder_check`: Scan the project folder for untracked files; enqueue `upload_postprocess` only for newly discovered bases (not already present in the manifest); move unaccepted files to `.trash`.
-- `manifest_cleaning`: Delete rows where both JPG and RAW are unavailable.
+- `manifest_cleaning`: Delete rows where both JPG and RAW are unavailable. Emits `item_removed` events for per-item UI reconciliation.
+\- `project_stop_processes`: High‑priority step that marks a project archived (`status='canceled'`) and cancels queued/running jobs.
+\- `project_delete_files`: High‑priority step that deletes the project folder from `.projects/<project_folder>/`.
+\- `project_cleanup_db`: Cleans related DB rows (`photos`, `tags`, `photo_tags`) while retaining the archived `projects` row for audit.
 
 Scheduler (`server/services/scheduler.js`) cadence:
 
@@ -199,6 +222,7 @@ Manual reconciliation endpoints:
   - Deletes generated derivatives for JPGs moved to `.trash` (removes `.thumb/<base>.jpg` and `.preview/<base>.jpg` immediately)
   - Updates DB availability flags accordingly
   - Enqueues `manifest_check`, `folder_check`, and `manifest_cleaning`
+  - Emits incremental SSE (`item_removed`, `manifest_changed` with `removed_filenames`) for UI reconciliation
   - See implementation in `server/routes/maintenance.js`
 - `POST /api/projects/:folder/revert-changes`
   - Non‑destructive. Resets `keep_jpg := jpg_available` and `keep_raw := raw_available` for all photos in the project.
@@ -208,7 +232,7 @@ Manual reconciliation endpoints:
 Client behavior after reconciliation endpoints:
 
 - After a successful `POST /revert-changes`, the client optimistically updates in-memory photo state to set `keep_jpg`/`keep_raw` from availability, avoiding a full refetch and preserving scroll/selection.
-- After a successful `POST /commit-changes`, the UI avoids hard reloads; asset changes propagate via background jobs/SSE and normal data refreshes, minimizing disruptive updates.
+- After a successful `POST /commit-changes`, the UI updates incrementally and avoids disruptive full-list reloads.
 
 ## 7. Getting Started
 
@@ -467,6 +491,7 @@ The backend exposes a comprehensive REST API for all frontend operations:
 
 ### Core Endpoints
 *   **Projects**: `GET/POST/DELETE /api/projects` - Project management
+*   **Projects (Rename)**: `PATCH /api/projects/:id` - Update project display name only (folder remains `p<id>`)
 *   **Uploads**: `POST /api/projects/:folder/upload` - File upload with progress
 *   **Processing**: `POST /api/projects/:folder/process` - Queue thumbnail/preview generation
 *   **Analysis**: `POST /api/projects/:folder/analyze-files` - Pre-upload file analysis
@@ -492,6 +517,19 @@ The backend exposes a comprehensive REST API for all frontend operations:
 *   All endpoints return JSON responses
 *   Consistent error handling with HTTP status codes
 *   Pagination support for large datasets
+
+#### Project Entities
+
+All project-related responses include the project `id`:
+
+- `GET /api/projects` → `[{ id, name, folder, created_at, updated_at }, ...]`
+- `GET /api/projects/:folder` → `{ id, name, folder, created_at, updated_at, photos: [...] }`
+- `PATCH /api/projects/:id` → `{ message, project: { name, folder, created_at, updated_at } }`
+
+Notes:
+
+- `id` is immutable and used to address rename operations.
+- `folder` is canonical (`p<id>`) and immutable (does not change on rename).
 
 ## 10. Development Workflow
 
@@ -559,6 +597,7 @@ server/
 │   │   └── jobsRepo.js      # Job queue operations
 │   ├── workers/             # Background job processors
 │   │   └── derivativesWorker.js # Thumbnail/preview generation
+│   │   └── maintenanceWorker.js # Manifest/folder checks and cleaning (emits item_removed)
 │   ├── db.js               # Database initialization
 │   ├── workerLoop.js       # Job processing engine
 │   └── events.js           # Event emitter for SSE

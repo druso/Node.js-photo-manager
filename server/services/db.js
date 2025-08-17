@@ -125,6 +125,10 @@ function applySchema(db) {
 
   db.exec(ddl);
   // Lightweight migrations for new columns (SQLite lacks IF NOT EXISTS for columns)
+  // Projects: add status and archived_at for soft-delete/archive semantics
+  ensureColumn(db, 'projects', 'status', "ALTER TABLE projects ADD COLUMN status TEXT");
+  ensureColumn(db, 'projects', 'archived_at', "ALTER TABLE projects ADD COLUMN archived_at TEXT");
+  try { db.exec(`CREATE INDEX IF NOT EXISTS idx_projects_status ON projects(status)`); } catch (e) { try { console.warn('[db] failed to create idx_projects_status:', e.message); } catch {} }
   ensureColumn(db, 'jobs', 'attempts', "ALTER TABLE jobs ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0");
   ensureColumn(db, 'jobs', 'max_attempts', "ALTER TABLE jobs ADD COLUMN max_attempts INTEGER");
   ensureColumn(db, 'jobs', 'last_error_at', "ALTER TABLE jobs ADD COLUMN last_error_at TEXT");

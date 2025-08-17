@@ -4,6 +4,7 @@ const { getConfig } = require('../config');
 const projectsRepo = require('../repositories/projectsRepo');
 const photosRepo = require('../repositories/photosRepo');
 const jobsRepo = require('../repositories/jobsRepo');
+const { emitJobUpdate } = require('../events');
 const { ensureProjectDirs, PROJECTS_DIR, statMtimeSafe, buildAcceptPredicate, moveToTrash } = require('../fsUtils');
 
 function splitExtSets() {
@@ -84,6 +85,9 @@ async function runManifestCheck(job) {
     }
   }
   console.log(`[manifest_check] project ${project.id} updated rows: ${changed}`);
+  if (changed > 0) {
+    emitJobUpdate({ type: 'manifest_changed', project_folder: project.project_folder, changed });
+  }
 }
 
 async function runFolderCheck(job) {
@@ -114,6 +118,7 @@ async function runFolderCheck(job) {
   }
 
   const toProcess = [];
+  let createdCount = 0;
   for (const [base, availability] of discoveredBases.entries()) {
     const existing = photosRepo.getByProjectAndFilename(project.id, base);
     if (!existing) {
@@ -136,14 +141,28 @@ async function runFolderCheck(job) {
       });
       // Only enqueue postprocess for truly new bases
       toProcess.push({ filename: base });
+      createdCount++;
     } else {
       // Existing record present: do not enqueue here. Availability corrections are handled by manifest_check; orphan cleanup by manifest_cleaning.
     }
   }
 
   if (toProcess.length) {
-    const job2 = jobsRepo.enqueueWithItems({ tenant_id: job.tenant_id, project_id: project.id, type: 'upload_postprocess', payload: { filenames: toProcess.map(i => i.filename) }, items: toProcess, priority: 90 });
+    const taskPayload = job.payload_json && job.payload_json.task_id && job.payload_json.task_type
+      ? { task_id: job.payload_json.task_id, task_type: job.payload_json.task_type, source: job.payload_json.source || 'system' }
+      : null;
+    const job2 = jobsRepo.enqueueWithItems({
+      tenant_id: job.tenant_id,
+      project_id: project.id,
+      type: 'upload_postprocess',
+      payload: taskPayload,
+      items: toProcess,
+      priority: 90,
+    });
     console.log(`[folder_check] enqueued upload_postprocess job ${job2.id} for ${toProcess.length} items`);
+  }
+  if (createdCount > 0) {
+    emitJobUpdate({ type: 'manifest_changed', project_folder: project.project_folder, created: createdCount });
   }
 }
 
@@ -152,13 +171,20 @@ async function runManifestCleaning(job) {
   if (!project) throw new Error('Project not found');
   const page = photosRepo.listPaged({ project_id: project.id, limit: 100000 });
   let removed = 0;
+  const removedFilenames = [];
   for (const p of page.items) {
     if (!p.jpg_available && !p.raw_available) {
       photosRepo.removeById(p.id);
       removed++;
+      removedFilenames.push(p.filename);
+      // Emit targeted removal event so frontend can update in-place
+      emitJobUpdate({ type: 'item_removed', project_folder: project.project_folder, filename: p.filename });
     }
   }
   console.log(`[manifest_cleaning] project ${project.id} removed rows: ${removed}`);
+  if (removed > 0) {
+    emitJobUpdate({ type: 'manifest_changed', project_folder: project.project_folder, removed, removed_filenames: removedFilenames });
+  }
 }
 
 module.exports = {

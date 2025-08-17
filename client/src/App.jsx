@@ -5,7 +5,7 @@ import PhotoDisplay from './components/PhotoDisplay';
 import OperationsMenu from './components/OperationsMenu';
 // OptionsMenu removed: hamburger opens unified panel directly
 import SettingsProcessesModal from './components/SettingsProcessesModal';
-import { openJobStream } from './api/jobsApi';
+import { openJobStream, fetchTaskDefinitions, listJobs } from './api/jobsApi';
 import PhotoViewer from './components/PhotoViewer';
 // Settings rendered via SettingsProcessesModal
 import UniversalFilter from './components/UniversalFilter';
@@ -44,6 +44,9 @@ function App() {
   const [sortDir, setSortDir] = useState('desc'); // 'asc' | 'desc' (date newest first by default)
   // Grid/table preview size: 's' | 'm' | 'l'
   const [sizeLevel, setSizeLevel] = useState('m');
+  // Task definitions and completion notifications
+  const [taskDefs, setTaskDefs] = useState(null);
+  const notifiedTasksRef = useRef(new Set());
 
   // Commit and revert flows
   const [showCommitModal, setShowCommitModal] = useState(false);
@@ -66,11 +69,38 @@ function App() {
     if (!selectedProject) return;
     setCommitting(true);
     try {
+      // Optimistic hide: mark pending deletions as missing immediately to avoid 404s
+      setProjectData(prev => {
+        if (!prev || !Array.isArray(prev.photos)) return prev;
+        const photos = [];
+        for (const p of prev.photos) {
+          const willRemoveJpg = !!p.jpg_available && p.keep_jpg === false;
+          const willRemoveRaw = !!p.raw_available && p.keep_raw === false;
+          if (!willRemoveJpg && !willRemoveRaw) { photos.push(p); continue; }
+          const next = { ...p };
+          if (willRemoveJpg) {
+            next.jpg_available = false;
+            next.thumbnail_status = 'missing';
+            next.preview_status = 'missing';
+          }
+          if (willRemoveRaw) {
+            next.raw_available = false;
+          }
+          // If both assets will be gone, drop from list immediately
+          if (!next.jpg_available && !next.raw_available) {
+            // skip push → remove from list
+          } else {
+            photos.push(next);
+          }
+        }
+        return { ...prev, photos };
+      });
+
       await toast.promise(
         (async () => {
           const res = await fetch(`/api/projects/${encodeURIComponent(selectedProject.folder)}/commit-changes`, { method: 'POST' });
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
-          await fetchProjectData(selectedProject.folder);
+          // No full refetch here; rely on optimistic updates + SSE reconciliation
         })(),
         {
           pending: { emoji: '🗑️', message: 'Committing…', variant: 'info' },
@@ -81,6 +111,10 @@ function App() {
       setShowCommitModal(false);
     } catch (e) {
       console.error('Commit changes failed', e);
+      // Revert optimistic changes by refetching on failure
+      if (selectedProject) {
+        try { await fetchProjectData(selectedProject.folder); } catch {}
+      }
     } finally {
       setCommitting(false);
     }
@@ -116,6 +150,15 @@ function App() {
   const commitBarRef = useRef(null);
   // Track whether SSE stream is connected (to reduce fallback polling)
   const sseReadyRef = useRef(false);
+
+  // Load task definitions once (client-side metadata)
+  useEffect(() => {
+    let alive = true;
+    fetchTaskDefinitions()
+      .then(d => { if (alive) setTaskDefs(d || {}); })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, []);
 
   // A11y: commit modal focus trap
   const commitModalRef = useRef(null);
@@ -500,12 +543,25 @@ function App() {
   // Auto-refresh and fine-grained updates via SSE
   useEffect(() => {
     const close = openJobStream((evt) => {
-      // Mark SSE as active upon any message (hello, item, job)
+      // Any message implies SSE is active
       sseReadyRef.current = true;
 
-      // 1) Fine-grained item updates: avoid full grid refresh
+      // 0) Manifest changes: prefer incremental updates, no hard refetch
+      if (evt && evt.type === 'manifest_changed' && selectedProject && evt.project_folder === selectedProject.folder) {
+        if (Array.isArray(evt.removed_filenames) && evt.removed_filenames.length) {
+          const toRemove = new Set(evt.removed_filenames);
+          setProjectData(prev => {
+            if (!prev || !Array.isArray(prev.photos)) return prev;
+            const photos = prev.photos.filter(p => !toRemove.has(p.filename));
+            return { ...prev, photos };
+          });
+        }
+        return;
+      }
+
+      // 1) Item-level updates without full refetch
       if (evt && evt.type === 'item' && selectedProject && evt.project_folder === selectedProject.folder) {
-        setProjectData((prev) => {
+        setProjectData(prev => {
           if (!prev || !Array.isArray(prev.photos)) return prev;
           const idx = prev.photos.findIndex(p => p.filename === evt.filename);
           if (idx === -1) return prev;
@@ -520,20 +576,54 @@ function App() {
         return; // handled
       }
 
-      // 2) Avoid full refetch on job completion when SSE is active; item events already updated the grid
-      if (evt && evt.status === 'completed' && selectedProject) {
-        if (!sseReadyRef.current) {
-          // Only refetch if SSE wasn't reliably connected
-          fetchProjectData(selectedProject.folder);
+      // 1b) Item removed: drop from list in-place
+      if (evt && evt.type === 'item_removed' && selectedProject && evt.project_folder === selectedProject.folder) {
+        const fname = evt.filename;
+        if (!fname) return;
+        setProjectData(prev => {
+          if (!prev || !Array.isArray(prev.photos)) return prev;
+          const photos = prev.photos.filter(p => p.filename !== fname);
+          return { ...prev, photos };
+        });
+        return; // handled
+      }
+
+      // 2) Task completion toasts (user-relevant tasks only)
+      if (evt && selectedProject && evt.payload_json && evt.payload_json.task_id && evt.payload_json.task_type && (evt.status === 'completed' || evt.status === 'failed')) {
+        const tid = evt.payload_json.task_id;
+        const ttype = evt.payload_json.task_type;
+        const meta = taskDefs?.[ttype];
+        const userRelevant = meta ? (meta.user_relevant !== false) : true;
+        if (userRelevant && !notifiedTasksRef.current.has(tid)) {
+          // Debounce-check: after a short delay, fetch jobs and see if any for this task are still running/queued
+          setTimeout(async () => {
+            try {
+              const { jobs } = await listJobs(selectedProject.folder, { limit: 100 });
+              const sameTask = (jobs || []).filter(j => j?.payload_json?.task_id === tid);
+              const anyActive = sameTask.some(j => j.status === 'running' || j.status === 'queued');
+              if (anyActive) return; // not done yet
+              const anyFailed = sameTask.some(j => j.status === 'failed');
+              const label = meta?.label || ttype;
+              if (anyFailed) {
+                toast.show({ emoji: '⚠️', message: `${label} failed`, variant: 'error' });
+              } else {
+                toast.show({ emoji: '✅', message: `${label} completed`, variant: 'success' });
+              }
+              notifiedTasksRef.current.add(tid);
+            } catch (_) {}
+          }, 400);
         }
       }
+
+      // 3) Do not refetch on job completion; rely on item/item_removed + manifest_changed handling
     });
     return () => close();
-  }, [selectedProject]);
+  }, [selectedProject, taskDefs]);
 
   // Fallback polling: while any thumbnail is pending and SSE not yet delivering, periodically refetch
   useEffect(() => {
     if (!selectedProject) return;
+    if (committing) return; // avoid refetch during commit
     const photos = projectData?.photos || [];
     const anyPending = photos.some(p => p && (p.thumbnail_status === 'pending' || !p.thumbnail_status));
     if (!anyPending) return;
@@ -542,7 +632,7 @@ function App() {
       fetchProjectData(selectedProject.folder);
     }, 3000);
     return () => clearInterval(id);
-  }, [selectedProject, projectData]);
+  }, [selectedProject, projectData, committing]);
 
   const handleProjectCreate = async (projectName) => {
     try {
@@ -611,6 +701,21 @@ function App() {
   const handleProjectDeleted = () => {
     // Force page refresh to ensure clean state after project deletion
     window.location.reload();
+  };
+
+  const handleProjectRenamed = (updated) => {
+    if (!updated || updated.id == null) return;
+    setProjects(prev => prev.map(p => (p.id === updated.id ? { ...p, name: updated.name } : p)));
+    setSelectedProject(prev => {
+      if (!prev) return prev;
+      if (prev.id === updated.id) return { ...prev, name: updated.name };
+      return prev;
+    });
+    setProjectData(prev => {
+      if (!prev) return prev;
+      // server getProject uses project_name field
+      return { ...prev, project_name: updated.name };
+    });
   };
 
   const handlePhotoSelect = (photo, photoContext = null) => {
@@ -1434,6 +1539,7 @@ function App() {
             handleProjectDeleted();
           }}
           onOpenCreateProject={() => { setShowCreateProject(true); setShowOptionsModal(false); }}
+          onProjectRenamed={handleProjectRenamed}
           initialTab={optionsTab}
           onClose={() => setShowOptionsModal(false)}
         />

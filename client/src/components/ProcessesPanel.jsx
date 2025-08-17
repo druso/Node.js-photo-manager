@@ -1,10 +1,12 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { listJobs, openJobStream } from '../api/jobsApi';
+import { listJobs, openJobStream, fetchTaskDefinitions } from '../api/jobsApi';
 
 export default function ProcessesPanel({ projectFolder, onClose, embedded = false }) {
   const [jobs, setJobs] = useState([]);
   const [filter, setFilter] = useState({ status: '', type: '' });
   const [loading, setLoading] = useState(false);
+  const [advanced, setAdvanced] = useState(false);
+  const [defs, setDefs] = useState(null);
   const esCloseRef = useRef(null);
 
   const refresh = async () => {
@@ -26,6 +28,13 @@ export default function ProcessesPanel({ projectFolder, onClose, embedded = fals
   };
 
   useEffect(() => { refresh(); }, [projectFolder, filter.status, filter.type]);
+
+  // Load task definitions once
+  useEffect(() => {
+    let alive = true;
+    fetchTaskDefinitions().then(d => { if (alive) setDefs(d); }).catch(() => {});
+    return () => { alive = false; };
+  }, []);
 
   useEffect(() => {
     if (esCloseRef.current) { esCloseRef.current(); esCloseRef.current = null; }
@@ -89,10 +98,64 @@ export default function ProcessesPanel({ projectFolder, onClose, embedded = fals
     );
   };
 
+  // Group by task_id and compute rollups
+  const taskGroups = useMemo(() => {
+    const map = {};
+    for (const j of (jobs || [])) {
+      const tid = j?.payload_json?.task_id;
+      const ttype = j?.payload_json?.task_type;
+      if (!tid || !ttype) continue;
+      if (!map[tid]) map[tid] = { task_id: tid, task_type: ttype, jobs: [] };
+      map[tid].jobs.push(j);
+    }
+    const arr = Object.values(map);
+    // Sort: running/queued first, then recent
+    arr.sort((a, b) => {
+      const aRunning = a.jobs.some(j => j.status === 'running' || j.status === 'queued');
+      const bRunning = b.jobs.some(j => j.status === 'running' || j.status === 'queued');
+      if (aRunning && !bRunning) return -1; if (!aRunning && bRunning) return 1;
+      const aTime = Math.max(...a.jobs.map(j => new Date(j.created_at).getTime()));
+      const bTime = Math.max(...b.jobs.map(j => new Date(j.created_at).getTime()));
+      return bTime - aTime;
+    });
+    return arr;
+  }, [jobs]);
+
+  const computeRollup = (g) => {
+    const sts = g.jobs.map(j => j.status);
+    if (sts.some(s => s === 'failed')) return 'failed';
+    if (sts.every(s => s === 'completed')) return 'completed';
+    if (sts.some(s => s === 'running')) return 'running';
+    if (sts.some(s => s === 'queued')) return 'queued';
+    return 'queued';
+  };
+
+  const TaskRow = ({ g }) => {
+    const meta = defs?.[g.task_type] || { label: g.task_type, user_relevant: true };
+    const roll = computeRollup(g);
+    return (
+      <div className="border rounded p-3 mb-2 bg-white">
+        <div className="flex items-center justify-between">
+          <div className="font-medium text-sm">{meta.label} <span className="text-gray-400">{g.task_type}</span></div>
+          <div>{statusBadge(roll)}</div>
+        </div>
+        {advanced && (
+          <div className="mt-3">
+            {g.jobs.map(j => (<JobRow key={j.id} j={j} />))}
+          </div>
+        )}
+      </div>
+    );
+  };
+
   if (embedded) {
     return (
       <div>
-        <div className="flex gap-2 mb-3">
+        <div className="flex items-center gap-3 mb-3">
+          <label className="flex items-center gap-2 text-sm">
+            <input type="checkbox" checked={advanced} onChange={(e) => setAdvanced(e.target.checked)} />
+            <span>Advanced</span>
+          </label>
           <select value={filter.status} onChange={(e) => setFilter(f => ({ ...f, status: e.target.value }))} className="border rounded px-2 py-1 text-sm">
             <option value="">All statuses</option>
             <option value="queued">Queued</option>
@@ -101,20 +164,13 @@ export default function ProcessesPanel({ projectFolder, onClose, embedded = fals
             <option value="failed">Failed</option>
             <option value="canceled">Canceled</option>
           </select>
-          <select value={filter.type} onChange={(e) => setFilter(f => ({ ...f, type: e.target.value }))} className="border rounded px-2 py-1 text-sm">
-            <option value="">All types</option>
-            <option value="generate_derivatives">Generate derivatives</option>
-            <option value="upload_postprocess">Upload post-process</option>
-          </select>
         </div>
         <div className="overflow-auto max-h-[60vh]">
           {(() => {
-            const active = (jobs || []).filter(j => j.status === 'queued' || j.status === 'running');
-            const completed = (jobs || []).filter(j => j.status === 'completed').sort((a,b) => new Date(b.created_at) - new Date(a.created_at)).slice(0,5);
-            const others = (jobs || []).filter(j => !['queued','running','completed'].includes(j.status));
-            const display = [...active, ...completed, ...others];
-            if (display.length === 0) return (<div className="py-6 text-center text-gray-500">No jobs yet</div>);
-            return display.map(j => (<JobRow key={j.id} j={j} />));
+            let groups = taskGroups;
+            if (!advanced) groups = groups.filter(g => (defs?.[g.task_type]?.user_relevant) !== false);
+            if (groups.length === 0) return (<div className="py-6 text-center text-gray-500">No tasks yet</div>);
+            return groups.map(g => (<TaskRow key={g.task_id} g={g} />));
           })()}
         </div>
       </div>
@@ -129,7 +185,11 @@ export default function ProcessesPanel({ projectFolder, onClose, embedded = fals
           <button className="text-gray-600 hover:text-black" onClick={onClose}>&times;</button>
         </div>
         <div className="p-4">
-          <div className="flex gap-2 mb-3">
+          <div className="flex items-center gap-3 mb-3">
+            <label className="flex items-center gap-2 text-sm">
+              <input type="checkbox" checked={advanced} onChange={(e) => setAdvanced(e.target.checked)} />
+              <span>Advanced</span>
+            </label>
             <select value={filter.status} onChange={(e) => setFilter(f => ({ ...f, status: e.target.value }))} className="border rounded px-2 py-1 text-sm">
               <option value="">All statuses</option>
               <option value="queued">Queued</option>
@@ -138,20 +198,13 @@ export default function ProcessesPanel({ projectFolder, onClose, embedded = fals
               <option value="failed">Failed</option>
               <option value="canceled">Canceled</option>
             </select>
-            <select value={filter.type} onChange={(e) => setFilter(f => ({ ...f, type: e.target.value }))} className="border rounded px-2 py-1 text-sm">
-              <option value="">All types</option>
-              <option value="generate_derivatives">Generate derivatives</option>
-              <option value="upload_postprocess">Upload post-process</option>
-            </select>
           </div>
           <div className="overflow-auto max-h-[55vh]">
             {(() => {
-              const active = (jobs || []).filter(j => j.status === 'queued' || j.status === 'running');
-              const completed = (jobs || []).filter(j => j.status === 'completed').sort((a,b) => new Date(b.created_at) - new Date(a.created_at)).slice(0,5);
-              const others = (jobs || []).filter(j => !['queued','running','completed'].includes(j.status));
-              const display = [...active, ...completed, ...others];
-              if (display.length === 0) return (<div className="py-6 text-center text-gray-500">No jobs yet</div>);
-              return display.map(j => (<JobRow key={j.id} j={j} />));
+              let groups = taskGroups;
+              if (!advanced) groups = groups.filter(g => (defs?.[g.task_type]?.user_relevant) !== false);
+              if (groups.length === 0) return (<div className="py-6 text-center text-gray-500">No tasks yet</div>);
+              return groups.map(g => (<TaskRow key={g.task_id} g={g} />));
             })()}
           </div>
         </div>

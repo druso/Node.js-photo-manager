@@ -1,14 +1,22 @@
 # Data Schema Documentation
 
-This project uses a normalized SQLite database as the source of truth for all photo metadata and project information.
+This project treats the on-disk folder as the primary source of truth for photo availability. The normalized SQLite database mirrors disk state for fast queries, and the frontend caches/derives UI state from the DB.
+
+Order of truth and reconciliation:
+
+- Folder (disk) → SQL (DB) → Frontend (UI)
+- Implication: during destructive operations we always modify the folder first (move/delete files), then reconcile the DB, and finally update the UI incrementally.
 
 ## SQLite Schema Overview
 
 Tables and relationships:
 
 - `projects`
-  - Columns: `id` (INTEGER PK), `project_name` (TEXT), `project_folder` (TEXT UNIQUE), `created_at` (TEXT), `updated_at` (TEXT)
-  - `project_folder` format: `<slug(project_name)>--p<id>` (canonical on-disk folder)
+  - Columns: `id` (INTEGER PK), `project_name` (TEXT), `project_folder` (TEXT UNIQUE), `created_at` (TEXT), `updated_at` (TEXT), `schema_version` (TEXT NULL), `status` (TEXT NULL), `archived_at` (TEXT NULL)
+  - `status`: when `'canceled'` the project is considered archived/soft-deleted and is hidden from frontend lists and detail endpoints. The row is retained for audit.
+  - `archived_at`: timestamp when the project was soft-deleted.
+  - Indexes: `CREATE INDEX IF NOT EXISTS idx_projects_status ON projects(status)`
+  - `project_folder` format: `p<id>` (canonical on-disk folder; immutable, decoupled from display name)
 
 - `photos`
   - Columns (selected): `id`, `project_id` (FK), `filename`, `basename`, `ext`, `created_at`, `updated_at`,
@@ -17,7 +25,7 @@ Tables and relationships:
   - Indexes: filename, basename, ext, date, raw_available, orientation
 
   Semantics of availability vs keep flags:
-  - `jpg_available`, `raw_available`, `other_available`: reflect files actually present on disk.
+  - `jpg_available`, `raw_available`, `other_available`: reflect files actually present on disk (derived from folder state).
   - `keep_jpg`, `keep_raw`: user intent flags. By default they mirror availability and are automatically realigned
     during ingestion and `upload_postprocess` so that new variants don’t create spurious pending deletions.
   - Manual changes to `keep_*` are honored until either Commit (destructive) or Revert (non‑destructive) is invoked.
@@ -40,13 +48,30 @@ Notes:
 - Foreign keys and WAL are enabled in `server/services/db.js`.
 - Routes (`projects.js`, `uploads.js`, `assets.js`, `tags.js`, `keep.js`) exclusively use repositories.
 
+### Project API Response Shapes
+
+Project-related endpoints return consistent shapes including the immutable numeric `id` and canonical `project_folder`:
+
+- List projects: `GET /api/projects`
+  - Returns: `[{ id, name, folder, created_at, updated_at }, ...]`
+  - Notes: `folder` is the canonical `p<id>`; `name` is the display name.
+
+- Project detail: `GET /api/projects/:folder`
+  - Returns: `{ id, name, folder, created_at, updated_at, photos: [...] }`
+  - The `photos` array contains the full photo objects as documented in this file.
+
+- Rename project: `PATCH /api/projects/:id`
+  - Payload: `{ name: string }`
+  - Returns: `{ message, project: { id?, name, folder, created_at, updated_at } }`
+  - Behavior: updates only the display name; `folder` remains `p<id>` and does not change.
+
 ### Optional Helper: parseProjectIdFromFolder(folder)
 
-An optional utility function that parses the numeric project id from a canonical folder string `<slug>--p<id>`. It simplifies cases where only the folder is known but the `id` is desired for logging or quick lookups. In the fresh-start model, all folders have the suffix, so no fallbacks are required.
+An optional utility function that parses the numeric project id from a canonical folder string `p<id>`. It simplifies cases where only the folder is known but the `id` is desired for logging or quick lookups. See implementation in `server/utils/projects.js`.
 
 Example behavior:
 ```js
-parseProjectIdFromFolder('Vacation_2024--p12') // => 12
+parseProjectIdFromFolder('p12') // => 12
 ```
 
 ### Async Jobs (Queue)
@@ -76,6 +101,14 @@ Durable background jobs are stored in two tables: `jobs` and `job_items`.
 - Worker loop: `server/services/workerLoop.js` dispatches by `job.type` to worker modules under `server/services/workers/`.
 - Claiming: `jobsRepo.claimNext({ minPriority?, maxPriority? })` lets the worker select from a priority range (used by the two lanes).
 - Events/SSE: `server/services/events.js` provides `emitJobUpdate` and `onJobUpdate`; `server/routes/jobs.js` exposes `GET /api/jobs/stream`.
+
+#### Project Deletion as Task
+
+- New task `project_delete` orchestrates deletion via three high-priority steps:
+  - `project_stop_processes` (priority 100): marks project `status='canceled'`, cancels queued/running jobs for the project.
+  - `project_delete_files` (priority 100): removes the on-disk folder `.projects/<project_folder>/`.
+  - `project_cleanup_db` (priority 95): cleans related DB rows (`photos`, `tags`, `photo_tags`) while retaining the `projects` row as archive.
+- Frontend calls `DELETE /api/projects/:folder`; the route performs the soft-delete and enqueues this task so the UI removal is immediate while cleanup runs asynchronously.
 
 #### Maintenance Jobs
 
@@ -129,10 +162,15 @@ SELECT * FROM jobs WHERE status = 'running' AND (strftime('%s','now') - strftime
 
 #### Frontend Expectations
 
-- SSE payloads include both job-level updates and item-level updates from `derivativesWorker`.
-- The UI merges item-level updates into `projectData.photos` in-place to avoid full grid refreshes and preserve scroll/viewer context.
-- `App.jsx` avoids full project reload on job completion when SSE is active; a fallback refetch is performed only if SSE wasn't connected.
-- `Thumbnail.jsx` no longer probes asset URLs while pending; final `<img>` uses a cache-busting query param derived from `photo.updated_at`.
+- Avoid hard refreshes of the photo list. Prefer incremental, in-place updates to preserve user context. See `PROJECT_OVERVIEW.md` → “UX Principles (Golden Rules)”.
+
+### Destructive Ordering (Commit Changes)
+
+- On Commit, the system ensures the folder is the first point of change:
+  1) Move non-kept files to `.trash` and remove JPG derivatives.
+  2) Update DB availability flags via `manifest_check`/`folder_check`.
+  3) Remove DB rows with no assets via `manifest_cleaning`.
+- This ordering guarantees that the DB never claims availability for files that no longer exist, and the frontend reflects changes incrementally without hard refreshes.
 
 ---
 

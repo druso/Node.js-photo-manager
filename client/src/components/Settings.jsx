@@ -1,12 +1,15 @@
 import React, { useState, useEffect } from 'react';
-import { deleteProject } from '../api/projectsApi';
+import { deleteProject, renameProjectById } from '../api/projectsApi';
 import { useUpload } from '../upload/UploadContext';
 
-const Settings = ({ project, config, onConfigUpdate, onProjectDelete, onClose, onOpenCreateProject, embedded = false }) => {
+const Settings = ({ project, config, onConfigUpdate, onProjectDelete, onProjectRenamed, onClose, onOpenCreateProject, embedded = false }) => {
   const [deleteConfirmText, setDeleteConfirmText] = useState('');
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [localConfig, setLocalConfig] = useState(null);
-  const [openSection, setOpenSection] = useState('delete'); // only one open at a time
+  const [openSection, setOpenSection] = useState('manage'); // only one open at a time
   const [regenLoading, setRegenLoading] = useState(false);
+  const [renameValue, setRenameValue] = useState(project?.name || '');
+  const [renaming, setRenaming] = useState(false);
   const { actions: uploadActions } = useUpload();
 
   useEffect(() => {
@@ -40,6 +43,11 @@ const Settings = ({ project, config, onConfigUpdate, onProjectDelete, onClose, o
       setLocalConfig(copy);
     }
   }, [config]);
+
+  // Keep rename input synced with the selected project
+  useEffect(() => {
+    setRenameValue(project?.name || '');
+  }, [project?.name]);
 
   const handleConfigChange = (category, key, value) => {
     setLocalConfig(prev => ({
@@ -104,6 +112,25 @@ const Settings = ({ project, config, onConfigUpdate, onProjectDelete, onClose, o
     }
   };
 
+  const handleRenameProject = async () => {
+    if (!project?.id) { alert('No project selected'); return; }
+    const name = (renameValue || '').trim();
+    if (!name) { alert('Project name cannot be empty'); return; }
+    if (name === project.name) { return; }
+    try {
+      setRenaming(true);
+      const res = await renameProjectById(project.id, name);
+      const updated = res?.project ? { id: project.id, name: res.project.name, folder: res.project.folder } : { id: project.id, name, folder: project.folder };
+      if (typeof onProjectRenamed === 'function') onProjectRenamed(updated);
+      alert('Project renamed successfully.');
+    } catch (e) {
+      console.error('Rename failed', e);
+      alert('Failed to rename project.');
+    } finally {
+      setRenaming(false);
+    }
+  };
+
   const handleRestoreDefaults = async () => {
     if (window.confirm('Are you sure you want to restore default settings? This will save immediately.')) {
       try {
@@ -146,8 +173,9 @@ const Settings = ({ project, config, onConfigUpdate, onProjectDelete, onClose, o
   };
 
   const handleDeleteProject = async () => {
-    if (deleteConfirmText !== 'i am sure') {
-      alert('Please type "i am sure" to confirm deletion.');
+    if (!project?.name) { alert('No project selected'); return; }
+    if (deleteConfirmText !== project.name) {
+      alert(`Please type the project name "${project.name}" to confirm deletion.`);
       return;
     }
 
@@ -155,6 +183,8 @@ const Settings = ({ project, config, onConfigUpdate, onProjectDelete, onClose, o
       await deleteProject(project.folder);
       alert('Project deleted successfully.');
       onProjectDelete();
+      setShowDeleteModal(false);
+      setDeleteConfirmText('');
     } catch (error) {
       console.error('Error deleting project:', error);
       // error may contain server message in error.message
@@ -177,48 +207,42 @@ const Settings = ({ project, config, onConfigUpdate, onProjectDelete, onClose, o
   // Sidebar layout with single-open accordions
   if (embedded) {
     return (
-      <div className="divide-y">
-        {/* Create new project button */}
-        <div className="px-0 py-0">
-          <button
-            className="w-full px-4 py-3 rounded-md bg-blue-600 text-white hover:bg-blue-700 text-center"
-            onClick={() => { if (typeof onOpenCreateProject === 'function') onOpenCreateProject(); }}
-          >
-            Create new project
-          </button>
-        </div>
-        {/* Delete Project - first */}
+      <div className="divide-y relative">
+        {/* Manage Project */}
         {project && (
           <section>
             <button
-              className={`w-full flex items-center justify-between px-0 py-3 text-left ${openSection==='delete' ? 'bg-red-50' : ''}`}
-              onClick={() => setOpenSection(prev => prev === 'delete' ? null : 'delete')}
+              className={`w-full flex items-center justify-between px-0 py-3 text-left ${openSection==='manage' ? 'bg-gray-50' : ''}`}
+              onClick={() => setOpenSection(prev => prev === 'manage' ? null : 'manage')}
             >
-              <span className="text-red-600 font-medium">Delete Project</span>
-              <span className="text-sm text-gray-500">{openSection==='delete' ? '▲' : '▼'}</span>
+              <span className="font-medium">Manage Project</span>
+              <span className="text-sm text-gray-500">{openSection==='manage' ? '▲' : '▼'}</span>
             </button>
-            {openSection === 'delete' && (
-              <div className="pb-4">
-                <p className="text-sm text-gray-700">
-                  This action is irreversible. It will permanently delete the project folder, including all photos and metadata.
-                </p>
-                <div className="mt-4">
-                  <label htmlFor="delete-confirm" className="block text-sm font-medium text-gray-700">
-                    To confirm, please type "i am sure" below:
-                  </label>
+            {openSection === 'manage' && (
+              <div className="pb-4 space-y-3">
+                <label className="block">
+                  <span className="text-gray-700">Project name</span>
                   <input
-                    id="delete-confirm"
                     type="text"
-                    value={deleteConfirmText}
-                    onChange={(e) => setDeleteConfirmText(e.target.value)}
-                    className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-red-500"
+                    value={renameValue}
+                    onChange={(e) => setRenameValue(e.target.value)}
+                    className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-md"
                   />
+                </label>
+                <div className="flex items-center gap-2">
                   <button
-                    onClick={handleDeleteProject}
-                    disabled={deleteConfirmText !== 'i am sure'}
-                    className="mt-2 w-full px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                    onClick={handleRenameProject}
+                    disabled={renaming || !renameValue.trim() || renameValue.trim() === project.name}
+                    className={`px-4 py-2 rounded-md text-white ${renaming ? 'bg-gray-400' : 'bg-blue-600 hover:bg-blue-700'}`}
                   >
-                    Delete Project Permanently
+                    {renaming ? 'Renaming…' : 'Save name'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setDeleteConfirmText(''); setShowDeleteModal(true); }}
+                    className="ml-auto px-4 py-2 rounded-md text-white bg-red-600 hover:bg-red-700"
+                  >
+                    Delete project
                   </button>
                 </div>
               </div>
@@ -375,6 +399,36 @@ const Settings = ({ project, config, onConfigUpdate, onProjectDelete, onClose, o
           <button className="px-4 py-2 rounded-md bg-gray-200 text-gray-800 hover:bg-gray-300" onClick={handleRestoreDefaults}>Restore Defaults</button>
           <button className="px-4 py-2 rounded-md bg-blue-600 text-white hover:bg-blue-700" onClick={handleSaveConfig}>Save Settings</button>
         </div>
+        {/* Delete Confirmation Modal (embedded) */}
+        {showDeleteModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center" onClick={() => setShowDeleteModal(false)}>
+            <div className="absolute inset-0 bg-black/40" />
+            <div className="relative bg-white rounded-lg shadow-xl p-6 w-full max-w-md" onClick={(e) => e.stopPropagation()}>
+              <h3 className="text-lg font-semibold text-gray-900">Delete project</h3>
+              <p className="mt-2 text-sm text-gray-700">This action is irreversible. It will permanently delete the project folder, including all photos and metadata.</p>
+              <label htmlFor="delete-confirm-embedded" className="mt-4 block text-sm font-medium text-gray-700">
+                Type the project name "{project?.name}" to confirm:
+              </label>
+              <input
+                id="delete-confirm-embedded"
+                type="text"
+                value={deleteConfirmText}
+                onChange={(e) => setDeleteConfirmText(e.target.value)}
+                className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-red-500"
+              />
+              <div className="mt-4 flex justify-end gap-2">
+                <button className="px-4 py-2 rounded-md bg-gray-200 text-gray-800 hover:bg-gray-300" onClick={() => { setShowDeleteModal(false); setDeleteConfirmText(''); }}>Cancel</button>
+                <button
+                  onClick={handleDeleteProject}
+                  disabled={deleteConfirmText !== project?.name}
+                  className="px-4 py-2 rounded-md bg-red-600 text-white hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Delete permanently
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     );
   }
@@ -394,50 +448,41 @@ const Settings = ({ project, config, onConfigUpdate, onProjectDelete, onClose, o
         {/* Body */}
         <div className="flex-1 overflow-y-auto">
           <div className="divide-y">
-            {/* Create new project button */}
-            <div className="px-4 py-3">
-              <button
-                className="w-full px-4 py-3 rounded-md bg-blue-600 text-white hover:bg-blue-700 text-center"
-                onClick={() => {
-                  if (typeof onOpenCreateProject === 'function') onOpenCreateProject();
-                }}
-              >
-                Create new project
-              </button>
-            </div>
-
-            {/* Delete Project - first */}
+            {/* Manage Project */}
             {project && (
               <section>
                 <button
-                  className={`w-full flex items-center justify-between px-4 py-3 text-left ${openSection==='delete' ? 'bg-red-50' : ''}`}
-                  onClick={() => setOpenSection(prev => prev === 'delete' ? null : 'delete')}
+                  className={`w-full flex items-center justify-between px-4 py-3 text-left ${openSection==='manage' ? 'bg-gray-50' : ''}`}
+                  onClick={() => setOpenSection(prev => prev === 'manage' ? null : 'manage')}
                 >
-                  <span className="text-red-600 font-medium">Delete Project</span>
-                  <span className="text-sm text-gray-500">{openSection==='delete' ? '▲' : '▼'}</span>
+                  <span className="font-medium">Manage Project</span>
+                  <span className="text-sm text-gray-500">{openSection==='manage' ? '▲' : '▼'}</span>
                 </button>
-                {openSection === 'delete' && (
-                  <div className="px-4 pb-4">
-                    <p className="text-sm text-gray-700">
-                      This action is irreversible. It will permanently delete the project folder, including all photos and metadata.
-                    </p>
-                    <div className="mt-4">
-                      <label htmlFor="delete-confirm" className="block text-sm font-medium text-gray-700">
-                        To confirm, please type "i am sure" below:
-                      </label>
+                {openSection === 'manage' && (
+                  <div className="px-4 pb-4 space-y-3">
+                    <label className="block">
+                      <span className="text-gray-700">Project name</span>
                       <input
-                        id="delete-confirm"
                         type="text"
-                        value={deleteConfirmText}
-                        onChange={(e) => setDeleteConfirmText(e.target.value)}
-                        className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-red-500"
+                        value={renameValue}
+                        onChange={(e) => setRenameValue(e.target.value)}
+                        className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-md"
                       />
+                    </label>
+                    <div className="flex items-center gap-2">
                       <button
-                        onClick={handleDeleteProject}
-                        disabled={deleteConfirmText !== 'i am sure'}
-                        className="mt-2 w-full px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                        onClick={handleRenameProject}
+                        disabled={renaming || !renameValue.trim() || renameValue.trim() === project.name}
+                        className={`px-4 py-2 rounded-md text-white ${renaming ? 'bg-gray-400' : 'bg-blue-600 hover:bg-blue-700'}`}
                       >
-                        Delete Project Permanently
+                        {renaming ? 'Renaming…' : 'Save name'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => { setDeleteConfirmText(''); setShowDeleteModal(true); }}
+                        className="ml-auto px-4 py-2 rounded-md text-white bg-red-600 hover:bg-red-700"
+                      >
+                        Delete project
                       </button>
                     </div>
                   </div>
@@ -611,6 +656,36 @@ const Settings = ({ project, config, onConfigUpdate, onProjectDelete, onClose, o
             Save & Close
           </button>
         </div>
+        {/* Delete Confirmation Modal (non-embedded) */}
+        {showDeleteModal && (
+          <div className="fixed inset-0 z-[60] flex items-center justify-center" onClick={() => setShowDeleteModal(false)}>
+            <div className="absolute inset-0 bg-black/40" />
+            <div className="relative bg-white rounded-lg shadow-xl p-6 w-full max-w-md" onClick={(e) => e.stopPropagation()}>
+              <h3 className="text-lg font-semibold text-gray-900">Delete project</h3>
+              <p className="mt-2 text-sm text-gray-700">This action is irreversible. It will permanently delete the project folder, including all photos and metadata.</p>
+              <label htmlFor="delete-confirm" className="mt-4 block text-sm font-medium text-gray-700">
+                Type the project name "{project?.name}" to confirm:
+              </label>
+              <input
+                id="delete-confirm"
+                type="text"
+                value={deleteConfirmText}
+                onChange={(e) => setDeleteConfirmText(e.target.value)}
+                className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-red-500"
+              />
+              <div className="mt-4 flex justify-end gap-2">
+                <button className="px-4 py-2 rounded-md bg-gray-200 text-gray-800 hover:bg-gray-300" onClick={() => { setShowDeleteModal(false); setDeleteConfirmText(''); }}>Cancel</button>
+                <button
+                  onClick={handleDeleteProject}
+                  disabled={deleteConfirmText !== project?.name}
+                  className="px-4 py-2 rounded-md bg-red-600 text-white hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Delete permanently
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </aside>
     </div>
   );

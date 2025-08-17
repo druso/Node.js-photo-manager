@@ -126,6 +126,13 @@ function cancel(id) {
   return getById(id);
 }
 
+function cancelByProject(project_id) {
+  const db = getDb();
+  const now = nowISO();
+  // Best-effort: mark any non-terminal jobs for this project as canceled
+  db.prepare(`UPDATE jobs SET status='canceled', finished_at=? WHERE project_id = ? AND status IN ('queued','running')`).run(now, project_id);
+}
+
 function listItems(job_id) {
   const db = getDb();
   return db.prepare(`SELECT * FROM job_items WHERE job_id = ? ORDER BY id ASC`).all(job_id);
@@ -153,6 +160,7 @@ module.exports = {
   complete,
   fail,
   cancel,
+  cancelByProject,
   listItems,
   updateItemStatus,
   nextPendingItem,

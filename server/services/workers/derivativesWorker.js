@@ -23,6 +23,10 @@ async function runGenerateDerivatives({ job, onProgress }) {
   const payload = job.payload_json || {};
   const project = projectsRepo.getById(job.project_id);
   if (!project) throw new Error('Project not found for job');
+  if (project.status === 'canceled') {
+    // Project has been archived/canceled – do not process derivatives
+    return;
+  }
   const projectPath = path.join(__dirname, '..', '..', '..', '.projects', project.project_folder);
 
   const cfg = getConfig();
@@ -68,6 +72,12 @@ async function runGenerateDerivatives({ job, onProgress }) {
   };
 
   for (const item of items) {
+    // Stop if job was canceled mid-run
+    const fresh = jobsRepo.getById(job.id);
+    if (fresh && fresh.status === 'canceled') break;
+    // Also stop if project just got canceled
+    const p2 = projectsRepo.getById(job.project_id);
+    if (!p2 || p2.status === 'canceled') break;
     if (item.status !== 'pending') continue;
     jobsRepo.updateItemStatus(item.id, { status: 'running' });
     try {

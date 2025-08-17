@@ -49,6 +49,21 @@ This document summarizes the background job pipeline, supported job types, their
   - Purpose: periodic manifest/database cleanup.
   - Payload: none currently.
 
+- project_stop_processes (part of task `project_delete`)
+  - Worker: `projectDeletionWorker.stopProcesses()`.
+  - Purpose: mark project archived (`status='canceled'`) and cancel queued/running jobs for the project.
+  - Payload: carries task metadata.
+
+- project_delete_files (part of task `project_delete`)
+  - Worker: `projectDeletionWorker.deleteFiles()`.
+  - Purpose: delete the on-disk project folder `.projects/<project_folder>/`.
+  - Payload: carries task metadata.
+
+- project_cleanup_db (part of task `project_delete`)
+  - Worker: `projectDeletionWorker.cleanupDb()`.
+  - Purpose: cleanup related DB rows (`photos`, `tags`, `photo_tags`), retain `projects` row (archived).
+  - Payload: carries task metadata.
+
 Note: Any other `type` will be failed by `workerLoop` as Unknown.
 
 ## How Flows Use the Jobs

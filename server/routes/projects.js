@@ -6,6 +6,8 @@ const router = express.Router();
 // DB repositories
 const projectsRepo = require('../services/repositories/projectsRepo');
 const photosRepo = require('../services/repositories/photosRepo');
+const jobsRepo = require('../services/repositories/jobsRepo');
+const tasksOrchestrator = require('../services/tasksOrchestrator');
 const { isCanonicalProjectFolder } = require('../utils/projects');
 
 // Resolve project directories relative to project root
@@ -30,7 +32,9 @@ async function ensureProjectDirs(folderName) {
 router.get('/', async (req, res) => {
   try {
     const rows = projectsRepo.list();
-    const projects = rows.map(p => ({
+    // Hide canceled projects from UI lists
+    const projects = rows.filter(p => p.status !== 'canceled').map(p => ({
+      id: p.id,
       name: p.project_name,
       folder: p.project_folder,
       created_at: p.created_at,
@@ -41,6 +45,37 @@ router.get('/', async (req, res) => {
   } catch (err) {
     console.error('Projects router: list failed', err);
     res.status(500).json({ error: 'Failed to get projects' });
+  }
+});
+
+// PATCH /api/projects/:id - rename display name only
+router.patch('/:id', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) {
+      return res.status(400).json({ error: 'Invalid project id' });
+    }
+    const { name } = req.body || {};
+    if (!name || String(name).trim() === '') {
+      return res.status(400).json({ error: 'Project name is required' });
+    }
+    const existing = projectsRepo.getById(id);
+    if (!existing) {
+      return res.status(404).json({ error: 'Project not found' });
+    }
+    const updated = projectsRepo.updateName(id, String(name));
+    return res.json({
+      message: 'Project renamed successfully',
+      project: {
+        name: updated.project_name,
+        folder: updated.project_folder,
+        created_at: updated.created_at,
+        updated_at: updated.updated_at,
+      }
+    });
+  } catch (err) {
+    console.error('Projects router: rename failed', err);
+    res.status(500).json({ error: 'Failed to rename project' });
   }
 });
 
@@ -85,6 +120,9 @@ router.get('/:folder', async (req, res) => {
     if (!project) {
       return res.status(404).json({ error: 'Project not found' });
     }
+    if (project.status === 'canceled') {
+      return res.status(404).json({ error: 'Project not found' });
+    }
 
     // Map photos rows to legacy manifest-like shape expected by client
     const page = photosRepo.listPaged({ project_id: project.id, limit: 100000, sort: 'filename', dir: 'ASC', cursor: null });
@@ -109,6 +147,7 @@ router.get('/:folder', async (req, res) => {
     }));
 
     const projectData = {
+      id: project.id,
       project_name: project.project_name,
       project_folder: project.project_folder,
       created_at: project.created_at,
@@ -134,14 +173,17 @@ router.delete('/:folder', async (req, res) => {
     if (!project) {
       return res.status(404).json({ error: 'Project not found' });
     }
-    // Remove from DB (photos cascade)
-    projectsRepo.remove(project.id);
-    // Remove folder from disk
-    const projectPath = path.join(PROJECTS_DIR, folder);
-    if (await fs.pathExists(projectPath)) {
-      await fs.remove(projectPath);
+    // Soft-delete: mark as canceled (archived), cancel related jobs, enqueue deletion task
+    try { projectsRepo.archive(project.id); } catch {}
+    try { jobsRepo.cancelByProject(project.id); } catch {}
+    // Start high-priority deletion task (stop processes -> delete files -> cleanup DB)
+    try {
+      tasksOrchestrator.startTask({ project_id: project.id, type: 'project_delete', source: 'user', items: null, tenant_id: 'user_0' });
+    } catch (e) {
+      // If orchestration fails, still return archived so UI removes project; background cleanup might be missing.
+      console.error('Failed to enqueue project_delete task:', e);
     }
-    res.json({ message: 'Project deleted successfully', folder });
+    res.json({ message: 'Project deletion queued', folder });
   } catch (err) {
     console.error('Projects router: delete failed', err);
     res.status(500).json({ error: 'Failed to delete project' });

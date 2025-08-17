@@ -9,7 +9,13 @@
     "build": "cd client && npm run build",
     "install-client": "cd client && npm install"
   },
-  "keywords": ["photo", "management", "tagging", "nodejs", "react"],
+  "keywords": [
+    "photo",
+    "management",
+    "tagging",
+    "nodejs",
+    "react"
+  ],
   "author": "",
   "license": "MIT",
   "engines": {
@@ -17,14 +23,15 @@
     "npm": ">=10"
   },
   "dependencies": {
+    "archiver": "^5.3.1",
+    "better-sqlite3": "^9.6.0",
+    "cors": "^2.8.5",
+    "exif-parser": "^0.1.12",
     "express": "^4.21.2",
+    "fs-extra": "^10.1.0",
     "multer": "^2.0.0",
     "sharp": "^0.34.3",
-    "cors": "^2.8.5",
-    "fs-extra": "^10.1.0",
-    "exif-parser": "^0.1.12",
-    "archiver": "^5.3.1",
-    "better-sqlite3": "^9.6.0"
+    "uuid": "^11.1.0"
   },
   "overrides": {
     "body-parser": "^1.20.3",

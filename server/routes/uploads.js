@@ -7,6 +7,7 @@ const multer = require('multer');
 const { getConfig } = require('../services/config');
 // const { generateDerivative } = require('../utils/imageProcessing');
 const jobsRepo = require('../services/repositories/jobsRepo');
+const tasksOrchestrator = require('../services/tasksOrchestrator');
 
 // SQLite repositories (migration from manifest.json)
 const projectsRepo = require('../services/repositories/projectsRepo');
@@ -215,13 +216,11 @@ router.post('/:folder/upload', async (req, res) => {
         return res.status(400).json({ error: errorMsg, perFileErrors });
       }
 
-      // Enqueue post-process job with filenames
+      // Start orchestrated post-process task with filenames
       try {
-        const tenant_id = 'user_0';
-        const payload = { filenames: basenames };
-        jobsRepo.enqueueWithItems({ tenant_id, project_id: project.id, type: 'upload_postprocess', payload, items: basenames.map(fn => ({ filename: fn })) });
+        tasksOrchestrator.startTask({ project_id: project.id, type: 'upload_postprocess', source: 'upload', items: basenames });
       } catch (e) {
-        console.warn('Failed to enqueue upload_postprocess job:', e.message);
+        console.warn('Failed to start upload_postprocess task:', e.message);
       }
 
       const response = { 

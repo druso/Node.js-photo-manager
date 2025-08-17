@@ -7,12 +7,12 @@ function createProject({ project_name }) {
   const db = getDb();
   const ts = nowISO();
 
-  // Use a transaction to insert a temporary unique folder, then update with slug+id
+  // Use a transaction to insert a temporary unique folder, then update to canonical id-based folder (p<id>)
   const trx = db.transaction(() => {
     const tmpFolder = `__tmp__p${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
     const insert = db.prepare(`
-      INSERT INTO projects (project_folder, project_name, created_at, updated_at, schema_version)
-      VALUES (?, ?, ?, ?, ?)
+      INSERT INTO projects (project_folder, project_name, created_at, updated_at, schema_version, status, archived_at)
+      VALUES (?, ?, ?, ?, ?, NULL, NULL)
     `);
     const info = insert.run(tmpFolder, project_name, ts, ts, null);
     const id = info.lastInsertRowid;
@@ -59,6 +59,20 @@ function remove(id) {
   db.prepare(`DELETE FROM projects WHERE id = ?`).run(id);
 }
 
+function setStatus(id, status) {
+  const db = getDb();
+  const ts = nowISO();
+  db.prepare(`UPDATE projects SET status = ?, updated_at = ? WHERE id = ?`).run(status, ts, id);
+  return getById(id);
+}
+
+function archive(id) {
+  const db = getDb();
+  const ts = nowISO();
+  db.prepare(`UPDATE projects SET status = 'canceled', archived_at = ?, updated_at = ? WHERE id = ?`).run(ts, ts, id);
+  return getById(id);
+}
+
 module.exports = {
   createProject,
   getById,
@@ -67,4 +81,6 @@ module.exports = {
   updateName,
   touchById,
   remove,
+  setStatus,
+  archive,
 };

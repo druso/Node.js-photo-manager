@@ -1,8 +1,11 @@
 const { getConfig } = require('./config');
 const jobsRepo = require('./repositories/jobsRepo');
 const { runGenerateDerivatives } = require('./workers/derivativesWorker');
+const { runProjectStopProcesses, runProjectDeleteFiles, runProjectCleanupDb } = require('./workers/projectDeletionWorker');
 const { runTrashMaintenance, runManifestCheck, runFolderCheck, runManifestCleaning } = require('./workers/maintenanceWorker');
+const { runFileRemoval } = require('./workers/fileRemovalWorker');
 const { emitJobUpdate } = require('./events');
+const tasksOrchestrator = require('./tasksOrchestrator');
 
 let running = false;
 let timer = null;
@@ -26,12 +29,52 @@ async function handleJob(job, { heartbeatMs, maxAttemptsDefault, workerId }) {
     startHeartbeat();
     if (job.type === 'generate_derivatives' || job.type === 'upload_postprocess') {
       await runGenerateDerivatives({ job, onProgress: ({ done, total }) => {
-        emitJobUpdate({ id: job.id, status: 'running', progress_done: done, progress_total: total });
+        const p = job.payload_json || {};
+        emitJobUpdate({ id: job.id, status: 'running', progress_done: done, progress_total: total, task_id: p.task_id, task_type: p.task_type, source: p.source });
         try { jobsRepo.updateProgress(job.id, { done, total }); } catch {}
       }});
       stopHeartbeat();
       jobsRepo.complete(job.id);
-      emitJobUpdate({ id: job.id, status: 'completed' });
+      {
+        const p = job.payload_json || {};
+        emitJobUpdate({ id: job.id, status: 'completed', task_id: p.task_id, task_type: p.task_type, source: p.source });
+      }
+      try { tasksOrchestrator.onJobCompleted(job); } catch {}
+      return;
+    }
+
+    // Project deletion flow
+    if (job.type === 'project_stop_processes') {
+      await runProjectStopProcesses(job);
+      stopHeartbeat();
+      jobsRepo.complete(job.id);
+      {
+        const p = job.payload_json || {};
+        emitJobUpdate({ id: job.id, status: 'completed', task_id: p.task_id, task_type: p.task_type, source: p.source });
+      }
+      try { tasksOrchestrator.onJobCompleted(job); } catch {}
+      return;
+    }
+    if (job.type === 'project_delete_files') {
+      await runProjectDeleteFiles(job);
+      stopHeartbeat();
+      jobsRepo.complete(job.id);
+      {
+        const p = job.payload_json || {};
+        emitJobUpdate({ id: job.id, status: 'completed', task_id: p.task_id, task_type: p.task_type, source: p.source });
+      }
+      try { tasksOrchestrator.onJobCompleted(job); } catch {}
+      return;
+    }
+    if (job.type === 'project_cleanup_db') {
+      await runProjectCleanupDb(job);
+      stopHeartbeat();
+      jobsRepo.complete(job.id);
+      {
+        const p = job.payload_json || {};
+        emitJobUpdate({ id: job.id, status: 'completed', task_id: p.task_id, task_type: p.task_type, source: p.source });
+      }
+      try { tasksOrchestrator.onJobCompleted(job); } catch {}
       return;
     }
 
@@ -40,35 +83,67 @@ async function handleJob(job, { heartbeatMs, maxAttemptsDefault, workerId }) {
       await runTrashMaintenance(job);
       stopHeartbeat();
       jobsRepo.complete(job.id);
-      emitJobUpdate({ id: job.id, status: 'completed' });
+      {
+        const p = job.payload_json || {};
+        emitJobUpdate({ id: job.id, status: 'completed', task_id: p.task_id, task_type: p.task_type, source: p.source });
+      }
+      try { tasksOrchestrator.onJobCompleted(job); } catch {}
       return;
     }
     if (job.type === 'manifest_check') {
       await runManifestCheck(job);
       stopHeartbeat();
       jobsRepo.complete(job.id);
-      emitJobUpdate({ id: job.id, status: 'completed' });
+      {
+        const p = job.payload_json || {};
+        emitJobUpdate({ id: job.id, status: 'completed', task_id: p.task_id, task_type: p.task_type, source: p.source });
+      }
+      try { tasksOrchestrator.onJobCompleted(job); } catch {}
       return;
     }
     if (job.type === 'folder_check') {
       await runFolderCheck(job);
       stopHeartbeat();
       jobsRepo.complete(job.id);
-      emitJobUpdate({ id: job.id, status: 'completed' });
+      {
+        const p = job.payload_json || {};
+        emitJobUpdate({ id: job.id, status: 'completed', task_id: p.task_id, task_type: p.task_type, source: p.source });
+      }
+      try { tasksOrchestrator.onJobCompleted(job); } catch {}
       return;
     }
     if (job.type === 'manifest_cleaning') {
       await runManifestCleaning(job);
       stopHeartbeat();
       jobsRepo.complete(job.id);
-      emitJobUpdate({ id: job.id, status: 'completed' });
+      {
+        const p = job.payload_json || {};
+        emitJobUpdate({ id: job.id, status: 'completed', task_id: p.task_id, task_type: p.task_type, source: p.source });
+      }
+      try { tasksOrchestrator.onJobCompleted(job); } catch {}
+      return;
+    }
+
+    // Commit flow: file removal
+    if (job.type === 'file_removal') {
+      await runFileRemoval(job);
+      stopHeartbeat();
+      jobsRepo.complete(job.id);
+      {
+        const p = job.payload_json || {};
+        emitJobUpdate({ id: job.id, status: 'completed', task_id: p.task_id, task_type: p.task_type, source: p.source });
+      }
+      try { tasksOrchestrator.onJobCompleted(job); } catch {}
       return;
     }
 
     // Unknown type → fail without retry
     stopHeartbeat();
     jobsRepo.fail(job.id, `Unknown job type: ${job.type}`);
-    emitJobUpdate({ id: job.id, status: 'failed' });
+    {
+      const p = job.payload_json || {};
+      emitJobUpdate({ id: job.id, status: 'failed', task_id: p.task_id, task_type: p.task_type, source: p.source });
+    }
   } catch (err) {
     stopHeartbeat();
     // Retry policy: increment attempts; if below max, requeue; else fail
@@ -79,10 +154,12 @@ async function handleJob(job, { heartbeatMs, maxAttemptsDefault, workerId }) {
     if (attempts < maxA) {
       // Requeue for retry
       jobsRepo.requeue(job.id);
-      emitJobUpdate({ id: job.id, status: 'queued' });
+      const p = job.payload_json || {};
+      emitJobUpdate({ id: job.id, status: 'queued', task_id: p.task_id, task_type: p.task_type, source: p.source });
     } else {
       jobsRepo.fail(job.id, (err && err.message) ? err.message : String(err));
-      emitJobUpdate({ id: job.id, status: 'failed' });
+      const p = job.payload_json || {};
+      emitJobUpdate({ id: job.id, status: 'failed', task_id: p.task_id, task_type: p.task_type, source: p.source });
     }
   }
 }
@@ -123,7 +200,10 @@ function startWorkerLoop() {
         const job = jobsRepo.claimNext({ workerId, minPriority: priorityThreshold });
         if (!job) break;
         activePriority.add(job.id);
-        emitJobUpdate({ id: job.id, status: 'running' });
+        {
+          const p = job.payload_json || {};
+          emitJobUpdate({ id: job.id, status: 'running', task_id: p.task_id, task_type: p.task_type, source: p.source });
+        }
         Promise.resolve(handleJob(job, { heartbeatMs, maxAttemptsDefault, workerId })).finally(() => {
           activePriority.delete(job.id);
         });
@@ -133,7 +213,10 @@ function startWorkerLoop() {
         const job = jobsRepo.claimNext({ workerId, maxPriority: priorityThreshold - 1 });
         if (!job) break;
         activeNormal.add(job.id);
-        emitJobUpdate({ id: job.id, status: 'running' });
+        {
+          const p = job.payload_json || {};
+          emitJobUpdate({ id: job.id, status: 'running', task_id: p.task_id, task_type: p.task_type, source: p.source });
+        }
         Promise.resolve(handleJob(job, { heartbeatMs, maxAttemptsDefault, workerId })).finally(() => {
           activeNormal.delete(job.id);
         });
