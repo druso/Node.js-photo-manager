@@ -23,22 +23,35 @@ This application helps photographers manage their photo collections by:
 ### Prerequisites
 - **Node.js v22 LTS** (required)
 - **npm v10+**
+- Recommended: **nvm** (Node Version Manager). This repo includes `.nvmrc` set to `22`.
 
 ### Installation & Setup
 
-1. **Install dependencies**:
+1. **Use Node 22 with nvm (recommended)**:
+   ```bash
+   # one-time install (if not installed)
+   curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash
+   export NVM_DIR="$HOME/.nvm" && . "$NVM_DIR/nvm.sh"
+   
+   # per-shell usage in this repo
+   nvm install   # reads .nvmrc (22)
+   nvm use
+   node -v && npm -v
+   ```
+
+2. **Install dependencies**:
    ```bash
    npm install
    cd client && npm install && cd ..
    ```
 
-2. **Configure the application**:
+3. **Configure the application**:
    ```bash
    cp config.default.json config.json
    # Edit config.json if needed (optional for basic usage)
    ```
 
-3. **Start the application** (requires 2 terminals):
+4. **Start the application** (requires 2 terminals):
    
    **Terminal 1 - Backend Logs**: Structured JSON lines from `npm run dev`. Pipe to `jq` for readability:
    ```bash
@@ -50,7 +63,7 @@ This application helps photographers manage their photo collections by:
    cd client && npm run dev
    ```
 
-4. **Open your browser** to `http://localhost:3000`
+5. **Open your browser** to `http://localhost:3000`
 
 ### First Steps
 1. Create a new project
@@ -62,6 +75,7 @@ This application helps photographers manage their photo collections by:
 ```bash
 npm run build  # Builds frontend to client/dist/
 ```
+This project uses **Vite 7** on the client. The Docker image copies `client/dist/` into `public/` so the backend can serve it.
 
 ## Key Features
 
@@ -128,3 +142,63 @@ Logging v2: All backend routes/workers use the structured logger. See `PROJECT_O
 ## Contributing
 
 For development setup, architecture details, API documentation, and contribution guidelines, see [PROJECT_OVERVIEW.md](PROJECT_OVERVIEW.md).
+
+## Containerization
+
+This repo includes production-ready container packaging.
+
+**Build image**:
+
+```bash
+docker build -t nodejs-photo-manager:local .
+```
+
+**Run with Docker**:
+
+```bash
+docker run --rm -it \
+  -p 5000:5000 \
+  -e NODE_ENV=production \
+  -e PORT=5000 \
+  -e ALLOWED_ORIGINS=http://localhost:3000 \
+  -e DOWNLOAD_SECRET=dev-change-me \
+  -v $(pwd)/.projects:/app/.projects \
+  -v $(pwd)/config.json:/app/config.json \
+  nodejs-photo-manager:local
+```
+
+Open http://localhost:5000
+
+**Run with docker-compose**:
+
+```bash
+docker compose up --build
+```
+
+See `docker-compose.yml` for environment and volumes.
+
+### Image details
+
+- Multi-stage build on `node:22-bookworm-slim`.
+- Installs `libvips` for `sharp` and toolchain for `better-sqlite3`.
+- Builds client (`client/dist`) and copies it into `public/` so the backend can serve it.
+
+### Environment variables
+
+- `PORT` (default 5000)
+- `ALLOWED_ORIGINS` (comma-separated CORS allowlist)
+- `DOWNLOAD_SECRET` (must be strong in production)
+- `REQUIRE_SIGNED_DOWNLOADS` (default true)
+- `SSE_MAX_CONN_PER_IP`, `SSE_IDLE_TIMEOUT_MS`
+
+### Volumes
+
+- `.projects` persisted to keep user data outside the container
+- `config.json` bind-mounted for runtime configuration
+
+### Production notes
+
+- Set a strong `DOWNLOAD_SECRET` and strict `ALLOWED_ORIGINS`.
+- Prefer running as a non-root user (image defaults to `node`).
+- Optionally enable read-only root FS and tmpfs for `/tmp`.
+- Frontend can be served by the Node app or a reverse proxy; expose port 5000.

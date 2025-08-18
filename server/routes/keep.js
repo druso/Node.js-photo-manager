@@ -9,6 +9,8 @@ const projectsRepo = require('../services/repositories/projectsRepo');
 const photosRepo = require('../services/repositories/photosRepo');
 
 const router = express.Router();
+// Ensure JSON parsing for this router
+router.use(express.json());
 
 const PROJECT_ROOT = path.join(__dirname, '..', '..');
 const PROJECTS_DIR = path.join(PROJECT_ROOT, '.projects');
@@ -39,7 +41,12 @@ router.put('/:folder/keep', rateLimit({ windowMs: 60 * 1000, max: 120 }), async 
 
     for (const upd of updates) {
       if (!upd || typeof upd.filename !== 'string') continue;
-      const photo = photosRepo.getByProjectAndFilename(project.id, upd.filename);
+      // Accept filename with or without extension
+      const base = path.parse(upd.filename).name || upd.filename;
+      let photo = photosRepo.getByProjectAndFilename(project.id, upd.filename);
+      if (!photo && base && base !== upd.filename) {
+        photo = photosRepo.getByProjectAndFilename(project.id, base);
+      }
       if (!photo) continue;
 
       const patch = {};
@@ -47,8 +54,8 @@ router.put('/:folder/keep', rateLimit({ windowMs: 60 * 1000, max: 120 }), async 
       if (typeof upd.keep_raw === 'boolean') patch.keep_raw = upd.keep_raw;
       if (Object.keys(patch).length > 0) {
         photosRepo.updateKeepFlags(photo.id, patch);
+        updatedCount++;
       }
-      updatedCount++;
     }
     res.json({ message: `Updated keep flags for ${updatedCount} photos`, updated_count: updatedCount });
   } catch (err) {

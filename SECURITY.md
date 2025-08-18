@@ -100,6 +100,32 @@
 **`REQUIRE_SIGNED_DOWNLOADS`** (default: `true`)
 - Keep enabled except temporary local testing
 
+### Runtime Environment
+
+- Runtime: **Node.js 22** with **npm 10+**. Recommended to use **nvm** with the repo's `.nvmrc` (`22`).
+  - Local setup:
+    ```bash
+    curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash
+    export NVM_DIR="$HOME/.nvm" && . "$NVM_DIR/nvm.sh"
+    nvm install && nvm use  # reads .nvmrc (22)
+    ```
+- Production: Ensure hosts run Node 22.x. Lock Node version in container images or provisioning scripts.
+- Reminder: If `REQUIRE_SIGNED_DOWNLOADS` is true (default), set a strong `DOWNLOAD_SECRET`; the server will exit in production if the default secret is used.
+
+### Container Runtime (Docker) Notes
+
+- **Image**: Multi-stage on `node:22-bookworm-slim`, installs `libvips` for `sharp`. See `Dockerfile`.
+- **User**: Runs as non-root `node` user by default. Keep this in production.
+- **Filesystem**: Mount only required paths as writable. Recommended:
+  - Bind `.projects` to persist user data
+  - Bind `config.json` for runtime configuration
+  - Consider `read_only: true` with `tmpfs: [/tmp]` in `docker-compose.yml` (uncomment hints in file)
+- **Network**: Expose only port `5000` to upstream proxy; set strict `ALLOWED_ORIGINS`.
+  - Denied origins are surfaced as HTTP 403 (Forbidden) by the error handler for clarity; previously surfaced as 500.
+- **Secrets**: Provide `DOWNLOAD_SECRET` via environment or orchestrator secrets store; avoid committing secrets.
+- **Healthcheck**: Container defines `/api/config` probe; integrate with orchestrator health/auto-restart.
+- **Resource limits**: Set CPU/memory limits to reduce DoS blast radius and protect host stability.
+
 ### Security Files
 
 **Backend**: `server/utils/signedUrl.js`, `server/utils/acceptance.js`, `server/utils/rateLimit.js`, `server/routes/assets.js`, `server/routes/uploads.js`
@@ -140,6 +166,11 @@ This ensures all functionality receives security review before deployment.
   - Rate limiting: Light limits on commit/revert endpoints to prevent abuse of destructive ops (already in Suggested Interventions #3).
   - SSE connection policy: cap concurrent SSE streams per IP and set idle timeouts to mitigate resource pinning.
   - Status: Reviewed. No sensitive data exposure detected; endpoints exist without rate limits. Action required: add rate limits to commit/revert/delete/rename and enforce SSE connection policy.
+
+3) Input Validation (Analyze/Keep)
+
+- Change: Added explicit validation for `POST /api/projects/:folder/analyze-files` (requires `files: []`) and `PUT /api/projects/:folder/keep` (requires `updates: []`). Keep endpoint now normalizes filename with or without extension.
+- Security considerations: Reduces 500s from malformed requests; confines errors to 400/404 paths and limits information leakage. No change in authorization surface.
 
 3) Removal of Client Probing for Thumbnails
 
@@ -186,3 +217,13 @@ Action requested (Security Team):
   - Ensure only authorized users can delete (future auth); log audit entries (who/when/id/folder).
   - Worker idempotency: file deletion and DB cleanup must be safe on retries; current implementation is idempotent by checking project status and tolerating missing tables/paths.
   - Priority lane impact: high‑priority deletion jobs preempt normal processing; confirm lane capacity cannot starve other critical maintenance (keep at least 1 slot for maintenance).
+
+8) Scheduler Change: Archived Maintenance Skip + Project Scavenge Task
+
+- Change: Scheduler now runs `maintenance` hourly only for active (non‑archived) projects and runs a separate `project_scavenge` task hourly for archived projects to remove leftover `.projects/<project_folder>/` folders.
+- Rationale: Prevents maintenance from touching archived projects and ensures eventual cleanup if deletion file step was skipped or failed.
+- Security considerations:
+  - Destructive file ops: `project_scavenge` removes directories; ensure it only operates when `projects.status==='canceled'` and path is confined under repo `.projects/` (it is; uses `path.join(__dirname, '../../..', '.projects', project_folder)`).
+  - Idempotency: tolerate missing folders; errors bubble for retry; no DB mutation beyond reads.
+  - Logging/Audit: structured logs `scavenge_*` added; include `project_id` and `project_folder`.
+  - Lane impact: step priority 100; verify `pipeline.priority_lane_slots` leaves capacity for other high‑priority tasks to avoid starvation.

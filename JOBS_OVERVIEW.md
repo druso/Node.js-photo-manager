@@ -36,6 +36,9 @@ This document summarizes the background job pipeline, supported job types, their
   - `folder_check` (95)
   - `manifest_cleaning` (80)
 
+- Project Scavenge (`project_scavenge` task)
+  - `project_scavenge` (100)
+
 - Delete Project (`project_delete` task)
   - `project_stop_processes` (100)
   - `project_delete_files` (100)
@@ -73,6 +76,11 @@ Lane behavior: steps with priority ≥ `pipeline.priority_threshold` run in the 
 - manifest_cleaning
   - Worker: `maintenanceWorker.runManifestCleaning()`.
   - Purpose: periodic manifest/database cleanup.
+  - Payload: none currently.
+
+- project_scavenge
+  - Worker: `projectScavengeWorker.runProjectScavenge()`.
+  - Purpose: remove leftover on-disk folders for archived projects (`projects.status='canceled'`). Best‑effort, idempotent.
   - Payload: none currently.
 
 - file_removal
@@ -114,7 +122,9 @@ Note: Any other `type` will be failed by `workerLoop` as Unknown.
 
 ### Maintenance
 
-- Scheduler model (see `server/services/scheduler.js`): kicks off the `maintenance` task hourly for each project.
+- Scheduler model (see `server/services/scheduler.js`):
+  - Kicks off the `maintenance` task hourly for each active (non‑archived) project.
+  - Separately kicks off the `project_scavenge` task hourly for archived projects to clean up leftover folders.
 - Task composition (see `server/services/task_definitions.json` → `maintenance.steps`):
   - `trash_maintenance` (priority 100)
   - `manifest_check` (priority 95)

@@ -118,8 +118,9 @@ High‑priority, idempotent maintenance jobs operate per project:
 - `manifest_check`: reconcile DB availability flags with files on disk
 - `folder_check`: scan project folder for untracked files; enqueue `upload_postprocess` for accepted ones; move others to `.trash`
 - `manifest_cleaning`: delete photo rows with no JPG or RAW available
+- `project_scavenge`: single-step task that removes leftover on-disk folders for archived projects (`projects.status='canceled'`).
 
-Scheduling: `server/services/scheduler.js` triggers a unified hourly `maintenance` task for each project (with an initial kick shortly after startup). The task encapsulates the above steps with priorities. See the canonical jobs catalog in `JOBS_OVERVIEW.md` for exact composition and priorities.
+Scheduling: `server/services/scheduler.js` triggers a unified hourly `maintenance` task for active (non-archived) projects only, and `project_scavenge` hourly for archived projects to clean up leftover project folders.
 
 #### Job Lifecycle
 

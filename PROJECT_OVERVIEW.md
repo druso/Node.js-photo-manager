@@ -48,7 +48,7 @@ The application is built with modern, production-ready technologies:
 
 ### Development Tools
 *   **nodemon**: Auto-restart development server on file changes
-*   **Node.js v22**: JavaScript runtime (LTS version required)
+*   **Node.js v22**: JavaScript runtime (LTS version required). Use **nvm** with the provided `.nvmrc` (22): `nvm install && nvm use`.
 *   **npm v10+**: Package manager
 
 ## 4. Architecture Overview
@@ -164,6 +164,7 @@ Refer to `SCHEMA_DOCUMENTATION.md` for detailed table structures and relationshi
 *   **Crash Recovery**: Automatic restart of failed jobs
 *   **Extensible Workers**: Easy to add new processing tasks
 *   **Deletion as Task**: Project deletion is handled via a high‑priority task (`project_delete`) to ensure fast cleanup and safe ordering.
+*   **Archived Folder Scavenge**: A separate `project_scavenge` task runs for archived projects to remove leftover on‑disk folders if any remain after deletion.
 
 ### Security
 *   **Signed URLs**: Secure access to photo assets with expiration
@@ -219,11 +220,12 @@ Job types:
 
 Scheduler (`server/services/scheduler.js`) cadence:
 
-- Hourly kickoff of the unified `maintenance` task per project. This task encapsulates:
+- Hourly kickoff of the unified `maintenance` task for active (non‑archived) projects only. This task encapsulates:
   - `trash_maintenance` (priority 100)
   - `manifest_check` (95)
   - `folder_check` (95)
   - `manifest_cleaning` (80)
+- Hourly kickoff of `project_scavenge` for archived projects to remove any leftover `.projects/<project_folder>/` directories.
   See `server/services/scheduler.js` and the canonical jobs catalog in `JOBS_OVERVIEW.md`.
 
 Manual reconciliation endpoints:
@@ -404,6 +406,22 @@ The backend exposes a comprehensive REST API for all frontend operations:
 ### Real-time Features
 *   **Server-Sent Events**: `GET /api/jobs/stream` - Live job progress updates
 *   **Job Status**: Real-time notifications for thumbnail generation, uploads, etc.
+
+### Endpoint Notes (validation & CORS)
+
+- `PUT /api/projects/:folder/keep`
+  - Body: `{ updates: [{ filename, keep_jpg?, keep_raw? }] }`
+  - Filename normalization: accepts base name with or without extension. Server maps `IMG_0001.jpg` → base `IMG_0001`.
+  - Validation: `updates` must be an array; otherwise 400.
+  - Response: `{ updated_count }` counts only items where a flag actually changed.
+
+- `POST /api/projects/:folder/analyze-files`
+  - Body: `{ files: [{ name, type, size? }] }`
+  - Validation: `files` must be an array; otherwise 400.
+
+- CORS behavior
+  - Allowlist controlled by `ALLOWED_ORIGINS` (comma‑separated). Dev defaults include localhost/127.0.0.1 on ports 3000/5000/5173.
+  - Denied Origins return 403 (Forbidden).
 
 ### Response Formats
 *   All endpoints return JSON responses

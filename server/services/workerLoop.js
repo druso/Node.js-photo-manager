@@ -2,6 +2,7 @@ const { getConfig } = require('./config');
 const jobsRepo = require('./repositories/jobsRepo');
 const { runGenerateDerivatives } = require('./workers/derivativesWorker');
 const { runProjectStopProcesses, runProjectDeleteFiles, runProjectCleanupDb } = require('./workers/projectDeletionWorker');
+const { runProjectScavenge } = require('./workers/projectScavengeWorker');
 const { runTrashMaintenance, runManifestCheck, runFolderCheck, runManifestCleaning } = require('./workers/maintenanceWorker');
 const { runFileRemoval } = require('./workers/fileRemovalWorker');
 const { emitJobUpdate } = require('./events');
@@ -116,6 +117,19 @@ async function handleJob(job, { heartbeatMs, maxAttemptsDefault, workerId }) {
     }
     if (job.type === 'manifest_cleaning') {
       await runManifestCleaning(job);
+      stopHeartbeat();
+      jobsRepo.complete(job.id);
+      {
+        const p = job.payload_json || {};
+        emitJobUpdate({ id: job.id, status: 'completed', task_id: p.task_id, task_type: p.task_type, source: p.source });
+      }
+      try { tasksOrchestrator.onJobCompleted(job); } catch {}
+      return;
+    }
+
+    // Archived-project cleanup
+    if (job.type === 'project_scavenge') {
+      await runProjectScavenge(job);
       stopHeartbeat();
       jobsRepo.complete(job.id);
       {

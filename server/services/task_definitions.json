@@ -28,6 +28,20 @@
       { "type": "manifest_cleaning", "priority": 80 }
     ]
   },
+  "trash_only": {
+    "label": "Trash Cleanup Only",
+    "user_relevant": false,
+    "steps": [
+      { "type": "trash_maintenance", "priority": 100 }
+    ]
+  },
+  "project_scavenge": {
+    "label": "Project Scavenge (Archived Only)",
+    "user_relevant": false,
+    "steps": [
+      { "type": "project_scavenge", "priority": 100 }
+    ]
+  },
   "project_delete": {
     "label": "Delete Project",
     "user_relevant": true,

@@ -58,7 +58,10 @@ router.post('/:folder/process', async (req, res) => {
     const job = jobsRepo.enqueue({ tenant_id, project_id: project.id, type: 'generate_derivatives', payload, progress_total: null });
     return res.status(202).json({ job });
   } catch (err) {
-    log.error('enqueue_generate_derivatives_failed', { project_id: project.id, project_folder: project.project_folder, project_name: project.project_name, error: err && err.message, stack: err && err.stack });
+    log.error('enqueue_generate_derivatives_failed', {
+      error: err && err.message,
+      stack: err && err.stack
+    });
     return res.status(500).json({ error: 'Failed to enqueue derivatives job' });
   }
 });
@@ -206,7 +209,10 @@ router.post('/:folder/upload', async (req, res) => {
       }
       res.status(201).json(response);
     } catch (err) {
-      log.error('upload_failed', { project_id: project.id, project_folder: project.project_folder, project_name: project.project_name, error: err && err.message, stack: err && err.stack });
+      log.error('upload_failed', {
+        error: err && err.message,
+        stack: err && err.stack
+      });
       res.status(500).json({ error: 'Failed to upload files' });
     }
   });
@@ -216,7 +222,10 @@ router.post('/:folder/upload', async (req, res) => {
 router.post('/:folder/analyze-files', async (req, res) => {
   try {
     const { folder } = req.params;
-    const { files } = req.body;
+    const { files } = req.body || {};
+    if (!Array.isArray(files)) {
+      return res.status(400).json({ error: 'files must be an array of { name, type }' });
+    }
     const projectPath = path.join(PROJECTS_DIR, folder);
     if (!await fs.pathExists(projectPath)) return res.status(404).json({ error: 'Project not found' });
     const project = projectsRepo.getByFolder(folder);
@@ -282,7 +291,10 @@ router.post('/:folder/analyze-files', async (req, res) => {
 
     res.json({ success: true, imageGroups, summary, rejected });
   } catch (err) {
-    log.error('analyze_files_failed', { project_id: project.id, project_folder: project.project_folder, project_name: project.project_name, error: err && err.message, stack: err && err.stack });
+    log.error('analyze_files_failed', {
+      error: err && err.message,
+      stack: err && err.stack
+    });
     res.status(500).json({ error: 'Failed to analyze files' });
   }
 });

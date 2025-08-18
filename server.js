@@ -1,5 +1,8 @@
 const express = require('express');
-require('./server/utils/logger');
+// Remove global console timestamp prefixer to avoid duplicate timestamps with structured logger
+// require('./server/utils/logger');
+const makeLogger = require('./server/utils/logger2');
+const log = makeLogger('server');
 // Upload handling and image processing are implemented in route/services modules
 const cors = require('cors');
 const path = require('path');
@@ -12,8 +15,28 @@ const app = express();
 const PORT = process.env.PORT || 5000;
 
 // Middleware
-// Production CORS allowlist (configurable via ALLOWED_ORIGINS comma-separated). Defaults to localhost:3000 for dev.
-const rawAllowed = process.env.ALLOWED_ORIGINS || 'http://localhost:3000';
+// Correlate requests early
+app.use(requestId());
+// Access log as early as possible to capture static file requests
+app.use(accessLog());
+app.use(express.json());
+// Explicit static mounts to serve built frontend
+// Serve hashed assets with no fallthrough to avoid route interference
+app.use('/assets', express.static('public/assets', { fallthrough: false }));
+// Serve other static files (index.html, icons, manifest). Allow fallthrough to API routes.
+app.use(express.static('public'));
+
+// Apply CORS to API routes only (after static)
+// Production CORS allowlist (configurable via ALLOWED_ORIGINS comma-separated).
+// Dev-friendly defaults include common Vite/CRA ports and localhost/127.0.0.1 variants.
+const rawAllowed = process.env.ALLOWED_ORIGINS || [
+  'http://localhost:3000',
+  'http://localhost:5173',
+  'http://localhost:5000',
+  'http://127.0.0.1:3000',
+  'http://127.0.0.1:5173',
+  'http://127.0.0.1:5000'
+].join(',');
 const allowedOrigins = rawAllowed.split(',').map(s => s.trim()).filter(Boolean);
 app.use(cors({
   origin: function(origin, cb) {
@@ -24,12 +47,6 @@ app.use(cors({
   },
   credentials: false
 }));
-// Correlate requests early
-app.use(requestId());
-app.use(express.json());
-app.use(express.static('public'));
-// Access log
-app.use(accessLog());
 
 // Routers
 const projectsRouter = require('./server/routes/projects');
@@ -65,7 +82,7 @@ let config = getConfig();
 const REQUIRE_SIGNED = process.env.REQUIRE_SIGNED_DOWNLOADS !== 'false';
 const DOWNLOAD_SECRET = process.env.DOWNLOAD_SECRET || 'dev-download-secret-change-me';
 if (process.env.NODE_ENV === 'production' && REQUIRE_SIGNED && DOWNLOAD_SECRET === 'dev-download-secret-change-me') {
-  console.error('[SECURITY] DOWNLOAD_SECRET is using the insecure default in production. Set a strong secret in the environment.');
+  log.error('insecure_download_secret', { note: 'Set a strong DOWNLOAD_SECRET in production' });
   process.exit(1);
 }
 
@@ -77,7 +94,7 @@ app.get('/api/config', (req, res) => {
     config = getConfig();
     res.json(config);
   } catch (e) {
-    console.error('Error loading config:', e);
+    log.error('config_load_failed', { message: e?.message, stack: e?.stack });
     res.status(500).json({ error: 'Failed to load config' });
   }
 });
@@ -90,7 +107,7 @@ app.post('/api/config', async (req, res) => {
     config = getConfig();
     res.json(config);
   } catch (error) {
-    console.error('Error saving config:', error);
+    log.error('config_save_failed', { message: error?.message, stack: error?.stack });
     res.status(500).json({ error: 'Failed to save config' });
   }
 });
@@ -104,28 +121,28 @@ app.post('/api/config/restore', async (req, res) => {
     config = fs.readJsonSync(CONFIG_PATH);
     res.json(config);
   } catch (error) {
-    console.error('Error restoring default config:', error);
+    log.error('config_restore_failed', { message: error?.message, stack: error?.stack });
     res.status(500).json({ error: 'Failed to restore default config' });
   }
 });
 
 app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-  console.log(`Projects directory: ${PROJECTS_DIR}`);
+  log.info('server_started', { port: PORT });
+  log.info('projects_dir_ready', { dir: PROJECTS_DIR });
   // Start background worker loop
   try {
     const { startWorkerLoop } = require('./server/services/workerLoop');
     startWorkerLoop();
-    console.log('Worker loop started');
+    log.info('worker_loop_started');
     // Start scheduler to enqueue periodic maintenance jobs
     try {
       const { startScheduler } = require('./server/services/scheduler');
       startScheduler();
-      console.log('Scheduler started');
+      log.info('scheduler_started');
     } catch (e) {
-      console.error('Failed to start scheduler:', e);
+      log.error('scheduler_start_failed', { message: e?.message, stack: e?.stack });
     }
   } catch (e) {
-    console.error('Failed to start worker loop:', e);
+    log.error('worker_loop_start_failed', { message: e?.message, stack: e?.stack });
   }
 });
