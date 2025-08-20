@@ -60,6 +60,7 @@ The application follows a classic client-server architecture.
 The frontend is a modern single-page application (SPA) responsible for all user interactions.
 
 *   **Technology**: Built with **React** and **Vite** for fast development and building (`vite.config.mjs`). Uses **Tailwind CSS** for styling.
+    - Tailwind v4 migration: deprecated `bg-opacity-*` utilities were replaced with alpha color syntax (e.g., `bg-black/40`). Unintended top/bottom borders introduced by default borders were audited and disabled where necessary (e.g., replacing `border-b` with `border-b-0` on sticky headers).
 *   **Source Code**: The main application logic resides in `client/src/`.
 *   **Entry Point**: The main HTML file is `client/index.html`.
 *   **Static Assets**: Public assets like fonts or icons are stored in `client/public/`.
@@ -77,7 +78,7 @@ The backend is a Node.js application that exposes a RESTful API for the client.
 *   **API Routes (`server/routes/`)**: This directory defines all the API endpoints. Key files include:
     *   `uploads.js`: Handles file uploads with configurable file type filtering
     *   `projects.js`: Manages project creation, rename, and data retrieval
-    *   `assets.js`: Serves photo assets (previews, thumbnails) with signed URLs
+    *   `assets.js`: Serves photo assets (previews, thumbnails) with signed URLs. Thumbnails/previews are streamed via `fs.createReadStream` (not `res.sendFile`) and include `Cache-Control` and `ETag` headers for 304 support.
     *   `jobs.js`: Provides endpoints for the worker pipeline and Server-Sent Events
     *   `tags.js`: Manages photo tagging functionality
     *   `keep.js`: Handles keep/discard decisions for RAW vs JPG files
@@ -100,6 +101,7 @@ The backend is a Node.js application that exposes a RESTful API for the client.
 #### Project Folders (Fresh Start)
 
 Projects are stored on disk under `<repoRoot>/.projects/<project_folder>/` where `project_folder` is always of the form `p<id>` (immutable and decoupled from the display name). Duplicate human names are allowed; uniqueness is enforced by `project_folder`. The numeric `id` is returned by all project APIs and should be used for renames; the folder never changes.
+Filename normalization for asset endpoints preserves non-image suffixes (e.g., `.com` in `manage.kmail-lists.com`) and strips only known image/raw extensions (`jpg`, `jpeg`, `raw`, `arw`, `cr2`, `nef`, `dng`). Derivatives are named `<base>.jpg` in `.thumb/` and `.preview/`.
 
 On creation, the server ensures these subdirectories exist:
 - `.thumb` for thumbnails
@@ -301,10 +303,10 @@ Client behavior after reconciliation endpoints:
     cd client
     npm run dev
     ```
-    Frontend runs on `http://localhost:3000`
+    Frontend runs on `http://localhost:5173`
 
 7.  **Verify Setup**:
-    - Open `http://localhost:3000` in your browser
+    - Open `http://localhost:5173` in your browser
     - Create a new project
     - Upload a test image
     - Check that thumbnails generate automatically
@@ -395,6 +397,10 @@ The backend exposes a comprehensive REST API for all frontend operations:
     *   `POST /api/projects/:folder/download-url` - Mint signed URLs for originals
     *   `GET /api/projects/:folder/file/:type/:filename` - Download originals (requires token)
     *   `GET /api/projects/:folder/files-zip/:filename` - Download ZIP (requires token)
+    
+    Notes:
+    - `:filename` may include non-image suffixes (e.g., `.com`). The server strips only known image/raw extensions and maps to `<base>.jpg` under `.thumb/` or `.preview/`.
+    - Thumbnails and previews are streamed using `fs.createReadStream` with `Content-Type: image/jpeg`. Responses include `Cache-Control` and `ETag`; clients may receive 304 on revalidation.
 *   **Jobs**: `GET/POST /api/projects/:folder/jobs` - Background job management
 *   **Tags**: `PUT /api/projects/:folder/tags` - Batch tag updates
 *   **Keep**: `PUT /api/projects/:folder/keep` - RAW/JPG keep decisions (intent)
@@ -403,9 +409,19 @@ The backend exposes a comprehensive REST API for all frontend operations:
     * `POST /api/projects/:folder/revert-changes` - Reset intent to current availability (non‑destructive)
 *   **Config**: `GET/POST /api/config`, `POST /api/config/restore` - Configuration management
 
+#### Configuration lifecycle (merge behavior)
+
+- The server merges missing keys from `config.default.json` into your `config.json` on boot and when handling `POST /api/config` (see `server/services/config.js`).
+- If new defaults are introduced, they will be appended to `config.json` on first run after upgrade. This persistence is expected and helps keep config current.
+
 ### Real-time Features
 *   **Server-Sent Events**: `GET /api/jobs/stream` - Live job progress updates
 *   **Job Status**: Real-time notifications for thumbnail generation, uploads, etc.
+*   **Client SSE Singleton**: The client uses a single shared `EventSource` managed in `client/src/api/jobsApi.js` (`openJobStream()`) to avoid exceeding server per‑IP limits and to reduce resource usage.
+    - The singleton instance is persisted on `globalThis/window` so it survives Vite HMR reloads during development.
+    - Multiple UI consumers subscribe via listeners; an unsubscribe closes the stream after a short idle grace period when no listeners remain.
+    - Dev tips: close duplicate tabs and hard‑refresh if you see 429s; optionally raise `SSE_MAX_CONN_PER_IP` in local env if hot‑reload briefly opens parallel connections.
+    - SSE specifics: server sends a heartbeat every 25s and closes idle streams after a default of 5 minutes. Override via env: `SSE_MAX_CONN_PER_IP` (default 2), `SSE_IDLE_TIMEOUT_MS`.
 
 ### Endpoint Notes (validation & CORS)
 

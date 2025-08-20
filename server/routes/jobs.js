@@ -50,26 +50,7 @@ router.get('/projects/:folder/jobs', (req, res) => {
   }
 });
 
-// GET /api/jobs/:id -> job details (including items summary)
-// Constrain :id to digits so it doesn't match '/jobs/stream'
-router.get('/jobs/:id(\\d+)', (req, res) => {
-  try {
-    const id = Number(req.params.id);
-    const job = jobsRepo.getById(id);
-    if (!job) return res.status(404).json({ error: 'Job not found' });
-    const items = jobsRepo.listItems(id) || [];
-    const summary = items.reduce((acc, it) => {
-      acc[it.status] = (acc[it.status] || 0) + 1;
-      return acc;
-    }, {});
-    return res.json({ job, items_summary: summary, total_items: items.length });
-  } catch (err) {
-    log.error('get_job_failed', { job_id: req.params && req.params.id, error: err && err.message, stack: err && err.stack });
-    return res.status(500).json({ error: 'Failed to get job' });
-  }
-});
-
-// GET /api/jobs/stream -> SSE for job updates
+// GET /api/jobs/stream -> SSE for job updates (declare before :id route)
 router.get('/jobs/stream', (req, res) => {
   const ip = req.ip || req.connection?.remoteAddress || 'unknown';
   const current = ipConnCounts.get(ip) || 0;
@@ -117,6 +98,28 @@ router.get('/jobs/stream', (req, res) => {
   // initial heartbeat and hello
   try { res.write(`: ping\n\n`); } catch (_) {}
   send({ type: 'hello' });
+});
+
+// GET /api/jobs/:id -> job details (including items summary)
+// Avoid regex patterns for Express 5 path-to-regexp; validate numerically inside
+router.get('/jobs/:id', (req, res) => {
+  try {
+    const idRaw = req.params.id;
+    // If not a numeric id, treat as not found to avoid collision with other routes
+    if (!/^\d+$/.test(idRaw)) return res.status(404).json({ error: 'Job not found' });
+    const id = Number(idRaw);
+    const job = jobsRepo.getById(id);
+    if (!job) return res.status(404).json({ error: 'Job not found' });
+    const items = jobsRepo.listItems(id) || [];
+    const summary = items.reduce((acc, it) => {
+      acc[it.status] = (acc[it.status] || 0) + 1;
+      return acc;
+    }, {});
+    return res.json({ job, items_summary: summary, total_items: items.length });
+  } catch (err) {
+    log.error('get_job_failed', { job_id: req.params && req.params.id, error: err && err.message, stack: err && err.stack });
+    return res.status(500).json({ error: 'Failed to get job' });
+  }
 });
 
 // GET /api/tasks/definitions -> expose task definitions (labels, user_relevant, steps)

@@ -103,7 +103,7 @@ const PhotoTableView = ({ projectData, projectFolder, onPhotoSelect, selectedPho
                       alt={`Thumbnail of ${photo.filename}`}
                     />
                     {/* Hover overlay with larger View button */}
-                    <div className="absolute inset-0 bg-black bg-opacity-40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity p-2">
+                    <div className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity p-2">
                       <button 
                         onClick={(e) => {
                           e.stopPropagation(); // Prevent row click from firing

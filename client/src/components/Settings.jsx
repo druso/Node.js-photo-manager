@@ -196,7 +196,7 @@ const Settings = ({ project, config, onConfigUpdate, onProjectDelete, onProjectR
     return embedded ? (
       <div className="p-4">Loading settings...</div>
     ) : (
-      <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+      <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
         <div className="bg-white rounded-lg shadow-xl p-6 w-full max-w-md">
           <p>Loading settings...</p>
         </div>
@@ -207,7 +207,7 @@ const Settings = ({ project, config, onConfigUpdate, onProjectDelete, onProjectR
   // Sidebar layout with single-open accordions
   if (embedded) {
     return (
-      <div className="divide-y relative">
+      <div className="space-y-4 relative">
         {/* Manage Project */}
         {project && (
           <section>
@@ -295,7 +295,7 @@ const Settings = ({ project, config, onConfigUpdate, onProjectDelete, onProjectR
                   </label>
                 </div>
               </div>
-              <div className="pt-2 border-t" />
+              <div className="pt-2 border-t-0" />
               <div className="space-y-2">
                 <p className="text-sm text-gray-700">Generate or re-generate derived images for the current project.</p>
                 <button
@@ -447,7 +447,7 @@ const Settings = ({ project, config, onConfigUpdate, onProjectDelete, onProjectR
 
         {/* Body */}
         <div className="flex-1 overflow-y-auto">
-          <div className="divide-y">
+          <div className="space-y-2">
             {/* Manage Project */}
             {project && (
               <section>
@@ -536,7 +536,7 @@ const Settings = ({ project, config, onConfigUpdate, onProjectDelete, onProjectR
                     </div>
                   </div>
 
-                  <div className="pt-2 border-t" />
+                  <div className="pt-2 border-t-0" />
                   <div className="space-y-2">
                     <p className="text-sm text-gray-700">Generate or re-generate derived images for the current project.</p>
                     <button
@@ -648,7 +648,7 @@ const Settings = ({ project, config, onConfigUpdate, onProjectDelete, onProjectR
         </div>
 
         {/* Footer */}
-        <div className="border-t px-4 py-3 flex justify-between items-center">
+        <div className="border-t-0 px-4 py-3 flex justify-between items-center">
           <button onClick={handleRestoreDefaults} className="px-3 py-2 bg-gray-200 text-gray-800 rounded-md hover:bg-gray-300">
             Restore Defaults
           </button>

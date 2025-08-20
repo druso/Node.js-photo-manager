@@ -164,6 +164,7 @@ const UniversalFilter = ({
             </label>
             <input
               id="textSearch"
+              name="textSearch"
               type="text"
               value={filters.textSearch}
               onChange={handleTextSearchChange}
@@ -192,7 +193,7 @@ const UniversalFilter = ({
           </div>
           {/* Date taken (left) */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
+            <label id="dateTakenLabel" className="block text-sm font-medium text-gray-700 mb-1">
               Date taken
             </label>
             <DateRangePicker
@@ -201,12 +202,13 @@ const UniversalFilter = ({
               disabled={disabled}
               onOpenChange={setIsDateOpen}
               availableDates={availableDates}
+              ariaLabelledBy="dateTakenLabel"
             />
           </div>
 
           {/* Orientation (right of Date taken) */}
           <div>
-            <label htmlFor="orientation" className="block text-sm font-medium text-gray-700 mb-1">
+            <label id="orientation-label" className="block text-sm font-medium text-gray-700 mb-1">
               Orientation
             </label>
             <button
@@ -214,6 +216,8 @@ const UniversalFilter = ({
               onClick={() => !disabled && setOpenSelect('orientation')}
               disabled={disabled}
               className={`w-full ${filterTriggerClass} justify-between ${disabled ? 'text-gray-400 border-gray-200 cursor-not-allowed' : ''}`}
+              name="orientation"
+              aria-labelledby="orientation-label"
             >
               <span className="truncate">
                 {orientationOptions.find(o => o.value === filters.orientation)?.label || 'Any'}
@@ -224,7 +228,7 @@ const UniversalFilter = ({
 
           {/* File types available (left on second row) */}
           <div>
-            <label htmlFor="fileType" className="block text-sm font-medium text-gray-700 mb-1">
+            <label id="fileType-label" className="block text-sm font-medium text-gray-700 mb-1">
               File types available
             </label>
             <button
@@ -232,6 +236,8 @@ const UniversalFilter = ({
               onClick={() => !disabled && setOpenSelect('fileType')}
               disabled={disabled}
               className={`w-full ${filterTriggerClass} justify-between ${disabled ? 'text-gray-400 border-gray-200 cursor-not-allowed' : ''}`}
+              name="fileType"
+              aria-labelledby="fileType-label"
             >
               <span className="truncate">
                 {fileTypeOptions.find(o => o.value === filters.fileType)?.label || 'Any (no filter)'}
@@ -242,7 +248,7 @@ const UniversalFilter = ({
 
           {/* File types to keep (right on second row) */}
           <div>
-            <label htmlFor="keepType" className="block text-sm font-medium text-gray-700 mb-1">
+            <label id="keepType-label" className="block text-sm font-medium text-gray-700 mb-1">
               File types to keep
             </label>
             <button
@@ -250,6 +256,8 @@ const UniversalFilter = ({
               onClick={() => !disabled && setOpenSelect('keepType')}
               disabled={disabled}
               className={`w-full ${filterTriggerClass} justify-between ${disabled ? 'text-gray-400 border-gray-200 cursor-not-allowed' : ''}`}
+              name="keepType"
+              aria-labelledby="keepType-label"
             >
               <span className="truncate">
                 {keepTypeOptions.find(o => o.value === filters.keepType)?.label || 'Show all (no filter)'}
@@ -261,7 +269,7 @@ const UniversalFilter = ({
 
       </div>
       {/* Footer actions */}
-      <div className="border-t px-4 py-3">
+      <div className="border-t-0 px-4 py-3">
         <div className="grid grid-cols-2 gap-3">
           {/* Reset on the left - red outline when enabled, toned down when disabled */}
           <button

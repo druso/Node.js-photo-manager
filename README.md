@@ -15,6 +15,7 @@ This application helps photographers manage their photo collections by:
 ## Technology
 
 - **Frontend**: React with Vite and Tailwind CSS
+- Tailwind CSS v4 note: deprecated `bg-opacity-*` utilities have been migrated to the new alpha color syntax (e.g., `bg-black/40`). If you add new styles, prefer `color/opacity` notation over legacy opacity utilities.
 - **Backend**: Node.js with Express and SQLite
 - **Image Processing**: Sharp library for high-performance processing
 
@@ -63,7 +64,7 @@ This application helps photographers manage their photo collections by:
    cd client && npm run dev
    ```
 
-5. **Open your browser** to `http://localhost:3000`
+5. **Open your browser** to `http://localhost:5173`
 
 ### First Steps
 1. Create a new project
@@ -76,6 +77,7 @@ This application helps photographers manage their photo collections by:
 npm run build  # Builds frontend to client/dist/
 ```
 This project uses **Vite 7** on the client. The Docker image copies `client/dist/` into `public/` so the backend can serve it.
+Tip: In development, the Vite dev server runs on `5173`; the backend runs on `5000`.
 
 ## Key Features
 
@@ -85,6 +87,7 @@ This project uses **Vite 7** on the client. The Docker image copies `client/dist
 - **Tagging System**: Add custom tags for easy organization
 - **Keep/Discard Workflow**: Manage RAW+JPG pairs efficiently
 - **Real-time Updates**: Live progress tracking for all background tasks
+  - The client uses a singleton `EventSource` (see `client/src/api/jobsApi.js → openJobStream()`) shared across UI consumers to avoid multiple parallel connections and 429s from the server's per‑IP cap.
 - **Drag & Drop Upload**: Intuitive file upload interface
 - **Keyboard Shortcuts**: Fast navigation and actions
 - **Secure Asset Serving**: Signed URLs for photo access; destructive endpoints are rate-limited
@@ -115,7 +118,8 @@ cd client && npm run dev
 - **`REQUIRE_SIGNED_DOWNLOADS`** (default: `true`) - Controls token verification for file downloads
 - File acceptance is centralized in `server/utils/acceptance.js` and driven by `config.json` → `uploader.accepted_files` (extensions, mime_prefixes)
 - **`DOWNLOAD_SECRET`** - HMAC secret for signed URLs (change in production)
-- **`ALLOWED_ORIGINS`** - Comma-separated list of allowed CORS origins (e.g. `http://localhost:3000,https://app.example.com`). Defaults to `http://localhost:3000` for dev.
+- **`ALLOWED_ORIGINS`** - Comma-separated list of allowed CORS origins (e.g. `http://localhost:3000,https://app.example.com`).
+  - Dev defaults include: `http://localhost:{5173,3000,5000}` and `http://127.0.0.1:{5173,3000,5000}` (see `server.js`).
 
 ### Logging
 
@@ -126,7 +130,19 @@ cd client && npm run dev
   - **`SSE_MAX_CONN_PER_IP`** (default: `2`)
   - **`SSE_IDLE_TIMEOUT_MS`** (default set in code)
 
+### Dev tips for SSE 429s
+
+- The client implements a global SSE singleton that survives Vite HMR via `globalThis/window`. If you still see transient 429s during hot reloads:
+  - Close duplicate browser tabs and hard-refresh the active one.
+  - Optionally raise `SSE_MAX_CONN_PER_IP=3` locally during development.
+  - Check the server logs for active connection counts in `server/routes/jobs.js`.
+
 See [SECURITY.md](SECURITY.md) for detailed security configuration.
+
+### Config merging behavior
+
+- On boot and on `POST /api/config`, the server merges missing keys from `config.default.json` into your `config.json` and persists them (see `server/services/config.js`).
+- This keeps `config.json` up-to-date with new defaults; if you track `config.json` in backups or audits, expect benign key additions over time.
 
 ## Documentation
 

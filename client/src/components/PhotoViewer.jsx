@@ -362,7 +362,7 @@ const PhotoViewer = ({ projectData, projectFolder, startIndex, onClose, config, 
   // Conditional rendering is handled here, after all hooks are called.
   if (startIndex === -1) {
     return (
-      <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50">
+      <div className="fixed inset-0 bg-black/75 flex items-center justify-center z-50">
         <div className="text-white text-lg">Error: Photo not found in project.</div>
         <button onClick={onClose} className="absolute top-4 right-4 text-white text-3xl">&times;</button>
       </div>
@@ -439,7 +439,7 @@ const PhotoViewer = ({ projectData, projectFolder, startIndex, onClose, config, 
 
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-90 z-50 flex" onClick={handleBackdropClick} style={{ overscrollBehavior: 'contain', touchAction: 'none' }}>
+    <div className="fixed inset-0 bg-black/90 z-50 flex" onClick={handleBackdropClick} style={{ overscrollBehavior: 'contain', touchAction: 'none' }}>
       {/* Toolbar (right-aligned) */}
       <div className="absolute top-3 left-3 right-3 z-50 flex items-center justify-end pointer-events-none" onMouseDown={(e)=>e.stopPropagation()} onClick={(e)=>e.stopPropagation()}>
         <div className="flex items-center gap-2 pointer-events-auto">
@@ -470,11 +470,11 @@ const PhotoViewer = ({ projectData, projectFolder, startIndex, onClose, config, 
 
       <div ref={containerRef} className={`flex-1 h-full flex items-center justify-center overflow-hidden relative ${isPanning ? 'cursor-grabbing' : (zoomPercent > 0 ? 'cursor-grab' : '')}`} onMouseDown={onMouseDown} onMouseMove={onMouseMove} onMouseUp={onMouseUp} onMouseLeave={onMouseUp} onClick={(e)=>{ if (e.target === e.currentTarget) onClose(); }}>
         {/* Prev/Next inside image container so they don't overlap right-side slider/sidebar */}
-        <button onClick={(e)=>{e.stopPropagation(); prevPhoto();}} className="absolute left-4 top-1/2 -translate-y-1/2 text-white text-4xl z-40 bg-black bg-opacity-40 p-2 rounded-full hover:bg-opacity-60">&#10094;</button>
-        <button onClick={(e)=>{e.stopPropagation(); nextPhoto();}} className="absolute right-4 top-1/2 -translate-y-1/2 text-white text-4xl z-40 bg-black bg-opacity-40 p-2 rounded-full hover:bg-opacity-60">&#10095;</button>
+        <button onClick={(e)=>{e.stopPropagation(); prevPhoto();}} className="absolute left-4 top-1/2 -translate-y-1/2 text-white text-4xl z-40 bg-black/40 p-2 rounded-full hover:bg-black/60">&#10094;</button>
+        <button onClick={(e)=>{e.stopPropagation(); nextPhoto();}} className="absolute right-4 top-1/2 -translate-y-1/2 text-white text-4xl z-40 bg-black/40 p-2 rounded-full hover:bg-black/60">&#10095;</button>
         {/* Loading overlay while preview/full image is fetching */}
         {!isRawFile && imageLoading && (
-          <div className="absolute inset-0 z-30 flex items-center justify-center bg-black bg-opacity-25">
+          <div className="absolute inset-0 z-30 flex items-center justify-center bg-black/25">
             <div className="flex flex-col items-center text-white">
               <span className="inline-block h-8 w-8 border-2 border-white border-t-transparent rounded-full animate-spin mb-3" />
               <span className="text-sm opacity-90">Loading…</span>
@@ -533,8 +533,8 @@ const PhotoViewer = ({ projectData, projectFolder, startIndex, onClose, config, 
 
         {/* Bottom controls: moved inside image container so they stay centered over the image area */}
         <div className="absolute bottom-4 inset-x-0 flex justify-center text-white" onMouseDown={(e)=>e.stopPropagation()} onClick={(e)=>e.stopPropagation()}>
-          <div className="bg-black bg-opacity-60 backdrop-blur px-3 py-2 rounded-md flex items-center gap-3 shadow-lg">
-          <button className="px-2 py-1 text-xs rounded bg-white bg-opacity-90 text-gray-800" onClick={() => { setZoomPercent(0); setPosition({x:0,y:0}); }} title="Fit to screen">Fit</button>
+          <div className="bg-black/60 backdrop-blur px-3 py-2 rounded-md flex items-center gap-3 shadow-lg">
+          <button className="px-2 py-1 text-xs rounded bg-white/90 text-gray-800" onClick={() => { setZoomPercent(0); setPosition({x:0,y:0}); }} title="Fit to screen">Fit</button>
           <input type="range" min={0} max={200} step={1} value={zoomPercent} onChange={(e) => setZoomPercent(parseInt(e.target.value, 10))} />
           <span className="text-xs">{zoomPercent}%</span>
           </div>
@@ -545,7 +545,7 @@ const PhotoViewer = ({ projectData, projectFolder, startIndex, onClose, config, 
       {/* Detail sidebar (mobile + desktop) */}
       <div
         className={
-          `h-full ${showInfo ? 'w-full sm:w-96 md:w-80 bg-white text-gray-800 px-4 border-l shadow-xl translate-x-0 pointer-events-auto' : 'w-0 sm:w-0 md:w-0 bg-transparent text-transparent px-0 translate-x-full pointer-events-none'} pt-4 md:pt-16 pb-4 overflow-auto transform transition-all duration-100 ease-out`
+          `h-full ${showInfo ? 'w-full sm:w-96 md:w-80 bg-white text-gray-800 px-4 shadow-xl translate-x-0 pointer-events-auto' : 'w-0 sm:w-0 md:w-0 bg-transparent text-transparent px-0 translate-x-full pointer-events-none'} pt-4 md:pt-16 pb-4 overflow-auto transform transition-all duration-100 ease-out`
         }
         aria-hidden={!showInfo}
         onMouseDown={(e)=>e.stopPropagation()}
@@ -615,7 +615,7 @@ const PhotoViewer = ({ projectData, projectFolder, startIndex, onClose, config, 
           {!isRawFile && (
             <div className="mb-4">
               <h3 className="text-sm font-semibold mb-2">Quality</h3>
-              <div className="flex items-center gap-3 select-none bg-gray-50 rounded-md border px-3 py-2">
+              <div className="flex items-center gap-3 select-none bg-gray-50 rounded-md px-3 py-2">
                 <span className="text-sm">High Quality</span>
                 <button
                   type="button"
@@ -625,7 +625,7 @@ const PhotoViewer = ({ projectData, projectFolder, startIndex, onClose, config, 
                   title="Toggle High Quality"
                   className={`relative inline-flex h-6 w-12 items-center rounded-full transition-colors focus:outline-none ${!usePreview ? 'bg-blue-600' : 'bg-gray-300'}`}
                 >
-                  <span className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform ${!usePreview ? 'translate-x-6' : 'translate-x-1'}`} />
+                  <span className={`inline-block h-5 w-5 transform rounded-full bg-white transition-transform ${!usePreview ? 'translate-x-6' : 'translate-x-1'}`} />
                 </button>
                 {imageLoading && (
                   <svg className="animate-spin h-4 w-4 text-gray-600" viewBox="0 0 24 24">
@@ -744,7 +744,7 @@ const PhotoViewer = ({ projectData, projectFolder, startIndex, onClose, config, 
           </span>
         )}
         <button
-          className={`text-white bg-black bg-opacity-60 px-4 py-2 rounded-md text-xs select-none cursor-pointer border ${isSelected ? 'border-blue-500' : 'border-transparent'} shadow-lg`}
+          className={`text-white bg-black/60 px-4 py-2 rounded-md text-xs select-none cursor-pointer border ${isSelected ? 'border-blue-500' : 'border-transparent'} shadow-lg`}
           onClick={(e)=>{ e.stopPropagation(); if (onToggleSelect) onToggleSelect(currentPhoto); }}
           title={isSelected ? 'Click to unselect' : 'Click to select'}
         >

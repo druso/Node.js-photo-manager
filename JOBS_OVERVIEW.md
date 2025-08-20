@@ -149,10 +149,17 @@ Note: Any other `type` will be failed by `workerLoop` as Unknown.
   - Behavior: resets intent (`keep_jpg`/`keep_raw`) to current availability for all photos (non-destructive, no jobs needed).
   - UI: client updates state optimistically; no heavy background processing triggered.
 
-## Generic API / Client Helper
+## API Contract (Tasks-only)
 
-- REST: `POST /api/projects/:folder/jobs` → enqueue any job type, optionally with `payload.filenames` to create `job_items`.
-- Client: `client/src/api/jobsApi.js` → `enqueueJob(folder, { type, payload })`.
+- `POST /api/projects/:folder/jobs`
+  - Tasks-only API: requires `task_type` in the JSON body.
+  - Optional: `items` array for per-file itemization when applicable (e.g., uploaded filenames).
+  - Returns: `{ task }` with task metadata (accepted, queued steps, etc.).
+- `GET /api/tasks/definitions`
+  - Returns task labels, user-relevant flags, and composed steps used by the client UI.
+  - Source: `server/services/task_definitions.json`.
+
+Client helper: see `client/src/api/jobsApi.js` for UI calls and the SSE singleton used to consume `GET /api/jobs/stream` updates.
 
 ## Observability
 

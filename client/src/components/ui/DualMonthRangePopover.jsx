@@ -120,7 +120,7 @@ export default function DualMonthRangePopover({
             {[{weeks:leftWeeks, m:left}, {weeks:rightWeeks, m:right}].map((cal, idx) => (
               <div
                 key={idx}
-                className={idx === 1 ? 'border-t pt-4 sm:border-t-0 sm:pt-0 sm:border-l sm:pl-4' : ''}
+                className={idx === 1 ? 'border-t-0 pt-4 sm:border-t-0 sm:pt-0 sm:border-l sm:pl-4' : ''}
               >
                 <div className="grid grid-cols-7 text-xs sm:text-[11px] text-gray-500 mb-1">{weekdays.map((w) => <div key={w} className="text-center">{w}</div>)}</div>
                 <div className="grid grid-cols-7 gap-2 sm:gap-1">

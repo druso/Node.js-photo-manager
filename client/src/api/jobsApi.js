@@ -31,18 +31,59 @@ export async function getJob(id) {
 }
 
 // Open an SSE stream. Returns a function to close it.
+// Singleton SSE connection shared across consumers to avoid hitting server IP limits
+// Persist on globalThis/window to survive Vite HMR reloads
+const __g = (typeof window !== 'undefined' ? window : (typeof globalThis !== 'undefined' ? globalThis : {}));
+__g.__jobsSse ||= { es: null, listeners: new Set(), lastError: null, teardownTimer: null };
+let __jobEs = __g.__jobsSse.es;
+let __jobEsListeners = __g.__jobsSse.listeners;
+let __jobEsLastError = __g.__jobsSse.lastError;
+let __jobEsTeardownTimer = __g.__jobsSse.teardownTimer;
+
 export function openJobStream(onMessage) {
-  const es = new EventSource('/api/jobs/stream');
-  es.onmessage = (evt) => {
-    try {
-      const data = JSON.parse(evt.data);
-      onMessage && onMessage(data);
-    } catch (_) {}
+  if (onMessage && typeof onMessage === 'function') {
+    __jobEsListeners.add(onMessage);
+  }
+  // Establish the shared connection if needed
+  if (!__jobEs) {
+    try { if (__jobEsTeardownTimer) { clearTimeout(__jobEsTeardownTimer); __jobEsTeardownTimer = null; } } catch {}
+    __jobEs = new EventSource('/api/jobs/stream');
+    __jobEs.onmessage = (evt) => {
+      let data = null;
+      try { data = JSON.parse(evt.data); } catch { return; }
+      __jobEsListeners.forEach(fn => { try { fn(data); } catch {} });
+    };
+    __jobEs.onerror = (e) => {
+      __jobEsLastError = e || true;
+      // Let the browser auto-reconnect; don't tear down listeners
+    };
+    // Save back to global so subsequent HMR modules reuse it
+    __g.__jobsSse.es = __jobEs;
+    __g.__jobsSse.listeners = __jobEsListeners;
+    __g.__jobsSse.lastError = __jobEsLastError;
+    __g.__jobsSse.teardownTimer = __jobEsTeardownTimer;
+  }
+
+  // Return an unsubscribe that removes the listener and possibly tears down the ES
+  return () => {
+    if (onMessage && typeof onMessage === 'function') {
+      __jobEsListeners.delete(onMessage);
+    }
+    // If no more listeners, close the ES after a short grace period to prevent flapping
+    if (__jobEs && __jobEsListeners.size === 0) {
+      try { if (__jobEsTeardownTimer) clearTimeout(__jobEsTeardownTimer); } catch {}
+      __jobEsTeardownTimer = setTimeout(() => {
+        try { __jobEs.close(); } catch {}
+        __jobEs = null;
+        __jobEsLastError = null;
+        __jobEsTeardownTimer = null;
+        // reflect in global store
+        __g.__jobsSse.es = null;
+        __g.__jobsSse.lastError = null;
+        __g.__jobsSse.teardownTimer = null;
+      }, 1500);
+    }
   };
-  es.onerror = () => {
-    // Rely on browser's automatic reconnection; keep using relative URL through Vite proxy
-  };
-  return () => { try { es.close(); } catch (_) {} };
 }
 
 // Fetch task definitions (labels, user_relevant, steps)

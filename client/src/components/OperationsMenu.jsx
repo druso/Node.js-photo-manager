@@ -170,7 +170,7 @@ export default function OperationsMenu({
           </div>
 
           {/* Maintenance */}
-          <div className="mt-3 pt-3 border-t">
+          <div className="mt-3 pt-3 border-t-0">
             <div className="text-xs text-gray-500 mb-2">Maintenance</div>
             <button
               onClick={() => uploadActions.startProcess({ thumbnails: true, previews: true, force: false, filenames: Array.from(selectedPhotos) })}

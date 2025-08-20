@@ -1,3 +1,9 @@
+# Local project data (do not commit large/binary project assets)
+.projects/
+projects/
+uploads/
+thumbnails/
+
 # Node.js
 node_modules/
 client/node_modules/
@@ -43,12 +49,6 @@ Thumbs.db
 # OS/metadata
 *.orig
 *.rej
-
-# Local project data (do not commit large/binary project assets)
-.projects/
-projects/
-uploads/
-thumbnails/
 
 # Netlify/Vercel/etc
 .netlify/

@@ -28,11 +28,11 @@ export default function SettingsProcessesModal({
       <div className="flex-1 bg-black/40 animate-fadeIn" onClick={onClose} />
       {/* Right-docked drawer */}
       <aside
-        className="ml-auto h-screen w-full md:w-[480px] lg:w-[560px] xl:w-[640px] bg-white shadow-xl border-l flex flex-col animate-slideInRightFade"
+        className="ml-auto h-screen w-full md:w-[480px] lg:w-[560px] xl:w-[640px] bg-white shadow-xl flex flex-col animate-slideInRightFade"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header with tabs, New, and Close aligned in one row */}
-        <div className="flex items-center px-4 py-3 border-b">
+        <div className="flex items-center px-4 py-3">
           <div className="flex items-center gap-2">
             <button
               className={`px-3 py-1.5 rounded text-sm ${tab==='settings' ? 'bg-gray-900 text-white' : 'bg-gray-100 text-gray-800'}`}

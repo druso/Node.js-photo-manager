@@ -30,7 +30,8 @@ const PhotoGridView = ({ projectData, projectFolder, onPhotoSelect, selectedPhot
   const sizeToTargetH = { s: 120, m: 180, l: 240 };
   const targetRowH = sizeToTargetH[sizeLevel] ?? sizeToTargetH.s;
   const gap = sizeLevel === 's' ? 2 : 4; // px gap between items
-  const borderClass = 'border';
+  // Do not apply borders globally; show borders only when selected to avoid visual noise
+  const borderClass = 'border-0';
 
   // Observe container width (responsive, no CLS)
   useEffect(() => {
@@ -130,7 +131,7 @@ const PhotoGridView = ({ projectData, projectFolder, onPhotoSelect, selectedPhot
               return (
                 <div
                   key={`${photo.id}-${photo.filename}`}
-                  className={`relative bg-gray-200 overflow-hidden cursor-pointer group ${borderClass} border-2 ${isSelected ? 'border-blue-600 ring-2 ring-blue-400' : 'border-transparent ring-0'} transition-all flex-none`}
+                  className={`relative bg-gray-200 overflow-hidden cursor-pointer group ${isSelected ? 'border-2 border-blue-600 ring-2 ring-blue-400' : 'border-0 ring-0'} transition-all flex-none`}
                   style={{ width: `${w}px`, height: `${Math.round(h)}px`, marginRight }}
                   onClick={() => onToggleSelection(photo)}
                 >
@@ -164,15 +165,15 @@ const PhotoGridView = ({ projectData, projectFolder, onPhotoSelect, selectedPhot
                   rounded={false}
                 />
                 {isSelected && (
-                  <div className="absolute inset-0 bg-blue-500 bg-opacity-25 pointer-events-none"></div>
+                  <div className="absolute inset-0 bg-blue-500/25 pointer-events-none"></div>
                 )}
-                <div className="absolute inset-0 bg-black bg-opacity-40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity p-2">
+                <div className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity p-2">
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
                       onPhotoSelect(photo);
                     }}
-                    className="px-4 py-2 text-base font-semibold text-white bg-gray-900/90 rounded-md hover:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-white"
+                    className="px-4 py-2 text-base font-semibold text-white bg-gray-900/90 rounded-md hover:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-white cursor-pointer"
                   >
                     View
                   </button>

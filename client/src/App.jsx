@@ -1097,7 +1097,7 @@ function App() {
       {/* Sticky Header Container */}
       <div className="sticky top-0 z-20 bg-gray-50">
         {/* Header */}
-        <header className="bg-gray-100 shadow-sm border-b relative">
+        <header className="bg-gray-100 shadow-none border-b-0 relative">
           <div className="w-full px-4 sm:px-6 lg:px-8">
             <div className="flex justify-between items-center py-4">
               <h1 className="text-2xl font-bold text-gray-900">
@@ -1140,7 +1140,7 @@ function App() {
 
         {/* Project selector bar (replaces tabs) */}
         {selectedProject && (
-          <div className="bg-white border-b relative">
+          <div className="bg-white border-b-0 relative">
             <div className="w-full px-4 sm:px-6 lg:px-8">
               <div className="flex items-center justify-between py-2">
                 <div className="flex items-center">
@@ -1224,7 +1224,7 @@ function App() {
 
             {/* Unified Controls Bar (part of sticky header) */}
             {activeTab === 'view' && (
-              <div className="px-4 py-2 bg-white border-t">
+              <div className="px-4 py-2 bg-white border-t-0">
                 <div className="flex items-center justify-between gap-3">
                   {/* Left: Selection + recap */}
                   <div className="flex items-center gap-3">
@@ -1337,7 +1337,7 @@ function App() {
 
             {/* Filters Panel */}
             {!filtersCollapsed && (
-              <div className="bg-white border-t animate-slideDownFade">
+              <div className="bg-white border-t-0 animate-slideDownFade">
                 <UniversalFilter
                   projectData={projectData}
                   filters={activeFilters}
@@ -1386,7 +1386,7 @@ function App() {
             <div className="px-6 py-4 space-y-2">
               <p id="revert-modal-desc" className="text-sm text-gray-700">This will reset all keep flags to match the actual file availability in the project.</p>
             </div>
-            <div className="px-6 py-4 border-t flex justify-end gap-2">
+            <div className="px-6 py-4 border-t-0 flex justify-end gap-2">
               <button
                 type="button"
                 className="px-4 py-2 rounded-md bg-gray-200 text-gray-800 hover:bg-gray-300"
@@ -1489,7 +1489,7 @@ function App() {
                 <div className="text-xs">JPG: {pendingDeletes.jpg} · RAW: {pendingDeletes.raw}</div>
               </div>
             </div>
-            <div className="px-6 py-4 border-t flex justify-end gap-2">
+            <div className="px-6 py-4 border-t-0 flex justify-end gap-2">
               <button
                 type="button"
                 className="px-4 py-2 rounded-md bg-gray-200 text-gray-800 hover:bg-gray-300"
@@ -1577,7 +1577,7 @@ function App() {
                   />
                 </label>
               </div>
-              <div className="px-6 py-4 border-t flex justify-end gap-2">
+              <div className="px-6 py-4 border-t-0 flex justify-end gap-2">
                 <button
                   type="button"
                   className="px-4 py-2 rounded-md bg-gray-200 text-gray-800 hover:bg-gray-300"

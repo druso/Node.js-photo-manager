@@ -16,6 +16,20 @@ const PROJECT_ROOT = path.join(__dirname, '..', '..');
 const PROJECTS_DIR = path.join(PROJECT_ROOT, '.projects');
 fs.ensureDirSync(PROJECTS_DIR);
 
+// Only strip known photo extensions; do not strip arbitrary TLD-like suffixes (e.g., .com)
+function baseFromParam(name) {
+  try {
+    const ext = (path.extname(name) || '').toLowerCase().replace(/^\./, '');
+    const known = new Set(['jpg', 'jpeg', 'raw', 'arw', 'cr2', 'nef', 'dng']);
+    if (known.has(ext)) {
+      return path.basename(name, '.' + ext);
+    }
+    return name;
+  } catch (_) {
+    return name;
+  }
+}
+
 function getFileType(filename) {
   const ext = path.extname(filename).toLowerCase();
   if (ext === '.jpg' || ext === '.jpeg') return 'jpg';
@@ -77,7 +91,9 @@ function setNegativeCacheHeaders(res) {
 // Limit: 60 requests per minute per IP
 router.get('/:folder/thumbnail/:filename', rateLimit({ windowMs: 60 * 1000, max: 60 }), (req, res) => {
   const { folder, filename } = req.params;
-  const thumbPath = path.join(PROJECTS_DIR, folder, '.thumb', `${filename}.jpg`);
+  const base = baseFromParam(filename);
+  const thumbPath = path.join(PROJECTS_DIR, folder, '.thumb', `${base}.jpg`);
+  log.info('thumb_request', { folder, filename, base, thumbPath, exists: fs.existsSync(thumbPath) });
   if (fs.existsSync(thumbPath)) {
     const etag = computeETagForFile(thumbPath);
     if (etag && req.headers['if-none-match'] === etag) {
@@ -86,7 +102,24 @@ router.get('/:folder/thumbnail/:filename', rateLimit({ windowMs: 60 * 1000, max:
     }
     setCacheHeadersOn200(res);
     if (etag) res.setHeader('ETag', etag);
-    return res.sendFile(path.resolve(thumbPath));
+    try {
+      res.setHeader('Content-Type', 'image/jpeg');
+      const stream = fs.createReadStream(thumbPath);
+      stream.on('error', (err) => {
+        log.error('thumb_stream_error', { folder, filename, resolved: path.resolve(thumbPath), error: err && err.message, stack: err && err.stack });
+        if (!res.headersSent) {
+          setNegativeCacheHeaders(res);
+          res.status(500).end();
+        } else {
+          try { res.destroy(); } catch (_) {}
+        }
+      });
+      return stream.pipe(res);
+    } catch (err) {
+      log.error('thumb_stream_exception', { folder, filename, resolved: path.resolve(thumbPath), error: err && err.message, stack: err && err.stack });
+      setNegativeCacheHeaders(res);
+      return res.status(500).json({ error: 'Failed to stream thumbnail' });
+    }
   }
   setNegativeCacheHeaders(res);
   return res.status(404).json({ error: 'Thumbnail not found' });
@@ -96,7 +129,9 @@ router.get('/:folder/thumbnail/:filename', rateLimit({ windowMs: 60 * 1000, max:
 // Limit: 60 requests per minute per IP
 router.get('/:folder/preview/:filename', rateLimit({ windowMs: 60 * 1000, max: 60 }), (req, res) => {
   const { folder, filename } = req.params;
-  const prevPath = path.join(PROJECTS_DIR, folder, '.preview', `${filename}.jpg`);
+  const base = baseFromParam(filename);
+  const prevPath = path.join(PROJECTS_DIR, folder, '.preview', `${base}.jpg`);
+  log.info('preview_request', { folder, filename, base, prevPath, exists: fs.existsSync(prevPath) });
   if (fs.existsSync(prevPath)) {
     const etag = computeETagForFile(prevPath);
     if (etag && req.headers['if-none-match'] === etag) {
@@ -105,7 +140,24 @@ router.get('/:folder/preview/:filename', rateLimit({ windowMs: 60 * 1000, max: 6
     }
     setCacheHeadersOn200(res);
     if (etag) res.setHeader('ETag', etag);
-    return res.sendFile(path.resolve(prevPath));
+    try {
+      res.setHeader('Content-Type', 'image/jpeg');
+      const stream = fs.createReadStream(prevPath);
+      stream.on('error', (err) => {
+        log.error('preview_stream_error', { folder, filename, resolved: path.resolve(prevPath), error: err && err.message, stack: err && err.stack });
+        if (!res.headersSent) {
+          setNegativeCacheHeaders(res);
+          res.status(500).end();
+        } else {
+          try { res.destroy(); } catch (_) {}
+        }
+      });
+      return stream.pipe(res);
+    } catch (err) {
+      log.error('preview_stream_exception', { folder, filename, resolved: path.resolve(prevPath), error: err && err.message, stack: err && err.stack });
+      setNegativeCacheHeaders(res);
+      return res.status(500).json({ error: 'Failed to stream preview' });
+    }
   }
   setNegativeCacheHeaders(res);
   return res.status(404).json({ error: 'Preview not found' });
@@ -200,36 +252,58 @@ router.get('/:folder/files-zip/:filename', requireValidToken, async (req, res) =
   }
 });
 
-// GET /api/projects/:folder/image/:filename
+// GET /api/projects/:folder/image/:filename  -> streams full-res JPG (no RAW here)
 router.get('/:folder/image/:filename', async (req, res) => {
   const { folder, filename } = req.params;
   const projectPath = path.join(PROJECTS_DIR, folder);
 
   try {
     const project = projectsRepo.getByFolder(folder);
-    if (!project) return res.status(404).json({ error: 'Project not found' });
-    const photoEntry = photosRepo.getByProjectAndFilename(project.id, filename);
-    if (!photoEntry) return res.status(404).json({ error: 'Photo not found' });
+    if (!project) { setNegativeCacheHeaders(res); return res.status(404).json({ error: 'Project not found' }); }
+    const base = baseFromParam(filename);
+    const entry = photosRepo.getByProjectAndFilename(project.id, base);
+    if (!entry) { setNegativeCacheHeaders(res); return res.status(404).json({ error: 'Photo not found' }); }
 
-    let imagePath = null;
+    if (!entry.jpg_available) {
+      // Do not attempt to stream RAW here; viewer should fallback to preview for RAW-only
+      log.info('image_request_no_jpg', { folder, filename, base });
+      setNegativeCacheHeaders(res);
+      return res.status(404).json({ error: 'Full-res JPG not available' });
+    }
+
     const files = await fs.readdir(projectPath);
+    const jpgFile = files.find(f => path.parse(f).name === base && getFileType(f) === 'jpg');
+    if (!jpgFile) { setNegativeCacheHeaders(res); return res.status(404).json({ error: 'JPG file not found on disk' }); }
+    const jpgPath = path.join(projectPath, jpgFile);
 
-    if (photoEntry.jpg_available) {
-      const jpgFile = files.find(f => path.parse(f).name === filename && getFileType(f) === 'jpg');
-      if (jpgFile) imagePath = path.join(projectPath, jpgFile);
+    const etag = computeETagForFile(jpgPath);
+    if (etag && req.headers['if-none-match'] === etag) {
+      setCacheHeadersOn200(res);
+      return res.status(304).end();
     }
-
-    if (!imagePath && photoEntry.raw_available) {
-      const rawFile = files.find(f => path.parse(f).name === filename && getFileType(f) === 'raw');
-      if (rawFile) imagePath = path.join(projectPath, rawFile);
+    setCacheHeadersOn200(res);
+    if (etag) res.setHeader('ETag', etag);
+    try {
+      res.setHeader('Content-Type', 'image/jpeg');
+      const stream = fs.createReadStream(jpgPath);
+      stream.on('error', (err) => {
+        log.error('image_stream_error', { folder, filename, base, resolved: path.resolve(jpgPath), error: err && err.message, stack: err && err.stack });
+        if (!res.headersSent) {
+          setNegativeCacheHeaders(res);
+          res.status(500).end();
+        } else {
+          try { res.destroy(); } catch (_) {}
+        }
+      });
+      return stream.pipe(res);
+    } catch (err) {
+      log.error('image_stream_exception', { folder, filename, base, resolved: path.resolve(jpgPath), error: err && err.message, stack: err && err.stack });
+      setNegativeCacheHeaders(res);
+      return res.status(500).json({ error: 'Failed to stream image' });
     }
-
-    if (imagePath && fs.existsSync(imagePath)) {
-      return res.sendFile(path.resolve(imagePath));
-    }
-    return res.status(404).json({ error: 'Image file not found on disk' });
   } catch (err) {
     log.error('serve_image_error', { project_folder: folder, filename, error: err && err.message, stack: err && err.stack });
+    setNegativeCacheHeaders(res);
     return res.status(500).json({ error: 'Failed to serve image' });
   }
 });

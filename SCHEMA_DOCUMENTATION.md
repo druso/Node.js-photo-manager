@@ -132,6 +132,26 @@ Scheduling: `server/services/scheduler.js` triggers a unified hourly `maintenanc
 6. Crash recovery: stale `running` (expired `heartbeat_at`) are requeued automatically by the loop.
 7. SSE events are emitted on state transitions and significant progress.
 
+#### Example SSE item payload
+
+The jobs stream (`GET /api/jobs/stream`) emits item-level updates while derivatives are generated and other tasks progress. A typical payload:
+
+```json
+{
+  "type": "item",
+  "project_folder": "p12",
+  "filename": "IMG_0001.CR2",
+  "statuses": {
+    "thumb": "done",
+    "preview": "processing"
+  }
+}
+```
+
+- `type: "item"` marks a per-asset update.
+- `project_folder` and `filename` uniquely identify the asset.
+- `statuses` conveys derivative states; the client updates `projectData.photos` in-place and preserves scroll/viewer state.
+
 #### Typical Queries
 
 List latest jobs for a project:
