@@ -60,6 +60,7 @@
 - Served without signed tokens (only originals require signatures)
 - Client no longer probes pending assets; availability is driven by SSE item-level updates with light fallback polling
 - Lightweight rate limits and short-lived caching headers implemented to mitigate abuse and bandwidth spikes; ETag/If-None-Match supported with 304 responses
+- Implementation detail: endpoints use streaming (`fs.createReadStream`) instead of `res.sendFile` to reduce edge-case 404s. Security exposure unchanged; paths remain confined under `.projects/<folder>/.thumb|.preview`.
 
 **Commit/Revert Endpoints**:
 - Commit is destructive: moves files to `.trash` and updates availability; ensure intent is authenticated/authorized in future multi-user mode.
@@ -68,6 +69,8 @@
 
 **Realtime (SSE)**:
 - `GET /api/jobs/stream` hardened with per‑IP connection cap (default 2), heartbeat every 25s, and idle timeout (default 5 min). Env overrides: `SSE_MAX_CONN_PER_IP`, `SSE_IDLE_TIMEOUT_MS`.
+  - Client enforcement: the frontend maintains a single shared `EventSource` (see `client/src/api/jobsApi.js → openJobStream()`) persisted on `globalThis/window` to survive Vite HMR. This reduces parallel connections and helps avoid 429s while keeping server caps unchanged.
+  - Dev guidance: close duplicate tabs and hard‑refresh if transient 429s appear during hot reloads; optionally raise `SSE_MAX_CONN_PER_IP` locally.
 
 **Monitoring & Logging**:
 - Logging v2: All backend routes/services/workers emit structured JSON logs via `server/utils/logger2.js` with levels (`error|warn|info|debug`).
@@ -86,6 +89,16 @@
 
 **Monitoring**:
 - Structured logging now in place across backend (see Security Overview). Next steps focus on surfacing security/audit events and alerting.
+
+---
+
+## Weekly Security Review Summary (2025-08-20 UTC)
+
+- npm ci: succeeded
+- npm audit --audit-level=high: 0 vulnerabilities
+- npm outdated: no outdated packages reported
+
+All verified protections (CORS allowlist, SSE per‑IP caps + idle timeout, destructive endpoint rate limits, asset caching/ETag + throttling) are reflected in Security Overview. No immediate remediation required beyond existing Suggested Interventions.
 
 ---
 
@@ -111,6 +124,11 @@
     ```
 - Production: Ensure hosts run Node 22.x. Lock Node version in container images or provisioning scripts.
 - Reminder: If `REQUIRE_SIGNED_DOWNLOADS` is true (default), set a strong `DOWNLOAD_SECRET`; the server will exit in production if the default secret is used.
+
+### Config merge persistence (audit note)
+
+- Behavior: On boot and on `POST /api/config`, the server merges any missing keys from `config.default.json` into `config.json` and persists them (see `server/services/config.js`).
+- Impact: Over time, `config.json` may receive new keys as defaults evolve. This is expected and should be treated as benign additions in audits/backups.
 
 ### Container Runtime (Docker) Notes
 
@@ -145,85 +163,6 @@ This ensures all functionality receives security review before deployment.
 
 ---
 
-## New Development Notes (Pending Security Review)
+## Recent Development Notes
 
-1) SSE Item-Level Updates for Derivatives
-
-- Change: Backend now emits item-level SSE messages from `derivativesWorker` of the form `{ type: 'item', project_folder, filename, thumbnail_status, preview_status, updated_at }` via `GET /api/jobs/stream`.
-- Rationale: Enables granular UI updates without full grid refreshes and eliminates client-side asset probing.
-- Security considerations:
-  - CORS: Ensure `GET /api/jobs/stream` respects production CORS allowlist.
-  - Exposure: Messages contain only non-sensitive status metadata (no PII/secrets). Confirm no internal paths or secrets are included.
-  - Abuse: SSE is a single long-lived connection; consider per-IP connection limits and timeouts.
-  - Status: Reviewed. Implementation in `server/routes/jobs.js` emits minimal metadata (no secrets/paths). Action required: enforce CORS allowlist and add per‑IP caps + idle timeout (see Medium Priority 3b).
-
-2) Per-Item Removal Events + Optimistic Hide on Commit
-
-- Change: Backend emits `item_removed` during `manifest_cleaning`; client performs optimistic hide on Commit (marks assets missing, drops rows with no assets) and reconciles via SSE without a hard refresh.
-- Benefit: Eliminates transient 404s and UI flicker; maintains scroll/selection and reduces network volume.
-- Security considerations:
-  - CORS: Ensure SSE stream adheres to strict allowlist in production.
-  - Rate limiting: Light limits on commit/revert endpoints to prevent abuse of destructive ops (already in Suggested Interventions #3).
-  - SSE connection policy: cap concurrent SSE streams per IP and set idle timeouts to mitigate resource pinning.
-  - Status: Reviewed. No sensitive data exposure detected; endpoints exist without rate limits. Action required: add rate limits to commit/revert/delete/rename and enforce SSE connection policy.
-
-3) Input Validation (Analyze/Keep)
-
-- Change: Added explicit validation for `POST /api/projects/:folder/analyze-files` (requires `files: []`) and `PUT /api/projects/:folder/keep` (requires `updates: []`). Keep endpoint now normalizes filename with or without extension.
-- Security considerations: Reduces 500s from malformed requests; confines errors to 400/404 paths and limits information leakage. No change in authorization surface.
-
-3) Removal of Client Probing for Thumbnails
-
-- Change: Client no longer probes thumbnail URLs while pending; uses SSE events + light fallback polling.
-- Benefit: Reduces 404 request volume and potential amplification vectors.
-- Security considerations:
-  - Asset endpoints still should retain light rate limiting and standard caching headers as above.
-  - Status: Reviewed. Current `assets.js` does not set caching headers/ETag nor rate limits. Action required: implement lightweight throttling and `Cache-Control`/`ETag` for 200; short negative caching for 404 (see Medium Priority #6).
-
-4) Worker Loop Configuration Warnings
-
-- Change: Added runtime warnings for misconfigurations that could starve normal lane.
-- Security considerations: Logging only; no impact on exposure.
-
-Action requested (Security Team):
-
-- Review SSE endpoint CORS/rate limiting posture and document any required production settings.
-- Re-evaluate the need/severity of asset endpoint throttling given probing removal; keep minimal rate limits and caching guidance.
-
-4) Filter Panel Footer Buttons (Close/Reset)
-
-- Change: Added non-destructive UI controls to the filters panel (`Close` to collapse the panel, `Reset` to clear active filters; disabled when no filters are active).
-- Rationale: Improves UX and mobile ergonomics; no backend interaction.
-- Security considerations: UI-only; no new endpoints, no changes to request surface. No additional review required.
-
-5) Filters Layout Reorder + Popover Date Picker
-
-- Change: Reordered filters within `UniversalFilter.jsx` to improve scanability: Row 0 text search (full width); Row 1 date taken (new dual‑month popover with presets) + orientation; Row 2 file types available + file types to keep. Replaced separate From/To inputs with a single popover range picker component (`DualMonthRangePopover.jsx`).
-- Rationale: More intuitive filtering and faster selection.
-- Security considerations: UI-only; no backend changes or new endpoints. No expansion of attack surface. No additional review required.
-
-6) Viewer Delete Behavior (No Auto-Advance)
-
-- Change: The photo viewer no longer auto-advances when the user plans a delete (sets keep none). The current index is clamped when the filtered photo list changes to avoid premature viewer close.
-- Rationale: Prevents double-skip when filters hide deleted items and eliminates transient UI errors from rapid close/reopen.
-- Security considerations: UI-only; no new endpoints, no change to request patterns or data exposure. No additional review required.
-
-7) Project Deletion Converted to High-Priority Task (Soft Delete)
-
-- Change: `DELETE /api/projects/:folder` now performs a soft-delete (`projects.status='canceled'`, `archived_at` set) and enqueues a high‑priority `project_delete` task (steps: stop processes, delete files, cleanup DB). Frontend hides canceled projects immediately.
-- Benefits: Faster UX, consistent job pipeline handling, orderly cleanup, cancellation of conflicting jobs.
-- Security considerations:
-  - Rate limit the DELETE endpoint (see Medium Priority #3) since it triggers destructive operations.
-  - Ensure only authorized users can delete (future auth); log audit entries (who/when/id/folder).
-  - Worker idempotency: file deletion and DB cleanup must be safe on retries; current implementation is idempotent by checking project status and tolerating missing tables/paths.
-  - Priority lane impact: high‑priority deletion jobs preempt normal processing; confirm lane capacity cannot starve other critical maintenance (keep at least 1 slot for maintenance).
-
-8) Scheduler Change: Archived Maintenance Skip + Project Scavenge Task
-
-- Change: Scheduler now runs `maintenance` hourly only for active (non‑archived) projects and runs a separate `project_scavenge` task hourly for archived projects to remove leftover `.projects/<project_folder>/` folders.
-- Rationale: Prevents maintenance from touching archived projects and ensures eventual cleanup if deletion file step was skipped or failed.
-- Security considerations:
-  - Destructive file ops: `project_scavenge` removes directories; ensure it only operates when `projects.status==='canceled'` and path is confined under repo `.projects/` (it is; uses `path.join(__dirname, '../../..', '.projects', project_folder)`).
-  - Idempotency: tolerate missing folders; errors bubble for retry; no DB mutation beyond reads.
-  - Logging/Audit: structured logs `scavenge_*` added; include `project_id` and `project_folder`.
-  - Lane impact: step priority 100; verify `pipeline.priority_lane_slots` leaves capacity for other high‑priority tasks to avoid starvation.
+All items from the previous cycle were assessed on 2025-08-20 UTC. Notes have been incorporated into this document (Security Overview and Suggested Interventions). No pending items remain here.
