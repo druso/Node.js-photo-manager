@@ -8,27 +8,31 @@ const { rateLimit } = require('../utils/rateLimit');
 const { signPayload, verifyToken } = require('../utils/signedUrl');
 const projectsRepo = require('../services/repositories/projectsRepo');
 const photosRepo = require('../services/repositories/photosRepo');
+const { baseFromParam, resolveOriginalPath, guessContentTypeFromExt } = require('../utils/assetPaths');
+const { getConfig } = require('../services/config');
 
 const router = express.Router();
+
+// Configurable rate limits (per-IP, per-process). Allow env overrides for quick dev tweaks.
+function readLimits() {
+  try {
+    const cfg = getConfig();
+    const rl = (cfg && cfg.rate_limits) || {};
+    return {
+      thumbnailPerMinute: Number(process.env.THUMBNAIL_RATELIMIT_MAX || rl.thumbnail_per_minute || 600),
+      previewPerMinute: Number(process.env.PREVIEW_RATELIMIT_MAX || rl.preview_per_minute || 600),
+      imagePerMinute: Number(process.env.IMAGE_RATELIMIT_MAX || rl.image_per_minute || 120),
+      zipPerMinute: Number(process.env.ZIP_RATELIMIT_MAX || rl.zip_per_minute || 30),
+    };
+  } catch (_) {
+    return { thumbnailPerMinute: 600, previewPerMinute: 600, imagePerMinute: 120, zipPerMinute: 30 };
+  }
+}
+const RATE_LIMITS = readLimits();
 
 // Paths
 const PROJECT_ROOT = path.join(__dirname, '..', '..');
 const PROJECTS_DIR = path.join(PROJECT_ROOT, '.projects');
-fs.ensureDirSync(PROJECTS_DIR);
-
-// Only strip known photo extensions; do not strip arbitrary TLD-like suffixes (e.g., .com)
-function baseFromParam(name) {
-  try {
-    const ext = (path.extname(name) || '').toLowerCase().replace(/^\./, '');
-    const known = new Set(['jpg', 'jpeg', 'raw', 'arw', 'cr2', 'nef', 'dng']);
-    if (known.has(ext)) {
-      return path.basename(name, '.' + ext);
-    }
-    return name;
-  } catch (_) {
-    return name;
-  }
-}
 
 function getFileType(filename) {
   const ext = path.extname(filename).toLowerCase();
@@ -88,8 +92,8 @@ function setNegativeCacheHeaders(res) {
 }
 
 // GET /api/projects/:folder/thumbnail/:filename
-// Limit: 60 requests per minute per IP
-router.get('/:folder/thumbnail/:filename', rateLimit({ windowMs: 60 * 1000, max: 60 }), (req, res) => {
+// Limit: configurable (default 600/min/IP)
+router.get('/:folder/thumbnail/:filename', rateLimit({ windowMs: 60 * 1000, max: RATE_LIMITS.thumbnailPerMinute }), (req, res) => {
   const { folder, filename } = req.params;
   const base = baseFromParam(filename);
   const thumbPath = path.join(PROJECTS_DIR, folder, '.thumb', `${base}.jpg`);
@@ -126,8 +130,8 @@ router.get('/:folder/thumbnail/:filename', rateLimit({ windowMs: 60 * 1000, max:
 });
 
 // GET /api/projects/:folder/preview/:filename
-// Limit: 60 requests per minute per IP
-router.get('/:folder/preview/:filename', rateLimit({ windowMs: 60 * 1000, max: 60 }), (req, res) => {
+// Limit: configurable (default 600/min/IP)
+router.get('/:folder/preview/:filename', rateLimit({ windowMs: 60 * 1000, max: RATE_LIMITS.previewPerMinute }), (req, res) => {
   const { folder, filename } = req.params;
   const base = baseFromParam(filename);
   const prevPath = path.join(PROJECTS_DIR, folder, '.preview', `${base}.jpg`);
@@ -164,32 +168,51 @@ router.get('/:folder/preview/:filename', rateLimit({ windowMs: 60 * 1000, max: 6
 });
 
 // GET /api/projects/:folder/file/:type/:filename -> force specific type (raw|jpg)
-router.get('/:folder/file/:type/:filename', requireValidToken, async (req, res) => {
+router.get('/:folder/file/:type/:filename', rateLimit({ windowMs: 60 * 1000, max: RATE_LIMITS.imagePerMinute }), requireValidToken, async (req, res) => {
   const { folder, type } = req.params;
   const filenameParam = req.params.filename;
   const projectPath = path.join(PROJECTS_DIR, folder);
   try {
     const project = projectsRepo.getByFolder(folder);
     if (!project) return res.status(404).json({ error: 'Project not found' });
-    const base = path.parse(filenameParam).name; // normalize
-    const entry = photosRepo.getByProjectAndFilename(project.id, base);
+    const base = baseFromParam(filenameParam); // normalize only for disk paths
+    const entry = photosRepo.getByProjectAndFilename(project.id, filenameParam); // lookup uses full filename
     if (!entry) return res.status(404).json({ error: 'Photo not found' });
 
-    const files = await fs.readdir(projectPath);
-    let chosenFile = null;
-    if (type === 'jpg') {
-      const jpg = files.find(f => path.parse(f).name === base && getFileType(f) === 'jpg');
-      if (jpg) chosenFile = path.join(projectPath, jpg);
-    } else if (type === 'raw') {
-      const raw = files.find(f => path.parse(f).name === base && getFileType(f) === 'raw');
-      if (raw) chosenFile = path.join(projectPath, raw);
-    } else {
+    if (!['jpg', 'raw'].includes(type)) {
       return res.status(400).json({ error: 'Unsupported type. Use raw or jpg.' });
     }
 
+    const chosenFile = resolveOriginalPath({ projectPath, base, prefer: type, entry });
     if (!chosenFile || !fs.existsSync(chosenFile)) return res.status(404).json({ error: 'Requested file not found' });
+
+    // Stream with headers
+    const etag = computeETagForFile(chosenFile);
+    if (etag && req.headers['if-none-match'] === etag) {
+      setCacheHeadersOn200(res);
+      return res.status(304).end();
+    }
+    setCacheHeadersOn200(res);
+    if (etag) res.setHeader('ETag', etag);
+    res.setHeader('Content-Type', guessContentTypeFromExt(chosenFile));
     res.setHeader('Content-Disposition', `attachment; filename="${path.basename(chosenFile)}"`);
-    return res.sendFile(path.resolve(chosenFile));
+    try {
+      const stream = fs.createReadStream(chosenFile);
+      stream.on('error', (err) => {
+        log.error('original_stream_error', { project_folder: folder, filename: filenameParam, type, resolved: path.resolve(chosenFile), error: err && err.message, stack: err && err.stack });
+        if (!res.headersSent) {
+          setNegativeCacheHeaders(res);
+          res.status(500).end();
+        } else {
+          try { res.destroy(); } catch (_) {}
+        }
+      });
+      return stream.pipe(res);
+    } catch (err) {
+      log.error('original_stream_exception', { project_folder: folder, filename: filenameParam, type, resolved: path.resolve(chosenFile), error: err && err.message, stack: err && err.stack });
+      setNegativeCacheHeaders(res);
+      return res.status(500).json({ error: 'Failed to stream file' });
+    }
   } catch (err) {
     log.error('serve_specific_file_error', { project_folder: folder, filename: filenameParam, type, error: err && err.message, stack: err && err.stack });
     return res.status(500).json({ error: 'Failed to serve file' });
@@ -208,8 +231,8 @@ router.post('/:folder/download-url', express.json(), async (req, res) => {
     const projectPath = path.join(PROJECTS_DIR, folder);
     const project = projectsRepo.getByFolder(folder);
     if (!project) return res.status(404).json({ error: 'Project not found' });
-    const base = path.parse(filename).name;
-    const entry = photosRepo.getByProjectAndFilename(project.id, base);
+    const base = baseFromParam(filename);
+    const entry = photosRepo.getByProjectAndFilename(project.id, filename);
     if (!entry) return res.status(404).json({ error: 'Photo not found' });
     const url = buildSignedUrl(folder, type, filename, typeof ttlMs === 'number' ? ttlMs : undefined);
     return res.json({ url });
@@ -220,19 +243,20 @@ router.post('/:folder/download-url', express.json(), async (req, res) => {
 });
 
 // GET /api/projects/:folder/files-zip/:filename -> zip all related files (jpg + raw if present)
-router.get('/:folder/files-zip/:filename', requireValidToken, async (req, res) => {
+router.get('/:folder/files-zip/:filename', rateLimit({ windowMs: 60 * 1000, max: RATE_LIMITS.zipPerMinute }), requireValidToken, async (req, res) => {
   const { folder } = req.params;
   const filenameParam = req.params.filename;
   const projectPath = path.join(PROJECTS_DIR, folder);
   try {
     const project = projectsRepo.getByFolder(folder);
     if (!project) return res.status(404).json({ error: 'Project not found' });
-    const base = path.parse(filenameParam).name; // normalize
-    const entry = photosRepo.getByProjectAndFilename(project.id, base);
+    const base = baseFromParam(filenameParam); // normalize only for disk paths
+    const entry = photosRepo.getByProjectAndFilename(project.id, filenameParam); // lookup uses full filename
     if (!entry) return res.status(404).json({ error: 'Photo not found' });
 
-    const files = await fs.readdir(projectPath);
-    const candidates = files.filter(f => path.parse(f).name === base && ['jpg', 'raw'].includes(getFileType(f)));
+    const jpgPath = resolveOriginalPath({ projectPath, base, prefer: 'jpg', entry });
+    const rawPath = resolveOriginalPath({ projectPath, base, prefer: 'raw', entry });
+    const candidates = [jpgPath, rawPath].filter(Boolean);
     if (!candidates.length) return res.status(404).json({ error: 'No related files found to zip' });
 
     // Lazy-require archiver to avoid cost if endpoint unused
@@ -242,8 +266,8 @@ router.get('/:folder/files-zip/:filename', requireValidToken, async (req, res) =
     const archive = archiver('zip', { zlib: { level: 9 } });
     archive.on('error', (err) => { throw err; });
     archive.pipe(res);
-    for (const f of candidates) {
-      archive.file(path.join(projectPath, f), { name: f });
+    for (const filePath of candidates) {
+      archive.file(filePath, { name: path.basename(filePath) });
     }
     archive.finalize();
   } catch (err) {
@@ -253,7 +277,7 @@ router.get('/:folder/files-zip/:filename', requireValidToken, async (req, res) =
 });
 
 // GET /api/projects/:folder/image/:filename  -> streams full-res JPG (no RAW here)
-router.get('/:folder/image/:filename', async (req, res) => {
+router.get('/:folder/image/:filename', rateLimit({ windowMs: 60 * 1000, max: RATE_LIMITS.imagePerMinute }), async (req, res) => {
   const { folder, filename } = req.params;
   const projectPath = path.join(PROJECTS_DIR, folder);
 
@@ -261,7 +285,7 @@ router.get('/:folder/image/:filename', async (req, res) => {
     const project = projectsRepo.getByFolder(folder);
     if (!project) { setNegativeCacheHeaders(res); return res.status(404).json({ error: 'Project not found' }); }
     const base = baseFromParam(filename);
-    const entry = photosRepo.getByProjectAndFilename(project.id, base);
+    const entry = photosRepo.getByProjectAndFilename(project.id, filename); // lookup uses full filename
     if (!entry) { setNegativeCacheHeaders(res); return res.status(404).json({ error: 'Photo not found' }); }
 
     if (!entry.jpg_available) {
@@ -271,10 +295,8 @@ router.get('/:folder/image/:filename', async (req, res) => {
       return res.status(404).json({ error: 'Full-res JPG not available' });
     }
 
-    const files = await fs.readdir(projectPath);
-    const jpgFile = files.find(f => path.parse(f).name === base && getFileType(f) === 'jpg');
-    if (!jpgFile) { setNegativeCacheHeaders(res); return res.status(404).json({ error: 'JPG file not found on disk' }); }
-    const jpgPath = path.join(projectPath, jpgFile);
+    const jpgPath = resolveOriginalPath({ projectPath, base, prefer: 'jpg', entry });
+    if (!jpgPath) { setNegativeCacheHeaders(res); return res.status(404).json({ error: 'JPG file not found on disk' }); }
 
     const etag = computeETagForFile(jpgPath);
     if (etag && req.headers['if-none-match'] === etag) {

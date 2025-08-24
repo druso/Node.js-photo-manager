@@ -78,7 +78,7 @@ The backend is a Node.js application that exposes a RESTful API for the client.
 *   **API Routes (`server/routes/`)**: This directory defines all the API endpoints. Key files include:
     *   `uploads.js`: Handles file uploads with configurable file type filtering
     *   `projects.js`: Manages project creation, rename, and data retrieval
-    *   `assets.js`: Serves photo assets (previews, thumbnails) with signed URLs. Thumbnails/previews are streamed via `fs.createReadStream` (not `res.sendFile`) and include `Cache-Control` and `ETag` headers for 304 support.
+    *   `assets.js`: Serves photo assets (thumbnails, previews, originals, zip) with signed URLs for originals. All asset responses stream via `fs.createReadStream` and include `Cache-Control` and `ETag` headers enabling 304 revalidation. Originals and zip files are served with rate limiting to prevent abuse.
     *   `jobs.js`: Provides endpoints for the worker pipeline and Server-Sent Events
     *   `tags.js`: Manages photo tagging functionality
     *   `keep.js`: Handles keep/discard decisions for RAW vs JPG files
@@ -172,7 +172,14 @@ Refer to `SCHEMA_DOCUMENTATION.md` for detailed table structures and relationshi
 *   **Signed URLs**: Secure access to photo assets with expiration
 *   **File Type Validation**: Centralized server-side filtering via `server/utils/acceptance.js` (config-driven)
 *   **CORS Protection**: Configurable cross-origin access controls
-*   **Rate Limiting**: Destructive endpoints (project rename/delete, commit/revert) capped at 10 requests per 5 minutes per IP
+*   **Rate Limiting**:
+    - Destructive endpoints (project rename/delete, commit/revert): 10 requests per 5 minutes per IP
+    - Asset endpoints (configurable via `config.json → rate_limits`, with env overrides):
+      - Thumbnails: default 600 rpm/IP (env: `THUMBNAIL_RATELIMIT_MAX`)
+      - Previews: default 600 rpm/IP (env: `PREVIEW_RATELIMIT_MAX`)
+      - Originals (`GET /file/:type/:filename`, `GET /image/:filename`): default 120 rpm/IP (env: `IMAGE_RATELIMIT_MAX`)
+      - ZIP (`GET /files-zip/:filename`): default 30 rpm/IP (env: `ZIP_RATELIMIT_MAX`)
+    - Implementation in `server/routes/assets.js`; defaults defined in `config.default.json`.
 
 Refer to `SECURITY.md` for detailed security implementation and best practices.
 
@@ -400,7 +407,8 @@ The backend exposes a comprehensive REST API for all frontend operations:
     
     Notes:
     - `:filename` may include non-image suffixes (e.g., `.com`). The server strips only known image/raw extensions and maps to `<base>.jpg` under `.thumb/` or `.preview/`.
-    - Thumbnails and previews are streamed using `fs.createReadStream` with `Content-Type: image/jpeg`. Responses include `Cache-Control` and `ETag`; clients may receive 304 on revalidation.
+    - All assets (thumbnails, previews, originals, zip) are streamed using `fs.createReadStream`. Responses include short-lived `Cache-Control` and `ETag`; clients may receive 304 on revalidation.
+    - Asset serving avoids directory scans for originals/zip by deterministically resolving candidate filenames (DB-assisted) instead of calling `readdir`.
 *   **Jobs**: `GET/POST /api/projects/:folder/jobs` - Background job management
 *   **Tags**: `PUT /api/projects/:folder/tags` - Batch tag updates
 *   **Keep**: `PUT /api/projects/:folder/keep` - RAW/JPG keep decisions (intent)

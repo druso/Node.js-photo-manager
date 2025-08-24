@@ -33,6 +33,12 @@
     "thumbnail": { "maxDim": 200, "quality": 80 },
     "preview": { "maxDim": 6000, "quality": 80 }
   },
+  "rate_limits": {
+    "thumbnail_per_minute": 600,
+    "preview_per_minute": 600,
+    "image_per_minute": 120,
+    "zip_per_minute": 30
+  },
   "pipeline": {
     "max_parallel_jobs": 2,
     "max_parallel_items_per_job": 1,

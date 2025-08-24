@@ -56,11 +56,13 @@
 - Filename sanitization
 - Atomic database + file transactions
 
-**Assets (Thumbnails/Previews)**:
+**Assets (Thumbnails/Previews/Originals/ZIP)**:
 - Served without signed tokens (only originals require signatures)
 - Client no longer probes pending assets; availability is driven by SSE item-level updates with light fallback polling
 - Lightweight rate limits and short-lived caching headers implemented to mitigate abuse and bandwidth spikes; ETag/If-None-Match supported with 304 responses
-- Implementation detail: endpoints use streaming (`fs.createReadStream`) instead of `res.sendFile` to reduce edge-case 404s. Security exposure unchanged; paths remain confined under `.projects/<folder>/.thumb|.preview`.
+- Implementation detail: all asset endpoints (thumbnails, previews, originals, zip) use streaming (`fs.createReadStream`) instead of `res.sendFile`, with `Cache-Control` and `ETag` headers for revalidation.
+- Rate limits are now configurable via `config.json → rate_limits` with environment overrides; current defaults (per IP): Thumbnails 600 rpm, Previews 600 rpm, Originals 120 rpm, ZIP 30 rpm. See `server/routes/assets.js` and `config.default.json`.
+- Env overrides for local stress testing: `THUMBNAIL_RATELIMIT_MAX`, `PREVIEW_RATELIMIT_MAX`, `IMAGE_RATELIMIT_MAX`, `ZIP_RATELIMIT_MAX`.
 
 **Commit/Revert Endpoints**:
 - Commit is destructive: moves files to `.trash` and updates availability; ensure intent is authenticated/authorized in future multi-user mode.

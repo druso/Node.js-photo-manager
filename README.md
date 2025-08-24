@@ -119,7 +119,7 @@ cd client && npm run dev
 - File acceptance is centralized in `server/utils/acceptance.js` and driven by `config.json` → `uploader.accepted_files` (extensions, mime_prefixes)
 - **`DOWNLOAD_SECRET`** - HMAC secret for signed URLs (change in production)
 - **`ALLOWED_ORIGINS`** - Comma-separated list of allowed CORS origins (e.g. `http://localhost:3000,https://app.example.com`).
-  - Dev defaults include: `http://localhost:{5173,3000,5000}` and `http://127.0.0.1:{5173,3000,5000}` (see `server.js`).
+- **`THUMBNAIL_RATELIMIT_MAX`**, **`PREVIEW_RATELIMIT_MAX`**, **`IMAGE_RATELIMIT_MAX`**, **`ZIP_RATELIMIT_MAX`** - Asset rate limits (per IP per minute); see `config.json` → `rate_limits` for defaults.
 
 ### Logging
 
@@ -129,6 +129,15 @@ cd client && npm run dev
 - SSE limits for DoS hardening:
   - **`SSE_MAX_CONN_PER_IP`** (default: `2`)
   - **`SSE_IDLE_TIMEOUT_MS`** (default set in code)
+
+#### Asset Rate Limits (per IP per minute)
+
+- These have config defaults in `config.json → rate_limits` and can be overridden via env:
+  - `THUMBNAIL_RATELIMIT_MAX` (default 600)
+  - `PREVIEW_RATELIMIT_MAX` (default 600)
+  - `IMAGE_RATELIMIT_MAX` (default 120) — applies to originals endpoints
+  - `ZIP_RATELIMIT_MAX` (default 30)
+  - See implementation in `server/routes/assets.js` and defaults in `config.default.json`.
 
 ### Dev tips for SSE 429s
 

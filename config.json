@@ -64,5 +64,11 @@
     "max_attempts_default": 3,
     "priority_lane_slots": 1,
     "priority_threshold": 90
+  },
+  "rate_limits": {
+    "thumbnail_per_minute": 600,
+    "preview_per_minute": 600,
+    "image_per_minute": 120,
+    "zip_per_minute": 30
   }
 }
