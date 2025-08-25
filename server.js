@@ -31,9 +31,11 @@ app.use(express.static('public'));
 // Dev-friendly defaults include common Vite/CRA ports and localhost/127.0.0.1 variants.
 const rawAllowed = process.env.ALLOWED_ORIGINS || [
   'http://localhost:3000',
+  'http://localhost:3001',
   'http://localhost:5173',
   'http://localhost:5000',
   'http://127.0.0.1:3000',
+  'http://127.0.0.1:3001',
   'http://127.0.0.1:5173',
   'http://127.0.0.1:5000'
 ].join(',');

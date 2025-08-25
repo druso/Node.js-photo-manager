@@ -12,6 +12,7 @@ const jobsRepo = require('../services/repositories/jobsRepo');
 const tasksOrchestrator = require('../services/tasksOrchestrator');
 const { isCanonicalProjectFolder } = require('../utils/projects');
 const { rateLimit } = require('../utils/rateLimit');
+const { getConfig } = require('../services/config');
 
 // Resolve project directories relative to project root
 // __dirname => <projectRoot>/server/routes
@@ -91,7 +92,7 @@ router.post('/', async (req, res) => {
       return res.status(400).json({ error: 'Project name is required' });
     }
 
-    // Fresh-start creation: derive folder as <slug(name)>--p<id> in repo layer
+    // Fresh-start creation: repository assigns canonical folder as p<id>
     const created = projectsRepo.createProject({ project_name: name });
 
     // Create on-disk directories for the final canonical folder
@@ -163,6 +164,57 @@ router.get('/:folder', async (req, res) => {
   } catch (err) {
     log.error('project_get_failed', { error: err && err.message, stack: err && err.stack, project_folder: req.params && req.params.folder });
     res.status(500).json({ error: 'Failed to get project details' });
+  }
+});
+
+// GET /api/projects/:folder/photos - paginated photos for a project
+// Supports query: ?limit=250&cursor=0&sort=filename|date_time_original|created_at|updated_at&dir=ASC|DESC
+router.get('/:folder/photos', async (req, res) => {
+  try {
+    const { folder } = req.params;
+    if (!isCanonicalProjectFolder(folder)) {
+      return res.status(400).json({ error: 'Invalid project folder format' });
+    }
+    const project = projectsRepo.getByFolder(folder);
+    if (!project || project.status === 'canceled') {
+      return res.status(404).json({ error: 'Project not found' });
+    }
+
+    const cfg = getConfig();
+    const defaultPageSize = Number(cfg?.photo_grid?.page_size) > 0 ? Number(cfg.photo_grid.page_size) : 250;
+
+    const q = req.query || {};
+    const limitRaw = q.limit != null ? Number(q.limit) : defaultPageSize;
+    const limit = Number.isFinite(limitRaw) && limitRaw > 0 ? Math.min(limitRaw, 1000) : defaultPageSize; // hard cap
+    const cursor = q.cursor != null ? String(q.cursor) : null;
+    const sort = typeof q.sort === 'string' ? q.sort : 'filename';
+    const dir = (typeof q.dir === 'string' && q.dir.toUpperCase() === 'DESC') ? 'DESC' : 'ASC';
+
+    const page = photosRepo.listPaged({ project_id: project.id, limit, cursor, sort, dir });
+    const items = (page.items || []).map(r => ({
+      id: r.id,
+      manifest_id: r.manifest_id,
+      filename: r.filename,
+      basename: r.basename || undefined,
+      ext: r.ext || undefined,
+      created_at: r.created_at,
+      updated_at: r.updated_at,
+      date_time_original: r.date_time_original || undefined,
+      jpg_available: !!r.jpg_available,
+      raw_available: !!r.raw_available,
+      other_available: !!r.other_available,
+      keep_jpg: !!r.keep_jpg,
+      keep_raw: !!r.keep_raw,
+      thumbnail_status: r.thumbnail_status || undefined,
+      preview_status: r.preview_status || undefined,
+      orientation: r.orientation ?? undefined,
+      metadata: r.meta_json ? JSON.parse(r.meta_json) : undefined,
+    }));
+
+    res.json({ items, total: page.total, nextCursor: page.nextCursor, limit, sort, dir });
+  } catch (err) {
+    log.error('project_photos_paged_failed', { error: err && err.message, stack: err && err.stack, project_folder: req.params && req.params.folder });
+    res.status(500).json({ error: 'Failed to get photos' });
   }
 });
 

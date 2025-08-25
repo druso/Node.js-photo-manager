@@ -35,9 +35,28 @@ function resolveOriginalPath({ projectPath, base, prefer, entry }) {
   } else {
     return null;
   }
+  // Fast path: exact-case matches
   for (const ext of tryOrder) {
     const fp = path.join(projectPath, `${base}${ext}`);
     if (fs.existsSync(fp)) return fp;
+  }
+  // Slow path: case-insensitive scan (handles .JPG vs .jpg on case-sensitive FS)
+  try {
+    const entries = fs.readdirSync(projectPath, { withFileTypes: true });
+    const baseLower = String(base || '').toLowerCase();
+    const allow = new Set(tryOrder); // already lower-cased extensions
+    for (const dirent of entries) {
+      if (!dirent.isFile()) continue;
+      const name = dirent.name;
+      const ext = (path.extname(name) || '').toLowerCase();
+      if (!allow.has(ext)) continue;
+      const bn = path.basename(name, path.extname(name));
+      if (bn.toLowerCase() === baseLower) {
+        return path.join(projectPath, name);
+      }
+    }
+  } catch (_) {
+    // ignore directory read errors; fall through
   }
   return null;
 }

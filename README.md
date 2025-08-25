@@ -18,6 +18,30 @@ This application helps photographers manage their photo collections by:
 - Tailwind CSS v4 note: deprecated `bg-opacity-*` utilities have been migrated to the new alpha color syntax (e.g., `bg-black/40`). If you add new styles, prefer `color/opacity` notation over legacy opacity utilities.
 - **Backend**: Node.js with Express and SQLite
 - **Image Processing**: Sharp library for high-performance processing
+- **Project folders**: canonical format `p<id>` (immutable). See `server/utils/projects.js` for `makeProjectFolderName()`, `isCanonicalProjectFolder()`, and `parseProjectIdFromFolder()`.
+
+## API Quick Reference
+
+- **Projects**
+  - `GET /api/projects` — list
+  - `POST /api/projects` — create
+  - `PATCH /api/projects/:id` — rename (display name only)
+  - `DELETE /api/projects/:id` — archive and queue deletion task
+- **Project details**
+  - `GET /api/projects/:folder` — metadata
+  - `GET /api/projects/:folder/photos` — paginated photos (`?limit&cursor&sort&dir`)
+- **Uploads & Processing**
+  - `POST /api/projects/:folder/upload` — upload files
+  - `POST /api/projects/:folder/process` — queue derivative generation
+- **Assets**
+  - `GET /api/projects/:folder/thumbnail/:filename` — thumbnail (public)
+  - `GET /api/projects/:folder/preview/:filename` — preview (public)
+  - `POST /api/projects/:folder/download-url` — mint signed URL
+  - `GET /api/projects/:folder/file/:type/:filename` — download original (token)
+  - `GET /api/projects/:folder/files-zip/:filename` — download ZIP (token)
+- **Realtime Jobs**
+  - `GET /api/jobs/stream` — SSE stream
+  - `GET /api/jobs` — list jobs (admin/dev)
 
 ## Quick Start
 
@@ -88,9 +112,23 @@ Tip: In development, the Vite dev server runs on `5173`; the backend runs on `50
 - **Keep/Discard Workflow**: Manage RAW+JPG pairs efficiently
 - **Real-time Updates**: Live progress tracking for all background tasks
   - The client uses a singleton `EventSource` (see `client/src/api/jobsApi.js → openJobStream()`) shared across UI consumers to avoid multiple parallel connections and 429s from the server's per‑IP cap.
+  - SSE events reconcile keep flag changes immediately. The client normalizes filenames (strips known photo extensions) so updates apply whether the DB stored filenames with or without extensions.
+- **Robust Lazy-loading Grid**: Smooth thumbnail loading with no random blanks
+  - The photo grid uses a single `IntersectionObserver` with a small positive root margin and a short dwell to avoid flicker.
+  - It rebinds observation when DOM nodes change across re-renders and uses a ref-backed visibility set to avoid stale-closure misses.
+  - Diagnostics: enable `localStorage.setItem('debugThumbs','1')` to log thumbnail load/retry/fail events from `client/src/components/Thumbnail.jsx`.
 - **Drag & Drop Upload**: Intuitive file upload interface
 - **Keyboard Shortcuts**: Fast navigation and actions
 - **Secure Asset Serving**: Signed URLs for photo access; destructive endpoints are rate-limited
+  - Originals resolution is case-insensitive with a constrained scan fallback: the server first tries exact-case candidates, then scans the project folder to match the base name against allowed extensions (e.g., `.jpg`/`.jpeg` or RAW sets). This prevents 404s when on‑disk extensions or casing differ (e.g., `.JPG`).
+
+### Session-only UI State
+
+- The client persists UI state only for the duration of a browser tab session using a single `sessionStorage` key `session_ui_state`.
+- Persisted within session: window scroll (`windowY`), main list scroll (`mainY`), and viewer state (`open`, `index`, `filename`, `showInfo`).
+- Restore uses a resilient retry loop; viewer restore waits for photos to load to avoid race conditions.
+- State is cleared only when switching to a different project during the same session. Initial project selection after a reload does not clear it.
+- Legacy per-project `localStorage` APIs and migrations were removed. Use `client/src/utils/storage.js → getSessionState()/setSessionState()/clearSessionState()` and helpers `setSessionWindowY()`, `setSessionMainY()`, `setSessionViewer()`.
 
 ## Maintenance
 

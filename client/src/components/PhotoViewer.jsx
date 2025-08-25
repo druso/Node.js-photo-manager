@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { getSessionState, setSessionViewer } from '../utils/storage';
 import { updateKeep } from '../api/keepApi';
 import { useToast } from '../ui/toast/ToastContext';
 
@@ -7,7 +8,13 @@ const PhotoViewer = ({ projectData, projectFolder, startIndex, onClose, config, 
   const [currentIndex, setCurrentIndex] = useState(startIndex);
   const [zoomPercent, setZoomPercent] = useState(0); // 0 = Fit, 100 = Actual size, 200 = 2x
   const [position, setPosition] = useState({ x: 0, y: 0 });
-  const [showInfo, setShowInfo] = useState(() => sessionStorage.getItem('viewer_show_info') === '1');
+  const [showInfo, setShowInfo] = useState(() => {
+    try {
+      const st = getSessionState();
+      if (st && st.viewer && typeof st.viewer.showInfo === 'boolean') return !!st.viewer.showInfo;
+    } catch {}
+    try { return sessionStorage.getItem('viewer_show_info') === '1'; } catch { return false; }
+  });
   const containerRef = useRef(null);
   const [naturalSize, setNaturalSize] = useState({ w: 0, h: 0 });
   const [usePreview, setUsePreview] = useState(true);
@@ -96,9 +103,10 @@ const PhotoViewer = ({ projectData, projectFolder, startIndex, onClose, config, 
 
   // Toasts handled globally via ToastProvider
   
-  // Persist Details panel visibility for single-tab session
+  // Persist Details panel visibility in session state (also keep legacy sessionStorage write during session)
   useEffect(() => {
-    sessionStorage.setItem('viewer_show_info', showInfo ? '1' : '0');
+    try { setSessionViewer({ showInfo: !!showInfo }); } catch {}
+    try { sessionStorage.setItem('viewer_show_info', showInfo ? '1' : '0'); } catch {}
   }, [showInfo]);
 
   const applyKeep = useCallback(async (mode) => {
@@ -384,10 +392,20 @@ const PhotoViewer = ({ projectData, projectFolder, startIndex, onClose, config, 
     onClose();
   };
 
+  // Helper: ensure filename with extension for full-res image requests
+  const filenameWithExtForImage = useCallback((p) => {
+    const fn = p?.filename || '';
+    // if already has an extension, return as-is
+    if (/\.[A-Za-z0-9]+$/.test(fn)) return fn;
+    // if JPG is available, default to .jpg for full-res endpoint
+    if (p?.jpg_available) return `${fn}.jpg`;
+    return fn;
+  }, []);
+
   // Determine image source: preview by default, toggle to full-res
   const imageSrc = usePreview
     ? `/api/projects/${encodeURIComponent(projectFolder)}/preview/${encodeURIComponent(currentPhoto.filename)}`
-    : `/api/projects/${encodeURIComponent(projectFolder)}/image/${encodeURIComponent(currentPhoto.filename)}`;
+    : `/api/projects/${encodeURIComponent(projectFolder)}/image/${encodeURIComponent(filenameWithExtForImage(currentPhoto))}`;
 
   // Ensure 0% zoom stays centered when toggling details: recenter now and after the panel slide completes
   useEffect(() => {
@@ -413,7 +431,7 @@ const PhotoViewer = ({ projectData, projectFolder, startIndex, onClose, config, 
       if (rawOnly) return null; // nothing to preload for RAW-only placeholder
       return usePreview
         ? `/api/projects/${encodeURIComponent(projectFolder)}/preview/${encodeURIComponent(p.filename)}`
-        : `/api/projects/${encodeURIComponent(projectFolder)}/image/${encodeURIComponent(p.filename)}`;
+        : `/api/projects/${encodeURIComponent(projectFolder)}/image/${encodeURIComponent(filenameWithExtForImage(p))}`;
     };
     for (let offset = 1; offset <= preloadCount; offset++) {
       const nextIdx = (currentIndex + offset) % photos.length;

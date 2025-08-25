@@ -107,6 +107,14 @@ function updateProgress(id, { done, total }) {
   return getById(id);
 }
 
+function updatePayload(id, payload) {
+  const db = getDb();
+  const now = nowISO();
+  const json = payload ? JSON.stringify(payload) : null;
+  db.prepare(`UPDATE jobs SET payload_json = ?, updated_at = ? WHERE id = ?`).run(json, now, id);
+  return getById(id);
+}
+
 function complete(id) {
   const db = getDb();
   db.prepare(`UPDATE jobs SET status='completed', finished_at=? WHERE id = ?`).run(nowISO(), id);
@@ -157,6 +165,7 @@ module.exports = {
   claimNext,
   heartbeat,
   updateProgress,
+  updatePayload,
   complete,
   fail,
   cancel,

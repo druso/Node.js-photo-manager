@@ -1,30 +1,52 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import Thumbnail from './Thumbnail';
 
-const PhotoGridView = ({ projectData, projectFolder, onPhotoSelect, selectedPhotos, onToggleSelection, lazyLoadThreshold = 100, sizeLevel = 's' }) => {
+const PhotoGridView = ({ projectData, projectFolder, onPhotoSelect, selectedPhotos, onToggleSelection, lazyLoadThreshold = 100, sizeLevel = 's', photos: externalPhotos, hasMore, onLoadMore, dwellMs = 300 }) => {
   const [visibleCount, setVisibleCount] = useState(lazyLoadThreshold);
   const containerRef = useRef(null);
   const [containerWidth, setContainerWidth] = useState(0);
+  const loadMoreGuardRef = useRef(0);
+  // Intersection-based lazy loading: track which items have become visible
+  const ioRef = useRef(null);
+  const observedMapRef = useRef(new Map()); // key -> element
+  const dwellTimersRef = useRef(new Map()); // key -> timeoutId
+  const [visibleKeys, setVisibleKeys] = useState(() => new Set());
+  const visibleKeysRef = useRef(visibleKeys);
+  useEffect(() => { visibleKeysRef.current = visibleKeys; }, [visibleKeys]);
 
   useEffect(() => {
     // Reset only when switching projects or the threshold changes
     setVisibleCount(lazyLoadThreshold);
+    // Do not clear visibleKeys across minor threshold changes; clear on project change
   }, [projectFolder, lazyLoadThreshold]);
 
   // Lazy-load more items when near bottom of page scroll
   useEffect(() => {
     function onWindowScroll() {
-      if (!projectData?.photos?.length) return;
+      const list = externalPhotos ?? projectData?.photos ?? [];
+      if (!list.length) return;
       const nearBottom = (window.innerHeight + window.scrollY) >= (document.body.offsetHeight - 200);
-      if (nearBottom) {
+      if (!nearBottom) return;
+      // Backend-driven pagination when hooks are provided
+      if (typeof onLoadMore === 'function') {
+        const now = Date.now();
+        if (hasMore && now - loadMoreGuardRef.current > 500) {
+          loadMoreGuardRef.current = now;
+          onLoadMore();
+        }
+        return;
+      }
+      // Fallback: increase visibleCount within already-loaded list
+      if (projectData?.photos?.length) {
         setVisibleCount(prev => Math.min(prev + lazyLoadThreshold, projectData.photos.length));
       }
     }
     window.addEventListener('scroll', onWindowScroll, { passive: true });
     return () => window.removeEventListener('scroll', onWindowScroll);
-  }, [projectData, lazyLoadThreshold]);
+  }, [projectData, externalPhotos, hasMore, onLoadMore, lazyLoadThreshold]);
 
-  const isEmpty = !projectData || !projectData.photos || projectData.photos.length === 0;
+  const sourcePhotos = externalPhotos ?? projectData?.photos ?? [];
+  const isEmpty = !sourcePhotos || sourcePhotos.length === 0;
 
   // Target row height by size; rows will scale to perfectly fill width
   const sizeToTargetH = { s: 120, m: 180, l: 240 };
@@ -48,7 +70,7 @@ const PhotoGridView = ({ projectData, projectFolder, onPhotoSelect, selectedPhot
   }, [containerWidth]);
 
   // Precompute aspect ratios using EXIF metadata when available
-  const photos = projectData?.photos?.slice(0, visibleCount) || [];
+  const photos = externalPhotos ? externalPhotos : (projectData?.photos?.slice(0, visibleCount) || []);
   const ratios = useMemo(() => {
     return photos.map(p => {
       const md = p.metadata || {};
@@ -104,6 +126,82 @@ const PhotoGridView = ({ projectData, projectFolder, onPhotoSelect, selectedPhot
     return rowsOut;
   }, [containerWidth, photos, ratios, targetRowH, gap]);
 
+  // Setup a single IntersectionObserver to lazily mark items visible with dwell
+  useEffect(() => {
+    if (ioRef.current) return; // init once
+    ioRef.current = new IntersectionObserver((entries) => {
+      for (const entry of entries) {
+        const key = entry.target.getAttribute('data-key');
+        if (!key || visibleKeysRef.current.has(key)) continue;
+        if (entry.isIntersecting) {
+          // Schedule dwell timer if not already scheduled
+          if (!dwellTimersRef.current.has(key)) {
+            const tid = setTimeout(() => {
+              // Mark visible after dwell period
+              setVisibleKeys(prev => {
+                const next = new Set(prev);
+                next.add(key);
+                return next;
+              });
+              // Stop observing and cleanup
+              try { ioRef.current && ioRef.current.unobserve(entry.target); } catch (_) {}
+              observedMapRef.current.delete(key);
+              dwellTimersRef.current.delete(key);
+            }, Math.max(0, Number(dwellMs) || 0));
+            dwellTimersRef.current.set(key, tid);
+          }
+        } else {
+          // If it moved out before dwell completed, cancel timer
+          const tid = dwellTimersRef.current.get(key);
+          if (tid) {
+            clearTimeout(tid);
+            dwellTimersRef.current.delete(key);
+          }
+        }
+      }
+    }, { root: null, rootMargin: '50px 0px', threshold: 0.01 });
+    return () => {
+      if (ioRef.current) {
+        ioRef.current.disconnect();
+        ioRef.current = null;
+      }
+      // Clear any pending dwell timers
+      for (const tid of dwellTimersRef.current.values()) {
+        clearTimeout(tid);
+      }
+      dwellTimersRef.current.clear();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // When project changes, clear visibility set (new images)
+  useEffect(() => {
+    setVisibleKeys(new Set());
+    // Also clear any observed elements map
+    observedMapRef.current.clear();
+    // Clear dwell timers on project switch
+    for (const tid of dwellTimersRef.current.values()) {
+      clearTimeout(tid);
+    }
+    dwellTimersRef.current.clear();
+  }, [projectFolder]);
+
+  const observeCell = (el, key) => {
+    if (!el || !ioRef.current || visibleKeysRef.current.has(key)) return;
+    el.setAttribute('data-key', key);
+    const existing = observedMapRef.current.get(key);
+    if (existing) {
+      if (existing !== el) {
+        try { ioRef.current.unobserve(existing); } catch (_) {}
+        observedMapRef.current.set(key, el);
+        ioRef.current.observe(el);
+      }
+      return;
+    }
+    observedMapRef.current.set(key, el);
+    ioRef.current.observe(el);
+  };
+
   return (
     <div ref={containerRef} className="w-full p-1">
       {isEmpty ? (
@@ -128,12 +226,14 @@ const PhotoGridView = ({ projectData, projectFolder, onPhotoSelect, selectedPhot
               const photo = photos[idx];
               const isSelected = selectedPhotos?.has(photo.filename);
               const marginRight = j < rowItems.length - 1 ? gap : 0;
+              const key = photo.filename || `${photo.id}-${idx}`;
               return (
                 <div
                   key={`${photo.id}-${photo.filename}`}
                   className={`relative bg-gray-200 overflow-hidden cursor-pointer group ${isSelected ? 'border-2 border-blue-600 ring-2 ring-blue-400' : 'border-0 ring-0'} transition-all flex-none`}
                   style={{ width: `${w}px`, height: `${Math.round(h)}px`, marginRight }}
                   onClick={() => onToggleSelection(photo)}
+                  ref={(el) => observeCell(el, key)}
                 >
                   {/* Selection toggle in top-left */}
                   <button
@@ -157,13 +257,17 @@ const PhotoGridView = ({ projectData, projectFolder, onPhotoSelect, selectedPhot
                     )}
                   </button>
 
-                <Thumbnail
-                  photo={photo}
-                  projectFolder={projectFolder}
-                  className="w-full h-full group-hover:opacity-75 transition-all duration-300"
-                  objectFit="cover"
-                  rounded={false}
-                />
+                {visibleKeys.has(key) ? (
+                  <Thumbnail
+                    photo={photo}
+                    projectFolder={projectFolder}
+                    className="w-full h-full group-hover:opacity-75 transition-all duration-300"
+                    objectFit="cover"
+                    rounded={false}
+                  />
+                ) : (
+                  <div className="w-full h-full bg-gray-300 animate-pulse" aria-hidden="true" />
+                )}
                 {isSelected && (
                   <div className="absolute inset-0 bg-blue-500/25 pointer-events-none"></div>
                 )}
@@ -171,7 +275,7 @@ const PhotoGridView = ({ projectData, projectFolder, onPhotoSelect, selectedPhot
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
-                      onPhotoSelect(photo);
+                      onPhotoSelect(photo, photos);
                     }}
                     className="px-4 py-2 text-base font-semibold text-white bg-gray-900/90 rounded-md hover:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-white cursor-pointer"
                   >
@@ -183,6 +287,22 @@ const PhotoGridView = ({ projectData, projectFolder, onPhotoSelect, selectedPhot
           })}
         </div>
         ))
+      )}
+      {/* Bottom pagination indicators */}
+      {!isEmpty && (
+        <div className="py-6 text-center text-sm text-gray-600 select-none">
+          {hasMore ? (
+            <div className="inline-flex items-center gap-2">
+              <span>Scroll to load more…</span>
+              <svg className="h-4 w-4 text-gray-400" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fillRule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.146l3.71-3.915a.75.75 0 111.08 1.04l-4.243 4.475a.75.75 0 01-1.08 0L5.25 8.27a.75.75 0 01-.02-1.06z" clipRule="evenodd" /></svg>
+            </div>
+          ) : (
+            <div className="inline-flex items-center gap-2 text-gray-500">
+              <span>End</span>
+              <svg className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path d="M10 3a1 1 0 011 1v12a1 1 0 11-2 0V4a1 1 0 011-1z" /></svg>
+            </div>
+          )}
+        </div>
       )}
     </div>
   );

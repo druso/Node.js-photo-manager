@@ -103,6 +103,8 @@ The backend is a Node.js application that exposes a RESTful API for the client.
 Projects are stored on disk under `<repoRoot>/.projects/<project_folder>/` where `project_folder` is always of the form `p<id>` (immutable and decoupled from the display name). Duplicate human names are allowed; uniqueness is enforced by `project_folder`. The numeric `id` is returned by all project APIs and should be used for renames; the folder never changes.
 Filename normalization for asset endpoints preserves non-image suffixes (e.g., `.com` in `manage.kmail-lists.com`) and strips only known image/raw extensions (`jpg`, `jpeg`, `raw`, `arw`, `cr2`, `nef`, `dng`). Derivatives are named `<base>.jpg` in `.thumb/` and `.preview/`.
 
+Utilities: see `server/utils/projects.js` for `makeProjectFolderName()`, `isCanonicalProjectFolder()`, and `parseProjectIdFromFolder()`.
+
 On creation, the server ensures these subdirectories exist:
 - `.thumb` for thumbnails
 - `.preview` for previews
@@ -127,6 +129,7 @@ Refer to `SCHEMA_DOCUMENTATION.md` for detailed table structures and relationshi
 *   **Project Organization**: Photos are organized into projects (albums/shoots)
 *   **Metadata Extraction**: Automatic EXIF data parsing for timestamps, camera settings, etc.
 *   **Keep/Discard System**: Deterministic handling of RAW+JPG pairs. By default, `keep_jpg` and `keep_raw` mirror actual file availability and are automatically realigned during uploads and post‑processing. Users can change intent and later Commit or Revert.
+  - Preview Mode filters (`File types to keep`) now match only photos where keep flags are explicitly set: `any_kept` means `keep_jpg === true || keep_raw === true`; `none` means both flags are explicitly `false`.
 
 ### Image Processing
 *   **Automatic Thumbnails**: Generated asynchronously for fast grid viewing
@@ -142,6 +145,10 @@ Refer to `SCHEMA_DOCUMENTATION.md` for detailed table structures and relationshi
     - Viewer behavior: planning a delete (keep none) no longer auto-advances; the viewer stays on the current image and shows a toast. When filters change the visible list, the current index is clamped to a valid photo instead of closing.
  *   **Real-time Updates**: Live job progress via Server-Sent Events
 *   **Incremental Thumbnails (SSE)**: Pending thumbnails update via item-level SSE events; no client-side probing of asset URLs
+  - Client requests encode both `:folder` and `:filename` to avoid failures with spaces/special characters (see `client/src/components/Thumbnail.jsx`).
+  - Resilience: the thumbnail image performs one retry with a short cache-busting param when a load error occurs. If debug is enabled, it logs load/retry/fail events to the console.
+  - Dev toggle for diagnostics: `localStorage.setItem('debugThumbs','1')` (or set `window.__DEBUG_THUMBS = true`) and reload to see `[thumb]` logs in DevTools.
+*   **Lazy Loading (IntersectionObserver)**: The photo grid uses a single `IntersectionObserver` with a slight positive `rootMargin` and a short dwell to avoid flicker. Observation is rebound if a cell's DOM node changes across re-renders, and a ref‑backed visibility set prevents stale-closure misses. This eliminates random blank thumbnails while scrolling and reduces request bursts.
 *   **Incremental Updates**: The grid updates incrementally to preserve context and avoid disruptive reloads.
 *   **Optimistic Updates**: Keep/Tag/Revert/Commit actions update the UI immediately without a full data refetch, preserving browsing context.
 *   **Scroll Preservation**: Grid/table and viewer preserve scroll position and context during incremental updates. Selection is maintained unless an action explicitly clears it.
@@ -154,6 +161,13 @@ Refer to `SCHEMA_DOCUMENTATION.md` for detailed table structures and relationshi
     - Row 1: Date taken (new popover range picker with two months + presets), Orientation
     - Row 2: File types available, File types to keep
   The date range picker is a single trigger button that opens a dual‑month popover with quick‑select presets (Today, Last 7 days, This month, etc.).
+
+#### Session‑only UI State Persistence
+
+*   **What persists within the tab session**: window scroll (`windowY`), main list scroll (`mainY`), and viewer state (`open`, `index`, `filename`, `showInfo`). Stored under a single `sessionStorage` key: `session_ui_state`.
+*   **Restore behavior**: On reload, scroll positions are restored using a retry loop to account for layout timing; viewer state restores after photos load to avoid races.
+*   **Reset behavior**: Session UI state is cleared only when switching to a different project during the same session. Initial project selection after a reload does not clear it.
+*   **Removed legacy APIs**: Per‑project `localStorage` keys (e.g., `app_state::<folder>`) and their migration helpers were removed. Use `client/src/utils/storage.js → getSessionState()/setSessionState()/clearSessionState()` and the small helpers `setSessionWindowY()`, `setSessionMainY()`, `setSessionViewer()`.
 
 ### Tagging System
 *   **Flexible Tagging**: Add custom tags to photos for organization
@@ -222,10 +236,28 @@ Job types:
 - `trash_maintenance`: Remove files in `.trash` older than 24h.
 - `manifest_check`: Verify DB availability flags (`jpg_available`, `raw_available`) against files on disk and fix discrepancies.
 - `folder_check`: Scan the project folder for untracked files; enqueue `upload_postprocess` only for newly discovered bases (not already present in the manifest); move unaccepted files to `.trash`.
-- `manifest_cleaning`: Delete rows where both JPG and RAW are unavailable. Emits `item_removed` events for per-item UI reconciliation.
-\- `project_stop_processes`: High‑priority step that marks a project archived (`status='canceled'`) and cancels queued/running jobs.
-\- `project_delete_files`: High‑priority step that deletes the project folder from `.projects/<project_folder>/`.
-\- `project_cleanup_db`: Cleans related DB rows (`photos`, `tags`, `photo_tags`) while retaining the archived `projects` row for audit.
+  - `manifest_cleaning`: Delete rows where both JPG and RAW are unavailable. Emits `item_removed` events for per-item UI reconciliation.
+  - `project_stop_processes`: High‑priority step that marks a project archived (`status='canceled'`) and cancels queued/running jobs.
+  - `project_delete_files`: High‑priority step that deletes the project folder from `.projects/<project_folder>/`.
+  - `project_cleanup_db`: Cleans related DB rows (`photos`, `tags`, `photo_tags`) while retaining the archived `projects` row for audit.
+
+### Image Move Workflow
+
+- Overview: Move selected images from their current project to a destination project while preserving derivatives when available and regenerating when missing.
+- API entry (tasks-only): `POST /api/projects/:folder/jobs` with body `{"task_type":"image_move","items":["<base1>","<base2>"]}` where `:folder` is the destination (e.g., `p3`).
+- Composition (see `server/services/task_definitions.json` → `image_move.steps`):
+  1) `image_move_files` (95) — `server/services/workers/imageMoveWorker.js`
+  2) `manifest_check` (95)
+  3) `generate_derivatives` (90) if needed
+- Behavior of `image_move_files`:
+  - Moves originals (case-insensitive through known extensions) and any existing derivatives (`.thumb/<base>.jpg`, `.preview/<base>.jpg`).
+  - Updates DB (`photosRepo.moveToProject()`), aligns derivative statuses to `generated` when a derivative moved, or `pending` when it must be regenerated (`not_supported` for RAW).
+  - Emits SSE:
+    - `item_removed` from the source project
+    - `item_moved` in the destination with `thumbnail_status`/`preview_status`
+  - Enqueues a `manifest_check` for the source project to reconcile leftovers.
+- Uploads integration: `POST /api/projects/:folder/upload` with multipart field `reloadConflictsIntoThisProject=true` will auto-start `image_move` into `:folder` for uploaded bases that exist in other projects (see `server/routes/uploads.js`).
+- See also: `JOBS_OVERVIEW.md` → Image Move for API and SSE details.
 
 Scheduler (`server/services/scheduler.js`) cadence:
 
@@ -395,6 +427,7 @@ The backend exposes a comprehensive REST API for all frontend operations:
 ### Core Endpoints
 *   **Projects**: `GET/POST/DELETE /api/projects` - Project management
 *   **Projects (Rename)**: `PATCH /api/projects/:id` - Update project display name only (folder remains `p<id>`)
+*   **Photos (Paginated)**: `GET /api/projects/:folder/photos` - Paginated photos for a project. Query: `?limit=250&cursor=0&sort=filename|date_time_original|created_at|updated_at&dir=ASC|DESC`. Returns: `{ items, total, nextCursor, limit, sort, dir }`.
 *   **Uploads**: `POST /api/projects/:folder/upload` - File upload with progress
 *   **Processing**: `POST /api/projects/:folder/process` - Queue thumbnail/preview generation
 *   **Analysis**: `POST /api/projects/:folder/analyze-files` - Pre-upload file analysis
@@ -405,10 +438,31 @@ The backend exposes a comprehensive REST API for all frontend operations:
     *   `GET /api/projects/:folder/file/:type/:filename` - Download originals (requires token)
     *   `GET /api/projects/:folder/files-zip/:filename` - Download ZIP (requires token)
     
+#### Dev Tips: Paginated Photos
+
+Example:
+
+```bash
+curl -s "http://localhost:3000/api/projects/p123/photos?limit=100&cursor=0&sort=filename&dir=ASC" | jq .
+```
+
+Response shape:
+
+```json
+{
+  "items": [ { "filename": "IMG_0001.JPG", "jpg_available": true, ... } ],
+  "total": 1245,
+  "nextCursor": 100,
+  "limit": 100,
+  "sort": "filename",
+  "dir": "ASC"
+}
+```
     Notes:
     - `:filename` may include non-image suffixes (e.g., `.com`). The server strips only known image/raw extensions and maps to `<base>.jpg` under `.thumb/` or `.preview/`.
     - All assets (thumbnails, previews, originals, zip) are streamed using `fs.createReadStream`. Responses include short-lived `Cache-Control` and `ETag`; clients may receive 304 on revalidation.
-    - Asset serving avoids directory scans for originals/zip by deterministically resolving candidate filenames (DB-assisted) instead of calling `readdir`.
+    - Originals lookup: deterministic first, tolerant fallback. The server first attempts an exact DB match and then falls back to the base name (extension stripped) for `/image/:filename`, `/file/:type/:filename`, `/files-zip/:filename`, and when minting `/download-url`. On disk, resolution prefers a fast path of exact-case candidates and, if not found, performs a constrained case-insensitive scan within the project folder to match the base name against allowed extensions (e.g., `.jpg`/`.jpeg` or RAW sets). This eliminates 404s from case/extension mismatches while keeping scope limited to the project directory.
+    - Client behavior: the viewer may still append `.jpg` for cache-busting and clarity, but it’s no longer required to avoid 404s; the server will resolve either form.
 *   **Jobs**: `GET/POST /api/projects/:folder/jobs` - Background job management
 *   **Tags**: `PUT /api/projects/:folder/tags` - Batch tag updates
 *   **Keep**: `PUT /api/projects/:folder/keep` - RAW/JPG keep decisions (intent)
@@ -423,13 +477,16 @@ The backend exposes a comprehensive REST API for all frontend operations:
 - If new defaults are introduced, they will be appended to `config.json` on first run after upgrade. This persistence is expected and helps keep config current.
 
 ### Real-time Features
-*   **Server-Sent Events**: `GET /api/jobs/stream` - Live job progress updates
+*   **Server-Sent Events**: `GET /api/jobs/stream` - Live job and item updates
 *   **Job Status**: Real-time notifications for thumbnail generation, uploads, etc.
 *   **Client SSE Singleton**: The client uses a single shared `EventSource` managed in `client/src/api/jobsApi.js` (`openJobStream()`) to avoid exceeding server per‑IP limits and to reduce resource usage.
     - The singleton instance is persisted on `globalThis/window` so it survives Vite HMR reloads during development.
     - Multiple UI consumers subscribe via listeners; an unsubscribe closes the stream after a short idle grace period when no listeners remain.
     - Dev tips: close duplicate tabs and hard‑refresh if you see 429s; optionally raise `SSE_MAX_CONN_PER_IP` in local env if hot‑reload briefly opens parallel connections.
     - SSE specifics: server sends a heartbeat every 25s and closes idle streams after a default of 5 minutes. Override via env: `SSE_MAX_CONN_PER_IP` (default 2), `SSE_IDLE_TIMEOUT_MS`.
+    - Item updates now include keep flag changes. The `PUT /api/projects/:folder/keep` route emits `type: "item"` with `keep_jpg`/`keep_raw` so the client can reconcile preview/filters without a page refresh. The client normalizes filenames (strips known photo extensions) so SSE events reconcile correctly whether the DB stored a filename with or without an extension.
+    - Grid sync: the paginated grid state (`pagedPhotos`) is kept in sync with optimistic actions (commit/revert/keep changes) and SSE `item`, `item_removed`, and `manifest_changed` events so preview mode reflects changes immediately without page refresh.
+    - Dev-only logs: `[SSE] ...` messages from the client are printed only in Vite dev mode (`import.meta.env.DEV`). Production builds suppress these logs.
 
 ### Endpoint Notes (validation & CORS)
 

@@ -7,6 +7,7 @@ const { rateLimit } = require('../utils/rateLimit');
 
 const projectsRepo = require('../services/repositories/projectsRepo');
 const photosRepo = require('../services/repositories/photosRepo');
+const { emitJobUpdate } = require('../services/events');
 
 const router = express.Router();
 // Ensure JSON parsing for this router
@@ -55,6 +56,19 @@ router.put('/:folder/keep', rateLimit({ windowMs: 60 * 1000, max: 120 }), async 
       if (Object.keys(patch).length > 0) {
         photosRepo.updateKeepFlags(photo.id, patch);
         updatedCount++;
+        // Emit SSE item-level update so clients can reconcile keep flags without full refetch
+        try {
+          emitJobUpdate({
+            type: 'item',
+            project_folder: folder,
+            filename: photo.filename,
+            keep_jpg: (typeof patch.keep_jpg === 'boolean') ? patch.keep_jpg : photo.keep_jpg,
+            keep_raw: (typeof patch.keep_raw === 'boolean') ? patch.keep_raw : photo.keep_raw,
+            updated_at: new Date().toISOString(),
+          });
+        } catch (_) {
+          // best-effort emit; ignore
+        }
       }
     }
     res.json({ message: `Updated keep flags for ${updatedCount} photos`, updated_count: updatedCount });

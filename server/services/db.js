@@ -135,6 +135,8 @@ function applySchema(db) {
   ensureColumn(db, 'jobs', 'max_attempts', "ALTER TABLE jobs ADD COLUMN max_attempts INTEGER");
   ensureColumn(db, 'jobs', 'last_error_at', "ALTER TABLE jobs ADD COLUMN last_error_at TEXT");
   ensureColumn(db, 'jobs', 'priority', "ALTER TABLE jobs ADD COLUMN priority INTEGER NOT NULL DEFAULT 0");
+  // Some code paths update jobs.updated_at (e.g., updating payload). Ensure the column exists for older DBs.
+  ensureColumn(db, 'jobs', 'updated_at', "ALTER TABLE jobs ADD COLUMN updated_at TEXT");
   // Create composite index after ensuring the column exists (for existing DBs)
   try {
     db.exec(`CREATE INDEX IF NOT EXISTS idx_jobs_status_priority_created ON jobs(status, priority DESC, created_at ASC)`);

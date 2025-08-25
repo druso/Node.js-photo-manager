@@ -17,6 +17,8 @@ This document summarizes the background job pipeline, supported job types, their
 - Heartbeats, crash recovery (`requeueStaleRunning`), and bounded retries (`max_attempts_default`) are handled by `workerLoop.js`.
 - Live job updates via SSE: `GET /api/jobs/stream` (also item-level events from `derivativesWorker`).
 
+Image Move emits realtime events too. See "Image Move" below for `item_removed` and `item_moved` semantics.
+
 ## At a glance: Tasks → Steps and Priorities
 
 - Upload Post-Process (`upload_postprocess` task)
@@ -103,6 +105,14 @@ Lane behavior: steps with priority ≥ `pipeline.priority_threshold` run in the 
   - Purpose: cleanup related DB rows (`photos`, `tags`, `photo_tags`), retain `projects` row (archived).
   - Payload: carries task metadata.
 
+- image_move_files (part of task `image_move`)
+  - Worker: `imageMoveWorker.runImageMoveFiles()`.
+  - Purpose: move one or more images (and their derivatives when present) from their current project to a destination project.
+  - Trigger: orchestrated via the `image_move` task. Typical sources:
+    - Client operations menu (move selected photos)
+    - Uploads route when `reloadConflictsIntoThisProject=true` detects cross‑project conflicts (see `server/routes/uploads.js`).
+  - Payload options: provided via task orchestration; individual filenames are carried as `job_items` with `filename` set to the base name (no extension).
+
 Note: Any other `type` will be failed by `workerLoop` as Unknown.
 
 ## How Flows Use the Jobs
@@ -149,12 +159,26 @@ Note: Any other `type` will be failed by `workerLoop` as Unknown.
   - Behavior: resets intent (`keep_jpg`/`keep_raw`) to current availability for all photos (non-destructive, no jobs needed).
   - UI: client updates state optimistically; no heavy background processing triggered.
 
+### Image Move
+
+- Endpoint (tasks-only): `POST /api/projects/:folder/jobs` with `{"task_type":"image_move","items":["<base1>","<base2>"]}`
+  - `:folder` is the destination project folder (e.g., `p3`).
+  - The task composes steps from `server/services/task_definitions.json`:
+    1) `image_move_files` (95) — moves originals and any existing derivatives; updates DB and derivative statuses; emits SSE.
+    2) `manifest_check` (95) — on the destination, to reconcile availability if needed; a separate `manifest_check` is also enqueued for the source by the worker.
+    3) `generate_derivatives` (90) — runs if any derivative was missing and marked `pending` by the move.
+- SSE events (from `imageMoveWorker`):
+  - `{ type: "item_removed", project_folder: <source>, filename, updated_at }` — remove from source UI lists.
+  - `{ type: "item_moved", project_folder: <dest>, filename, thumbnail_status, preview_status, updated_at }` — add/update in destination with derivative statuses set to `generated` if a derivative was moved, `pending` if it must be regenerated, or `not_supported` for RAW.
+- Uploads integration: when posting to `POST /api/projects/:folder/upload` with multipart field `reloadConflictsIntoThisProject=true`, the server detects uploaded bases that exist in other projects and auto‑starts `image_move` into the current `:folder` for those bases.
+
 ## API Contract (Tasks-only)
 
 - `POST /api/projects/:folder/jobs`
   - Tasks-only API: requires `task_type` in the JSON body.
   - Optional: `items` array for per-file itemization when applicable (e.g., uploaded filenames).
   - Returns: `{ task }` with task metadata (accepted, queued steps, etc.).
+  - Supported `task_type` values include: `upload_postprocess`, `change_commit`, `maintenance`, `project_delete`, `project_scavenge`, and `image_move`.
 - `GET /api/tasks/definitions`
   - Returns task labels, user-relevant flags, and composed steps used by the client UI.
   - Source: `server/services/task_definitions.json`.
@@ -166,6 +190,7 @@ Client helper: see `client/src/api/jobsApi.js` for UI calls and the SSE singleto
 - List jobs: `GET /api/projects/:folder/jobs` (filters: `status`, `type`).
 - Job detail: `GET /api/jobs/:id` (includes items summary).
 - SSE stream: `GET /api/jobs/stream` for real-time updates.
+  - Dev-only client logs: the `client/src/api/jobsApi.js` SSE client logs `[SSE] ...` only when running under Vite dev (`import.meta.env.DEV`). Production builds do not log these messages.
 
 ## Project Deletion Task
 

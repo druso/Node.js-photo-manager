@@ -16,6 +16,7 @@ export default function OperationsMenu({
   onTagsBulkUpdated,
   config,
   trigger = 'label', // 'label' | 'hamburger'
+  onRequestMove,
 }) {
   const [open, setOpen] = useState(false);
   const [tagInput, setTagInput] = useState('');
@@ -179,6 +180,14 @@ export default function OperationsMenu({
               title="Regenerate thumbnails and previews for selected"
             >
               Regenerate thumbnails & previews (selected)
+            </button>
+            <button
+              onClick={() => { if (onRequestMove) onRequestMove(); }}
+              disabled={selectedPhotos.size === 0}
+              className={`w-full mt-2 px-3 py-2 text-sm rounded-md border ${selectedPhotos.size === 0 ? 'bg-gray-200 text-gray-500 cursor-not-allowed border-gray-300' : 'bg-gray-100 hover:bg-gray-200 border-gray-300 text-gray-800'}`}
+              title="Move selected photos to another project"
+            >
+              Move to…
             </button>
           </div>
 

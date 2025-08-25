@@ -20,6 +20,10 @@ const Settings = ({ project, config, onConfigUpdate, onProjectDelete, onProjectR
       copy.ui = copy.ui || { default_view_mode: 'grid', filters_collapsed_default: true, remember_last_project: true };
       // Ensure viewer defaults
       copy.viewer = copy.viewer || { preload_count: 1 };
+      // Ensure photo_grid defaults
+      copy.photo_grid = copy.photo_grid || {};
+      if (typeof copy.photo_grid.lazy_load_threshold !== 'number') copy.photo_grid.lazy_load_threshold = 100;
+      if (typeof copy.photo_grid.page_size !== 'number') copy.photo_grid.page_size = 100;
       // Ensure processing defaults
       copy.processing = copy.processing || {};
       copy.processing.thumbnail = copy.processing.thumbnail || { maxDim: 200, quality: 80 };
@@ -160,6 +164,9 @@ const Settings = ({ project, config, onConfigUpdate, onProjectDelete, onProjectR
           if (!('cancel_keep' in copy.keyboard_shortcuts)) copy.keyboard_shortcuts.cancel_keep = 'Delete';
           if (!('keep_jpg_only' in copy.keyboard_shortcuts)) copy.keyboard_shortcuts.keep_jpg_only = 'j';
           if (!('keep_raw_and_jpg' in copy.keyboard_shortcuts)) copy.keyboard_shortcuts.keep_raw_and_jpg = 'r';
+          copy.photo_grid = copy.photo_grid || {};
+          if (typeof copy.photo_grid.lazy_load_threshold !== 'number') copy.photo_grid.lazy_load_threshold = 100;
+          if (typeof copy.photo_grid.page_size !== 'number') copy.photo_grid.page_size = 100;
           setLocalConfig(copy);
           alert('Default settings restored.');
         } else {
@@ -324,9 +331,15 @@ const Settings = ({ project, config, onConfigUpdate, onProjectDelete, onProjectR
               <div className="space-y-2">
                 <h3 className="text-sm font-semibold">General</h3>
                 <label className="block">
-                  <span className="text-gray-700">Lazy Load Threshold</span>
+                  <span className="text-gray-700">Grid Pagination Threshold (px)</span>
                   <input type="number" value={localConfig.photo_grid.lazy_load_threshold}
                     onChange={(e) => handleConfigChange('photo_grid', 'lazy_load_threshold', parseInt(e.target.value, 10) || 0)}
+                    className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-md" />
+                </label>
+                <label className="block">
+                  <span className="text-gray-700">Grid Page Size</span>
+                  <input type="number" min={1} value={localConfig.photo_grid.page_size}
+                    onChange={(e) => handleConfigChange('photo_grid', 'page_size', Math.max(1, parseInt(e.target.value, 10) || 1))}
                     className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-md" />
                 </label>
                 <label className="block">
@@ -568,9 +581,15 @@ const Settings = ({ project, config, onConfigUpdate, onProjectDelete, onProjectR
                   <div className="space-y-2">
                     <h3 className="text-sm font-semibold">General</h3>
                     <label className="block">
-                      <span className="text-gray-700">Lazy Load Threshold</span>
+                      <span className="text-gray-700">Grid Pagination Threshold (px)</span>
                       <input type="number" value={localConfig.photo_grid.lazy_load_threshold}
                         onChange={(e) => handleConfigChange('photo_grid', 'lazy_load_threshold', parseInt(e.target.value, 10) || 0)}
+                        className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-md" />
+                    </label>
+                    <label className="block">
+                      <span className="text-gray-700">Grid Page Size</span>
+                      <input type="number" min={1} value={localConfig.photo_grid.page_size}
+                        onChange={(e) => handleConfigChange('photo_grid', 'page_size', Math.max(1, parseInt(e.target.value, 10) || 1))}
                         className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-md" />
                     </label>
                     <label className="block">

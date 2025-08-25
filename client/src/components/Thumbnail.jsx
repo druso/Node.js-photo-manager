@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useRef, useState } from 'react';
 
 // Shared thumbnail renderer with consistent placeholder logic
 // Props:
@@ -8,7 +8,7 @@ import React from 'react';
 // - rounded: apply rounded corners (default true)
 // - alt: alt text
 export default function Thumbnail({ photo, projectFolder, className = '', rounded = true, alt, objectFit = 'cover' }) {
-  const isRawFile = /\.(arw|cr2|nef|dng|raw)$/i.test(photo.filename);
+  const isRawFile = /(\.(arw|cr2|nef|dng|raw))$/i.test(photo.filename);
 
   const hasThumbnail = photo.thumbnail_status === 'generated';
   const thumbnailPending = photo.thumbnail_status === 'pending' || (!photo.thumbnail_status && !hasThumbnail);
@@ -18,15 +18,33 @@ export default function Thumbnail({ photo, projectFolder, className = '', rounde
   const fitClass = objectFit === 'contain' ? 'object-contain' : 'object-cover';
   // Use DB-updated timestamp to break cache when a thumbnail/preview gets generated
   const versionParam = encodeURIComponent(photo.updated_at || '0');
+  const debug = (typeof window !== 'undefined') && (window.__DEBUG_THUMBS || localStorage.getItem('debugThumbs') === '1');
+
+  const baseUrl = `/api/projects/${encodeURIComponent(projectFolder)}/thumbnail/${encodeURIComponent(photo.filename)}?v=${versionParam}`;
+  const [src, setSrc] = useState(baseUrl);
+  const retriedRef = useRef(false);
 
   // If a thumbnail exists, always show it (even for RAW files)
   if (hasThumbnail) {
     return (
       <img
-        src={`/api/projects/${projectFolder}/thumbnail/${photo.filename}?v=${versionParam}`}
+        src={src}
         alt={alt || photo.filename}
         className={`${commonClasses} ${fitClass}`}
         loading="lazy"
+        data-filename={photo.filename}
+        onError={(e) => {
+          if (!retriedRef.current) {
+            retriedRef.current = true;
+            const retryUrl = `${baseUrl}&r=${Date.now()}`;
+            if (debug) console.warn('[thumb] retrying', { filename: photo.filename, url: retryUrl });
+            setSrc(retryUrl);
+            return;
+          }
+          if (debug) console.warn('[thumb] failed after retry', { filename: photo.filename, url: src });
+          // Let parent placeholder show by doing nothing; image remains broken but grid shows gray.
+        }}
+        onLoad={() => { if (debug) console.debug('[thumb] loaded', { filename: photo.filename, url: src }); }}
       />
     );
   }

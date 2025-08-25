@@ -50,5 +50,14 @@
       { "type": "project_delete_files", "priority": 100 },
       { "type": "project_cleanup_db", "priority": 95 }
     ]
+  },
+  "image_move": {
+    "label": "Move Image Between Projects",
+    "user_relevant": true,
+    "steps": [
+      { "type": "image_move_files", "priority": 95 },
+      { "type": "manifest_check", "priority": 95 },
+      { "type": "generate_derivatives", "priority": 90 }
+    ]
   }
 }

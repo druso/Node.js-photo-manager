@@ -63,6 +63,9 @@
 - Implementation detail: all asset endpoints (thumbnails, previews, originals, zip) use streaming (`fs.createReadStream`) instead of `res.sendFile`, with `Cache-Control` and `ETag` headers for revalidation.
 - Rate limits are now configurable via `config.json → rate_limits` with environment overrides; current defaults (per IP): Thumbnails 600 rpm, Previews 600 rpm, Originals 120 rpm, ZIP 30 rpm. See `server/routes/assets.js` and `config.default.json`.
 - Env overrides for local stress testing: `THUMBNAIL_RATELIMIT_MAX`, `PREVIEW_RATELIMIT_MAX`, `IMAGE_RATELIMIT_MAX`, `ZIP_RATELIMIT_MAX`.
+- Originals lookup tolerates filenames with or without extensions. For `/image/:filename`, `/file/:type/:filename`, and `/files-zip/:filename`, the server attempts an exact DB match and then falls back to the base name (extension stripped). On disk, resolution is case-insensitive with a constrained directory scan fallback limited to the project folder and allowed extension sets (JPG or RAW). This mitigates 404s caused by extension casing differences (e.g., `.JPG`) while keeping the search scope bounded.
+- Diagnostics added to `server/routes/assets.js` to improve forensics and abuse monitoring: `thumb_request`, `preview_request`, `image_lookup`/`image_resolve`, `file_lookup`/`file_resolve`, `zip_lookup`/`zip_resolve`, `download_url_lookup`, and stream error/exception events per endpoint.
+- Frontend load shaping: the photo grid now uses a buffered `IntersectionObserver` with short dwell, which smooths scrolling and reduces bursty thumbnail requests without impacting perceived performance. This complements server-side rate limits.
 
 **Commit/Revert Endpoints**:
 - Commit is destructive: moves files to `.trash` and updates availability; ensure intent is authenticated/authorized in future multi-user mode.
@@ -73,6 +76,12 @@
 - `GET /api/jobs/stream` hardened with per‑IP connection cap (default 2), heartbeat every 25s, and idle timeout (default 5 min). Env overrides: `SSE_MAX_CONN_PER_IP`, `SSE_IDLE_TIMEOUT_MS`.
   - Client enforcement: the frontend maintains a single shared `EventSource` (see `client/src/api/jobsApi.js → openJobStream()`) persisted on `globalThis/window` to survive Vite HMR. This reduces parallel connections and helps avoid 429s while keeping server caps unchanged.
   - Dev guidance: close duplicate tabs and hard‑refresh if transient 429s appear during hot reloads; optionally raise `SSE_MAX_CONN_PER_IP` locally.
+ - Keep flag updates (`PUT /api/projects/:folder/keep`) now emit `type: item` SSEs with `keep_jpg`/`keep_raw`. This reduces client refetch pressure and prevents UI desync; rate limits on destructive endpoints remain in effect.
+
+**Client-side Storage**:
+- UI state persistence is session-only using `sessionStorage` (single key `session_ui_state`). No long-lived UI data is kept in `localStorage`.
+- Impact: reduces risk of stale/sensitive UI state persisting across sessions or shared machines.
+- Removed legacy per-project `localStorage` APIs and migration code from `client/src/utils/storage.js`.
 
 **Monitoring & Logging**:
 - Logging v2: All backend routes/services/workers emit structured JSON logs via `server/utils/logger2.js` with levels (`error|warn|info|debug`).
@@ -168,3 +177,5 @@ This ensures all functionality receives security review before deployment.
 ## Recent Development Notes
 
 All items from the previous cycle were assessed on 2025-08-20 UTC. Notes have been incorporated into this document (Security Overview and Suggested Interventions). No pending items remain here.
+
+2025-08-24 UTC — Frontend lazy-loading observer hardened to prevent random blank thumbnails and to shape thumbnail request rates (buffer margin + dwell). No new risks introduced; this reduces potential client-side request spikes during fast scrolling.

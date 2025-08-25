@@ -1,6 +1,10 @@
 // Jobs/Tasks API client for async pipeline
 
 // Start a task for a project
+// Dev-only logger (Vite: import.meta.env.DEV)
+let __isDev = false;
+try { __isDev = !!(import.meta && import.meta.env && import.meta.env.DEV); } catch (_) { /* non-Vite/non-ESM */ }
+const __devLog = (...args) => { try { if (__isDev) console.info(...args); } catch (_) {} };
 export async function startTask(folder, { task_type, source = 'client', items = null } = {}) {
   if (!task_type) throw new Error('startTask: task_type is required');
   const res = await fetch(`/api/projects/${encodeURIComponent(folder)}/jobs`, {
@@ -48,13 +52,19 @@ export function openJobStream(onMessage) {
   if (!__jobEs) {
     try { if (__jobEsTeardownTimer) { clearTimeout(__jobEsTeardownTimer); __jobEsTeardownTimer = null; } } catch {}
     __jobEs = new EventSource('/api/jobs/stream');
+    __devLog('[SSE] connecting to /api/jobs/stream ...');
+    __jobEs.onopen = () => {
+      __devLog('[SSE] connected');
+    };
     __jobEs.onmessage = (evt) => {
       let data = null;
       try { data = JSON.parse(evt.data); } catch { return; }
+      __devLog('[SSE] message', data && data.type ? data.type : '(no type)', data);
       __jobEsListeners.forEach(fn => { try { fn(data); } catch {} });
     };
     __jobEs.onerror = (e) => {
       __jobEsLastError = e || true;
+      __devLog('[SSE] error', e);
       // Let the browser auto-reconnect; don't tear down listeners
     };
     // Save back to global so subsequent HMR modules reuse it

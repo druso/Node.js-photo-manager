@@ -3,6 +3,7 @@ const jobsRepo = require('./repositories/jobsRepo');
 const { runGenerateDerivatives } = require('./workers/derivativesWorker');
 const { runProjectStopProcesses, runProjectDeleteFiles, runProjectCleanupDb } = require('./workers/projectDeletionWorker');
 const { runProjectScavenge } = require('./workers/projectScavengeWorker');
+const { runImageMoveFiles } = require('./workers/imageMoveWorker');
 const { runTrashMaintenance, runManifestCheck, runFolderCheck, runManifestCleaning } = require('./workers/maintenanceWorker');
 const { runFileRemoval } = require('./workers/fileRemovalWorker');
 const { emitJobUpdate } = require('./events');
@@ -143,6 +144,19 @@ async function handleJob(job, { heartbeatMs, maxAttemptsDefault, workerId }) {
     // Commit flow: file removal
     if (job.type === 'file_removal') {
       await runFileRemoval(job);
+      stopHeartbeat();
+      jobsRepo.complete(job.id);
+      {
+        const p = job.payload_json || {};
+        emitJobUpdate({ id: job.id, status: 'completed', task_id: p.task_id, task_type: p.task_type, source: p.source });
+      }
+      try { tasksOrchestrator.onJobCompleted(job); } catch {}
+      return;
+    }
+
+    // Image move job type
+    if (job.type === 'image_move_files') {
+      await runImageMoveFiles(job);
       stopHeartbeat();
       jobsRepo.complete(job.id);
       {

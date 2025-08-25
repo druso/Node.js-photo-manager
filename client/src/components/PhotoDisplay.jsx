@@ -2,7 +2,7 @@ import React from 'react';
 import PhotoGridView from './PhotoGridView';
 import PhotoTableView from './PhotoTableView';
 
-const PhotoDisplay = ({ viewMode, projectFolder, onPhotoSelect, projectData, selectedPhotos, onToggleSelection, lazyLoadThreshold, sortKey, sortDir, onSortChange, sizeLevel }) => {
+const PhotoDisplay = ({ viewMode, projectFolder, onPhotoSelect, projectData, selectedPhotos, onToggleSelection, lazyLoadThreshold, sortKey, sortDir, onSortChange, sizeLevel, photos, hasMore, onLoadMore, dwellMs }) => {
   if (viewMode === 'grid') {
     return (
       <PhotoGridView 
@@ -12,10 +12,14 @@ const PhotoDisplay = ({ viewMode, projectFolder, onPhotoSelect, projectData, sel
         selectedPhotos={selectedPhotos}
         onToggleSelection={onToggleSelection}
         lazyLoadThreshold={lazyLoadThreshold}
+        dwellMs={dwellMs}
         sortKey={sortKey}
         sortDir={sortDir}
         onSortChange={onSortChange}
         sizeLevel={sizeLevel}
+        photos={photos}
+        hasMore={hasMore}
+        onLoadMore={onLoadMore}
       />
     );
   } else {

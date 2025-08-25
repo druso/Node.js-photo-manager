@@ -82,8 +82,18 @@ function computeETagForFile(fp) {
   }
 }
 
-function setCacheHeadersOn200(res) {
-  res.setHeader('Cache-Control', 'public, max-age=60');
+function setCacheHeadersOn200(req, res) {
+  try {
+    const hasVersion = !!(req && req.query && typeof req.query.v !== 'undefined');
+    if (hasVersion) {
+      // With deterministic versioned URLs, we can cache aggressively
+      res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+    } else {
+      res.setHeader('Cache-Control', 'public, max-age=60');
+    }
+  } catch (_) {
+    res.setHeader('Cache-Control', 'public, max-age=60');
+  }
 }
 
 function setNegativeCacheHeaders(res) {
@@ -101,10 +111,10 @@ router.get('/:folder/thumbnail/:filename', rateLimit({ windowMs: 60 * 1000, max:
   if (fs.existsSync(thumbPath)) {
     const etag = computeETagForFile(thumbPath);
     if (etag && req.headers['if-none-match'] === etag) {
-      setCacheHeadersOn200(res);
+      setCacheHeadersOn200(req, res);
       return res.status(304).end();
     }
-    setCacheHeadersOn200(res);
+    setCacheHeadersOn200(req, res);
     if (etag) res.setHeader('ETag', etag);
     try {
       res.setHeader('Content-Type', 'image/jpeg');
@@ -139,10 +149,10 @@ router.get('/:folder/preview/:filename', rateLimit({ windowMs: 60 * 1000, max: R
   if (fs.existsSync(prevPath)) {
     const etag = computeETagForFile(prevPath);
     if (etag && req.headers['if-none-match'] === etag) {
-      setCacheHeadersOn200(res);
+      setCacheHeadersOn200(req, res);
       return res.status(304).end();
     }
-    setCacheHeadersOn200(res);
+    setCacheHeadersOn200(req, res);
     if (etag) res.setHeader('ETag', etag);
     try {
       res.setHeader('Content-Type', 'image/jpeg');
@@ -176,7 +186,13 @@ router.get('/:folder/file/:type/:filename', rateLimit({ windowMs: 60 * 1000, max
     const project = projectsRepo.getByFolder(folder);
     if (!project) return res.status(404).json({ error: 'Project not found' });
     const base = baseFromParam(filenameParam); // normalize only for disk paths
-    const entry = photosRepo.getByProjectAndFilename(project.id, filenameParam); // lookup uses full filename
+    // Try exact filename first, then fallback to base (without extension)
+    let entry = photosRepo.getByProjectAndFilename(project.id, filenameParam);
+    const triedExact = !!entry;
+    if (!entry && base && base !== filenameParam) {
+      entry = photosRepo.getByProjectAndFilename(project.id, base);
+    }
+    log.info('file_lookup', { project_folder: folder, type, filename: filenameParam, base, tried_exact: triedExact, found: !!entry });
     if (!entry) return res.status(404).json({ error: 'Photo not found' });
 
     if (!['jpg', 'raw'].includes(type)) {
@@ -184,15 +200,16 @@ router.get('/:folder/file/:type/:filename', rateLimit({ windowMs: 60 * 1000, max
     }
 
     const chosenFile = resolveOriginalPath({ projectPath, base, prefer: type, entry });
+    log.info('file_resolve', { project_folder: folder, type, filename: filenameParam, base, chosen: chosenFile ? path.resolve(chosenFile) : null });
     if (!chosenFile || !fs.existsSync(chosenFile)) return res.status(404).json({ error: 'Requested file not found' });
 
     // Stream with headers
     const etag = computeETagForFile(chosenFile);
     if (etag && req.headers['if-none-match'] === etag) {
-      setCacheHeadersOn200(res);
+      setCacheHeadersOn200(req, res);
       return res.status(304).end();
     }
-    setCacheHeadersOn200(res);
+    setCacheHeadersOn200(req, res);
     if (etag) res.setHeader('ETag', etag);
     res.setHeader('Content-Type', guessContentTypeFromExt(chosenFile));
     res.setHeader('Content-Disposition', `attachment; filename="${path.basename(chosenFile)}"`);
@@ -221,9 +238,9 @@ router.get('/:folder/file/:type/:filename', rateLimit({ windowMs: 60 * 1000, max
 
 // POST /api/projects/:folder/download-url  -> { filename, type: 'jpg'|'raw'|'zip', ttlMs? } => { url }
 router.post('/:folder/download-url', express.json(), async (req, res) => {
+  const { folder } = req.params;
+  const { filename, type, ttlMs } = req.body || {};
   try {
-    const { folder } = req.params;
-    const { filename, type, ttlMs } = req.body || {};
     if (!filename || !type || !['jpg', 'raw', 'zip'].includes(type)) {
       return res.status(400).json({ error: 'Invalid parameters' });
     }
@@ -232,7 +249,13 @@ router.post('/:folder/download-url', express.json(), async (req, res) => {
     const project = projectsRepo.getByFolder(folder);
     if (!project) return res.status(404).json({ error: 'Project not found' });
     const base = baseFromParam(filename);
-    const entry = photosRepo.getByProjectAndFilename(project.id, filename);
+    // Try exact filename first, then fallback to base (without extension)
+    let entry = photosRepo.getByProjectAndFilename(project.id, filename);
+    const triedExact = !!entry;
+    if (!entry && base && base !== filename) {
+      entry = photosRepo.getByProjectAndFilename(project.id, base);
+    }
+    log.info('download_url_lookup', { project_folder: folder, filename, base, tried_exact: triedExact, found: !!entry });
     if (!entry) return res.status(404).json({ error: 'Photo not found' });
     const url = buildSignedUrl(folder, type, filename, typeof ttlMs === 'number' ? ttlMs : undefined);
     return res.json({ url });
@@ -251,11 +274,18 @@ router.get('/:folder/files-zip/:filename', rateLimit({ windowMs: 60 * 1000, max:
     const project = projectsRepo.getByFolder(folder);
     if (!project) return res.status(404).json({ error: 'Project not found' });
     const base = baseFromParam(filenameParam); // normalize only for disk paths
-    const entry = photosRepo.getByProjectAndFilename(project.id, filenameParam); // lookup uses full filename
+    // Try exact filename first, then fallback to base (without extension)
+    let entry = photosRepo.getByProjectAndFilename(project.id, filenameParam);
+    const triedExact = !!entry;
+    if (!entry && base && base !== filenameParam) {
+      entry = photosRepo.getByProjectAndFilename(project.id, base);
+    }
+    log.info('zip_lookup', { project_folder: folder, filename: filenameParam, base, tried_exact: triedExact, found: !!entry });
     if (!entry) return res.status(404).json({ error: 'Photo not found' });
 
     const jpgPath = resolveOriginalPath({ projectPath, base, prefer: 'jpg', entry });
     const rawPath = resolveOriginalPath({ projectPath, base, prefer: 'raw', entry });
+    log.info('zip_resolve', { project_folder: folder, filename: filenameParam, base, jpg: jpgPath ? path.resolve(jpgPath) : null, raw: rawPath ? path.resolve(rawPath) : null });
     const candidates = [jpgPath, rawPath].filter(Boolean);
     if (!candidates.length) return res.status(404).json({ error: 'No related files found to zip' });
 
@@ -285,7 +315,13 @@ router.get('/:folder/image/:filename', rateLimit({ windowMs: 60 * 1000, max: RAT
     const project = projectsRepo.getByFolder(folder);
     if (!project) { setNegativeCacheHeaders(res); return res.status(404).json({ error: 'Project not found' }); }
     const base = baseFromParam(filename);
-    const entry = photosRepo.getByProjectAndFilename(project.id, filename); // lookup uses full filename
+    // Try exact filename first, then fallback to base (without extension)
+    let entry = photosRepo.getByProjectAndFilename(project.id, filename);
+    const triedExact = !!entry;
+    if (!entry && base && base !== filename) {
+      entry = photosRepo.getByProjectAndFilename(project.id, base);
+    }
+    log.info('image_lookup', { project_folder: folder, filename, base, tried_exact: triedExact, found: !!entry });
     if (!entry) { setNegativeCacheHeaders(res); return res.status(404).json({ error: 'Photo not found' }); }
 
     if (!entry.jpg_available) {
@@ -296,14 +332,15 @@ router.get('/:folder/image/:filename', rateLimit({ windowMs: 60 * 1000, max: RAT
     }
 
     const jpgPath = resolveOriginalPath({ projectPath, base, prefer: 'jpg', entry });
+    log.info('image_resolve', { project_folder: folder, filename, base, jpg: jpgPath ? path.resolve(jpgPath) : null });
     if (!jpgPath) { setNegativeCacheHeaders(res); return res.status(404).json({ error: 'JPG file not found on disk' }); }
 
     const etag = computeETagForFile(jpgPath);
     if (etag && req.headers['if-none-match'] === etag) {
-      setCacheHeadersOn200(res);
+      setCacheHeadersOn200(req, res);
       return res.status(304).end();
     }
-    setCacheHeadersOn200(res);
+    setCacheHeadersOn200(req, res);
     if (etag) res.setHeader('ETag', etag);
     try {
       res.setHeader('Content-Type', 'image/jpeg');

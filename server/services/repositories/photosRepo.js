@@ -125,6 +125,32 @@ function countByProject(project_id) {
   return db.prepare(`SELECT COUNT(*) as c FROM photos WHERE project_id = ?`).get(project_id).c;
 }
 
+// Returns a photo by filename across all projects, optionally excluding a project_id
+function getGlobalByFilename(filename, { exclude_project_id = null } = {}) {
+  if (!filename) return null;
+  const db = getDb();
+  const conds = ['filename = ?'];
+  const params = [filename];
+  if (exclude_project_id != null) { conds.push('project_id != ?'); params.push(exclude_project_id); }
+  const where = `WHERE ${conds.join(' AND ')}`;
+  return db.prepare(`SELECT * FROM photos ${where} LIMIT 1`).get(...params);
+}
+
+// Move a photo row to a different project, rewriting manifest_id and aligning keep flags to availability
+function moveToProject({ photo_id, to_project_id }) {
+  if (!photo_id || !to_project_id) throw new Error('moveToProject requires photo_id and to_project_id');
+  const db = getDb();
+  const row = getById(photo_id);
+  if (!row) throw new Error('Photo not found');
+  const ts = nowISO();
+  const manifest_id = `${to_project_id}:${row.filename}`;
+  const keep_jpg = row.jpg_available ? 1 : 0;
+  const keep_raw = row.raw_available ? 1 : 0;
+  db.prepare(`UPDATE photos SET project_id = ?, manifest_id = ?, keep_jpg = ?, keep_raw = ?, updated_at = ? WHERE id = ?`)
+    .run(to_project_id, manifest_id, keep_jpg, keep_raw, ts, photo_id);
+  return getById(photo_id);
+}
+
 module.exports = {
   upsertPhoto,
   updateDerivativeStatus,
@@ -133,6 +159,8 @@ module.exports = {
   getByManifestId,
   getByFilename,
   getByProjectAndFilename,
+  getGlobalByFilename,
+  moveToProject,
   listPaged,
   removeById,
   countByProject,

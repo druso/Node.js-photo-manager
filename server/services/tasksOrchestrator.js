@@ -41,8 +41,17 @@ function onJobCompleted(job) {
   // Find index of this job type in steps
   const idx = def.steps.findIndex(s => s.type === job.type);
   if (idx < 0) return;
-  const next = def.steps[idx + 1];
+  let next = def.steps[idx + 1];
   if (!next) return; // Task finished
+  // Conditional skip: if next is generate_derivatives and upstream set flag false
+  if (next.type === 'generate_derivatives') {
+    const need = payload.need_generate_derivatives;
+    if (need === false) {
+      // Skip this step, try the following one if present
+      next = def.steps[idx + 2];
+      if (!next) return;
+    }
+  }
   const tenant_id = job.tenant_id || 'user_0';
   const project_id = job.project_id;
   const nextPayload = { ...payload }; // propagate task metadata

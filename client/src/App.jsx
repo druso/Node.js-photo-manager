@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState, useCallback, useLayoutEffect } from 'react';
 import { listProjects, getProject, createProject } from './api/projectsApi';
+import { listProjectPhotos } from './api/photosApi';
 import ProjectSelector from './components/ProjectSelector';
 import PhotoDisplay from './components/PhotoDisplay';
 import OperationsMenu from './components/OperationsMenu';
@@ -16,6 +17,8 @@ import BottomUploadBar from './components/BottomUploadBar';
 import GlobalDragDrop from './components/GlobalDragDrop';
 import './App.css';
 import { useToast } from './ui/toast/ToastContext';
+import MovePhotosModal from './components/MovePhotosModal';
+import { getSessionState, setSessionWindowY, setSessionMainY, setSessionViewer, clearSessionState, getLastProject, setLastProject } from './utils/storage';
 
 function App() {
   const [projects, setProjects] = useState([]);
@@ -48,6 +51,12 @@ function App() {
   const [taskDefs, setTaskDefs] = useState(null);
   const notifiedTasksRef = useRef(new Set());
 
+  // Backend pagination state for grid view
+  const [pagedPhotos, setPagedPhotos] = useState([]);
+  const [pagedTotal, setPagedTotal] = useState(0);
+  const [nextCursor, setNextCursor] = useState(null);
+  const [loadingMore, setLoadingMore] = useState(false);
+
   // Commit and revert flows
   const [showCommitModal, setShowCommitModal] = useState(false);
   const [committing, setCommitting] = useState(false);
@@ -57,6 +66,8 @@ function App() {
   const [showRevertModal, setShowRevertModal] = useState(false);
   const [reverting, setReverting] = useState(false);
   const revertOpenerElRef = useRef(null);
+  // Move modal state
+  const [showMoveModal, setShowMoveModal] = useState(false);
 
   const handleCommitChanges = () => {
     if (!selectedProject) return;
@@ -64,6 +75,70 @@ function App() {
     try { commitOpenerElRef.current = document.activeElement; } catch {}
     setShowCommitModal(true);
   };
+
+  // Normalize filenames: strip known photo extensions for tolerant comparisons
+  const stripKnownExt = useCallback((name) => {
+    try {
+      const s = String(name || '');
+      const m = s.match(/\.[A-Za-z0-9]+$/);
+      if (!m) return s;
+      const ext = m[0].toLowerCase();
+      const known = new Set(['.jpg', '.jpeg', '.raw', '.arw', '.cr2', '.nef', '.dng']);
+      return known.has(ext) ? s.slice(0, -ext.length) : s;
+    } catch {
+      return String(name || '');
+    }
+  }, []);
+
+  // Map UI sort to API sort fields
+  const resolveApiSort = useCallback(() => {
+    const apiSort = (sortKey === 'date') ? 'date_time_original' : (sortKey === 'name' ? 'filename' : 'date_time_original');
+    const apiDir = (sortDir === 'asc') ? 'ASC' : 'DESC';
+    return { apiSort, apiDir };
+  }, [sortKey, sortDir]);
+
+  const loadFirstPage = useCallback(async (folder) => {
+    if (!folder) return;
+    const { apiSort, apiDir } = resolveApiSort();
+    try {
+      const res = await listProjectPhotos(folder, { sort: apiSort, dir: apiDir });
+      setPagedPhotos(res.items || []);
+      setPagedTotal(res.total || 0);
+      setNextCursor(res.nextCursor ?? null);
+    } catch (e) {
+      console.warn('Failed to load first page', e);
+      setPagedPhotos([]);
+      setPagedTotal(0);
+      setNextCursor(null);
+    }
+  }, [resolveApiSort]);
+
+  const loadMore = useCallback(async () => {
+    if (!selectedProject || !nextCursor || loadingMore) return;
+    setLoadingMore(true);
+    try {
+      const { apiSort, apiDir } = resolveApiSort();
+      const res = await listProjectPhotos(selectedProject.folder, { cursor: nextCursor, sort: apiSort, dir: apiDir });
+      setPagedPhotos(prev => prev.concat(res.items || []));
+      setPagedTotal(res.total || pagedTotal);
+      setNextCursor(res.nextCursor ?? null);
+    } catch (e) {
+      console.warn('Failed to load more photos', e);
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [selectedProject, nextCursor, loadingMore, resolveApiSort, pagedTotal]);
+
+  // Reset and reload first page when project or sort changes
+  useEffect(() => {
+    if (!selectedProject) return;
+    setPagedPhotos([]);
+    setPagedTotal(0);
+    setNextCursor(null);
+    // Debounce slightly to allow projectData to settle
+    const id = setTimeout(() => { loadFirstPage(selectedProject.folder); }, 0);
+    return () => clearTimeout(id);
+  }, [selectedProject, sortKey, sortDir, loadFirstPage]);
 
   const confirmCommitChanges = async () => {
     if (!selectedProject) return;
@@ -94,6 +169,31 @@ function App() {
           }
         }
         return { ...prev, photos };
+      });
+      // Keep paginated grid in sync with optimistic commit
+      setPagedPhotos(prev => {
+        if (!Array.isArray(prev)) return prev;
+        const result = [];
+        for (const p of prev) {
+          const willRemoveJpg = !!p.jpg_available && p.keep_jpg === false;
+          const willRemoveRaw = !!p.raw_available && p.keep_raw === false;
+          if (!willRemoveJpg && !willRemoveRaw) { result.push(p); continue; }
+          const next = { ...p };
+          if (willRemoveJpg) {
+            next.jpg_available = false;
+            next.thumbnail_status = 'missing';
+            next.preview_status = 'missing';
+          }
+          if (willRemoveRaw) {
+            next.raw_available = false;
+          }
+          if (!next.jpg_available && !next.raw_available) {
+            // remove entirely
+          } else {
+            result.push(next);
+          }
+        }
+        return result;
       });
 
       await toast.promise(
@@ -128,15 +228,7 @@ function App() {
   const prefsLoadedOnceRef = useRef(false);
   const viewerRestoredRef = useRef(false);
   const DEBUG_PERSIST = false; // set true to see console logs
-  // Per-project session keys
-  const scrollKeys = useMemo(() => {
-    const folder = selectedProject?.folder || '__none__';
-    return {
-      win: `window_scroll_y::${folder}`,
-      main: `main_scroll_top::${folder}`,
-      viewer: `viewer_state::${folder}`,
-    };
-  }, [selectedProject?.folder]);
+  // Session-only persistence: single key handled by storage helpers
 
   // Track if UI prefs were loaded so config defaults don't overwrite them
   const uiPrefsLoadedRef = useRef(false);
@@ -326,20 +418,19 @@ function App() {
     }
   }, [uiPrefsReady]);
 
-  // Persist and restore window scroll position (per project, sessionStorage)
+  // Persist and restore window scroll position (session-only)
   useEffect(() => {
-    // Load saved Y for current project
-    const key = scrollKeys.win;
-    const savedY = key ? sessionStorage.getItem(key) : null;
-    if (savedY != null) initialSavedYRef.current = parseInt(savedY, 10) || 0;
+    // Load saved Y for current session
+    try {
+      const st = getSessionState();
+      if (st && typeof st.windowY === 'number') initialSavedYRef.current = st.windowY;
+    } catch {}
     const onScroll = () => {
-      try {
-        sessionStorage.setItem(scrollKeys.win, String(window.scrollY || window.pageYOffset || 0));
-      } catch {}
+      try { setSessionWindowY(window.scrollY || window.pageYOffset || 0); } catch {}
     };
     window.addEventListener('scroll', onScroll, { passive: true });
     return () => window.removeEventListener('scroll', onScroll);
-  }, [scrollKeys.win]);
+  }, []);
 
   // Re-apply saved window scroll once after initial content render
   useEffect(() => {
@@ -347,11 +438,18 @@ function App() {
     if (initialSavedYRef.current == null) return;
     if (activeTab !== 'view') return;
     const y = initialSavedYRef.current;
-    let raf1 = requestAnimationFrame(() => {
-      let raf2 = requestAnimationFrame(() => {
-        try { window.scrollTo(0, y); } catch {}
-        windowScrollRestoredRef.current = true; // only do this once
-      });
+    let attempts = 0;
+    const maxAttempts = 5;
+    const apply = () => {
+      attempts++;
+      try { window.scrollTo(0, y); } catch {}
+      // If not yet applied (layout not ready), try again shortly
+      if (Math.abs((window.scrollY || window.pageYOffset || 0) - y) > 1 && attempts < maxAttempts) {
+        setTimeout(() => requestAnimationFrame(apply), 30);
+      }
+    };
+    const raf1 = requestAnimationFrame(() => {
+      const raf2 = requestAnimationFrame(apply);
       (window.__raf2 ||= []).push(raf2);
     });
     (window.__raf1 ||= []).push(raf1);
@@ -361,21 +459,33 @@ function App() {
     };
   }, [activeTab, projectData, config]);
 
-  // Persist and restore main scroll position (per project, sessionStorage)
+  // Persist and restore main scroll position (session-only)
   useEffect(() => {
     const el = mainRef.current;
     if (!el) return;
     // restore
-    const saved = sessionStorage.getItem(scrollKeys.main);
-    if (saved != null) {
-      try { el.scrollTop = parseInt(saved, 10) || 0; } catch {}
-    }
+    try {
+      const st = getSessionState();
+      if (st && typeof st.mainY === 'number') {
+        const target = st.mainY || 0;
+        el.scrollTop = target;
+        // small retry to ensure it sticks after layout/content paint
+        let count = 0;
+        const max = 4;
+        const retry = () => {
+          if (Math.abs(el.scrollTop - target) <= 1 || count >= max) return;
+          count++;
+          requestAnimationFrame(() => setTimeout(() => { el.scrollTop = target; retry(); }, 20));
+        };
+        retry();
+      }
+    } catch {}
     const onScroll = () => {
-      try { sessionStorage.setItem(scrollKeys.main, String(el.scrollTop)); } catch {}
+      try { setSessionMainY(el.scrollTop || 0); } catch {}
     };
     el.addEventListener('scroll', onScroll, { passive: true });
     return () => el.removeEventListener('scroll', onScroll);
-  }, [scrollKeys.main]);
+  }, []);
 
   const toggleSort = (key) => {
     if (sortKey === key) {
@@ -425,7 +535,7 @@ function App() {
       }
       const remember = config?.ui?.remember_last_project !== false;
       if (remember) {
-        const lastProjectFolder = localStorage.getItem('druso-last-project');
+        const lastProjectFolder = getLastProject();
         if (lastProjectFolder) {
           const lastProject = projects.find(p => p.folder === lastProjectFolder);
           if (lastProject) {
@@ -444,7 +554,7 @@ function App() {
     if (selectedProject) {
       const remember = config?.ui?.remember_last_project !== false;
       if (remember) {
-        localStorage.setItem('druso-last-project', selectedProject.folder);
+        setLastProject(selectedProject.folder);
       }
     }
   }, [selectedProject, config]);
@@ -462,17 +572,21 @@ function App() {
     // Capture UI state to restore after data updates
     const savedWindowY = (() => {
       const live = window.scrollY || window.pageYOffset || 0;
-      const saved = sessionStorage.getItem(scrollKeys.win);
-      return saved != null ? parseInt(saved, 10) || live : live;
+      try {
+        const st = getSessionState();
+        return (st && typeof st.windowY === 'number') ? st.windowY : live;
+      } catch { return live; }
     })();
     const mainEl = mainRef.current;
     const savedMainY = (() => {
       const live = mainEl ? mainEl.scrollTop : 0;
-      const saved = sessionStorage.getItem(scrollKeys.main);
-      return saved != null ? parseInt(saved, 10) || live : live;
+      try {
+        const st = getSessionState();
+        return (st && typeof st.mainY === 'number') ? st.mainY : live;
+      } catch { return live; }
     })();
     const savedViewer = (() => {
-      try { return JSON.parse(sessionStorage.getItem(scrollKeys.viewer) || 'null') || viewerState || { isOpen: false }; }
+      try { const st = getSessionState(); return (st && st.viewer) ? st.viewer : (viewerState || { isOpen: false }); }
       catch { return viewerState || { isOpen: false }; }
     })();
 
@@ -480,6 +594,8 @@ function App() {
     try {
       const data = await getProject(projectFolder);
       setProjectData(data);
+      // Kick off initial paginated load (do not await to keep UI responsive)
+      try { loadFirstPage(projectFolder); } catch {}
     } catch (error) {
       console.error('Error fetching project data:', error);
     } finally {
@@ -502,29 +618,14 @@ function App() {
     }
   };
 
-  // Persist viewer state per project (sessionStorage)
+  // Persist viewer state (session-only). Avoid overwriting saved session state on initial mount
   useEffect(() => {
-    if (!selectedProject) return;
-    try {
-      sessionStorage.setItem(scrollKeys.viewer, JSON.stringify(viewerState || { isOpen: false }));
-    } catch {}
-  }, [viewerState, selectedProject, scrollKeys.viewer]);
+    // If we haven't restored yet and current state isn't explicitly open, skip the initial write
+    if (!viewerRestoredRef.current && !(viewerState && viewerState.isOpen)) return;
+    try { setSessionViewer(viewerState || { isOpen: false }); } catch {}
+  }, [viewerState]);
 
-  // Attempt viewer restore on project selection (once per project)
-  useEffect(() => {
-    if (!selectedProject) return;
-    if (viewerRestoredRef.current) return;
-    try {
-      const saved = sessionStorage.getItem(scrollKeys.viewer);
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (parsed && parsed.isOpen) {
-          setViewerState(prev => ({ ...(prev || {}), ...parsed, isOpen: true }));
-        }
-      }
-      viewerRestoredRef.current = true;
-    } catch {}
-  }, [selectedProject, scrollKeys.viewer]);
+  // Removed premature restore: we restore after photos are available below
 
   const handleProjectSelect = (project) => {
     // Handle null/invalid project selection (e.g., dropdown placeholder)
@@ -535,6 +636,14 @@ function App() {
       return;
     }
     
+    // Clear session state only when switching away from an already selected project
+    // Avoid clearing on initial selection after a reload (selectedProject is null then)
+    const isSwitchingToDifferent = !!(selectedProject?.folder && selectedProject.folder !== project.folder);
+    if (isSwitchingToDifferent) {
+      try { clearSessionState(); } catch {}
+      windowScrollRestoredRef.current = false;
+      initialSavedYRef.current = null;
+    }
     setSelectedProject(project);
     fetchProjectData(project.folder);
     setSelectedPhotos(new Set()); // Clear selection when switching projects
@@ -555,6 +664,7 @@ function App() {
             const photos = prev.photos.filter(p => !toRemove.has(p.filename));
             return { ...prev, photos };
           });
+          setPagedPhotos(prev => Array.isArray(prev) ? prev.filter(p => !toRemove.has(p.filename)) : prev);
         }
         return;
       }
@@ -563,28 +673,106 @@ function App() {
       if (evt && evt.type === 'item' && selectedProject && evt.project_folder === selectedProject.folder) {
         setProjectData(prev => {
           if (!prev || !Array.isArray(prev.photos)) return prev;
-          const idx = prev.photos.findIndex(p => p.filename === evt.filename);
+          const target = String(evt.filename || '');
+          const targetBase = stripKnownExt(target);
+          const idx = prev.photos.findIndex(p => (p.filename === target) || (stripKnownExt(p.filename) === targetBase));
           if (idx === -1) return prev;
           const updated = { ...prev.photos[idx] };
           if (evt.thumbnail_status) updated.thumbnail_status = evt.thumbnail_status;
           if (evt.preview_status) updated.preview_status = evt.preview_status;
+          // Also reconcile keep flags if present
+          if (typeof evt.keep_jpg === 'boolean') updated.keep_jpg = evt.keep_jpg;
+          if (typeof evt.keep_raw === 'boolean') updated.keep_raw = evt.keep_raw;
           if (evt.updated_at) updated.updated_at = evt.updated_at;
           const photos = prev.photos.slice();
           photos[idx] = updated;
           return { ...prev, photos };
         });
+        // Mirror update into paginated grid
+        setPagedPhotos(prev => {
+          if (!Array.isArray(prev)) return prev;
+          const target = String(evt.filename || '');
+          const targetBase = stripKnownExt(target);
+          const idx = prev.findIndex(p => (p.filename === target) || (stripKnownExt(p.filename) === targetBase));
+          if (idx === -1) return prev;
+          const updated = { ...prev[idx] };
+          if (evt.thumbnail_status) updated.thumbnail_status = evt.thumbnail_status;
+          if (evt.preview_status) updated.preview_status = evt.preview_status;
+          if (typeof evt.keep_jpg === 'boolean') updated.keep_jpg = evt.keep_jpg;
+          if (typeof evt.keep_raw === 'boolean') updated.keep_raw = evt.keep_raw;
+          if (evt.updated_at) updated.updated_at = evt.updated_at;
+          const next = prev.slice();
+          next[idx] = updated;
+          return next;
+        });
         return; // handled
       }
 
-      // 1b) Item removed: drop from list in-place
+      // 1b) Item removed: drop from list in-place (tolerant to extension differences)
       if (evt && evt.type === 'item_removed' && selectedProject && evt.project_folder === selectedProject.folder) {
-        const fname = evt.filename;
-        if (!fname) return;
+        try { console.debug('[SSE] item_removed received', { evt, selectedFolder: selectedProject.folder }); } catch {}
+        const fname = String(evt.filename || '');
+        const base = stripKnownExt(fname);
         setProjectData(prev => {
           if (!prev || !Array.isArray(prev.photos)) return prev;
-          const photos = prev.photos.filter(p => p.filename !== fname);
+          const before = prev.photos.length;
+          const photos = prev.photos.filter(p => p.filename !== fname && stripKnownExt(p.filename) !== base);
+          try { console.debug('[SSE] item_removed projectData updated', { before, after: photos.length, removed: before - photos.length, fname, base }); } catch {}
           return { ...prev, photos };
         });
+        setPagedPhotos(prev => {
+          if (!Array.isArray(prev)) return prev;
+          const before = prev.length;
+          const next = prev.filter(p => p.filename !== fname && stripKnownExt(p.filename) !== base);
+          try { console.debug('[SSE] item_removed pagedPhotos updated', { before, after: next.length, removed: before - next.length }); } catch {}
+          return next;
+        });
+        return; // handled
+      }
+
+      // 1c) Item moved into this project: update if exists (tolerant match), else soft refetch
+      if (evt && evt.type === 'item_moved' && selectedProject && evt.project_folder === selectedProject.folder) {
+        try { console.debug('[SSE] item_moved received', { evt, selectedFolder: selectedProject.folder }); } catch {}
+        const fname = String(evt.filename || '');
+        const base = stripKnownExt(fname);
+        // Determine presence before updating state to avoid relying on side-effects inside setState
+        const existsInProjectData = Array.isArray(projectData?.photos)
+          ? projectData.photos.findIndex(p => p.filename === fname || stripKnownExt(p.filename) === base) !== -1
+          : false;
+        const existsInPaged = Array.isArray(pagedPhotos)
+          ? pagedPhotos.findIndex(p => p.filename === fname || stripKnownExt(p.filename) === base) !== -1
+          : false;
+
+        setProjectData(prev => {
+          if (!prev || !Array.isArray(prev.photos)) return prev;
+          const idx = prev.photos.findIndex(p => p.filename === fname || stripKnownExt(p.filename) === base);
+          if (idx === -1) return prev;
+          const updated = { ...prev.photos[idx] };
+          if (evt.thumbnail_status) updated.thumbnail_status = evt.thumbnail_status;
+          if (evt.preview_status) updated.preview_status = evt.preview_status;
+          if (typeof evt.keep_jpg === 'boolean') updated.keep_jpg = evt.keep_jpg;
+          if (typeof evt.keep_raw === 'boolean') updated.keep_raw = evt.keep_raw;
+          if (evt.updated_at) updated.updated_at = evt.updated_at;
+          const photos = prev.photos.slice();
+          photos[idx] = updated;
+          try { console.debug('[SSE] item_moved projectData updatedInPlace', { idx, fname, base }); } catch {}
+          return { ...prev, photos };
+        });
+        setPagedPhotos(prev => {
+          if (!Array.isArray(prev)) return prev;
+          const idx = prev.findIndex(p => p.filename === fname || stripKnownExt(p.filename) === base);
+          if (idx === -1) return prev;
+          const updated = { ...prev[idx] };
+          if (evt.thumbnail_status) updated.thumbnail_status = evt.thumbnail_status;
+          if (evt.preview_status) updated.preview_status = evt.preview_status;
+          const next = prev.toSpliced ? prev.toSpliced(idx, 1, updated) : (() => { const n = prev.slice(); n[idx] = updated; return n; })();
+          try { console.debug('[SSE] item_moved pagedPhotos updatedInPlace', { idx }); } catch {}
+          return next;
+        });
+        // If it wasn't present in either list, it's a new arrival; do a light refetch
+        if (!existsInProjectData && !existsInPaged) {
+          try { console.debug('[SSE] item_moved not found in-place; light refetch'); fetchProjectData(selectedProject.folder); } catch {}
+        }
         return; // handled
       }
 
@@ -618,7 +806,7 @@ function App() {
       // 3) Do not refetch on job completion; rely on item/item_removed + manifest_changed handling
     });
     return () => close();
-  }, [selectedProject, taskDefs]);
+  }, [selectedProject, taskDefs, stripKnownExt]);
 
   // Fallback polling: while any thumbnail is pending and SSE not yet delivering, periodically refetch
   useEffect(() => {
@@ -642,7 +830,7 @@ function App() {
         // set BEFORE updating projects to beat the effect race
         pendingSelectProjectRef.current = createdFolder;
         // also persist immediately so remember-last-project points to the new one
-        try { localStorage.setItem('druso-last-project', createdFolder); } catch {}
+        try { setLastProject(createdFolder); } catch {}
       }
       // Refresh and select the created project from the latest list
       const latest = await listProjects();
@@ -682,6 +870,14 @@ function App() {
         return u ? { ...p, keep_jpg: u.keep_jpg, keep_raw: u.keep_raw } : p;
       });
       return { ...prev, photos };
+    });
+    setPagedPhotos(prev => {
+      if (!Array.isArray(prev)) return prev;
+      const byName = new Map(updates.map(u => [u.filename, u]));
+      return prev.map(p => {
+        const u = byName.get(p.filename);
+        return u ? { ...p, keep_jpg: u.keep_jpg, keep_raw: u.keep_raw } : p;
+      });
     });
   }, []);
 
@@ -729,15 +925,17 @@ function App() {
       startIndex: photoIndex >= 0 ? photoIndex : 0
     });
     try {
-      sessionStorage.setItem('viewer_open', '1');
-      if (photo?.filename) sessionStorage.setItem('viewer_filename', photo.filename);
-      sessionStorage.setItem('viewer_index', String(photoIndex >= 0 ? photoIndex : 0));
+      setSessionViewer({
+        isOpen: true,
+        startIndex: photoIndex >= 0 ? photoIndex : 0,
+        filename: photo?.filename || undefined,
+      });
     } catch {}
   };
 
   const handleCloseViewer = () => {
     setViewerState({ isOpen: false, startIndex: 0 });
-    try { sessionStorage.setItem('viewer_open', '0'); } catch {}
+    try { setSessionViewer({ isOpen: false }); } catch {}
   };
 
   // Update in-memory keep flags when viewer changes them
@@ -755,9 +953,11 @@ function App() {
   // Stable callback to persist current viewer index/filename during navigation
   const handleViewerIndexChange = useCallback((idx, photo) => {
     try {
-      sessionStorage.setItem('viewer_index', String(idx));
-      if (photo?.filename) sessionStorage.setItem('viewer_filename', photo.filename);
-      sessionStorage.setItem('viewer_open', '1');
+      setSessionViewer({
+        isOpen: true,
+        startIndex: Number(idx) || 0,
+        filename: photo?.filename || undefined,
+      });
     } catch {}
   }, []);
 
@@ -787,11 +987,8 @@ function App() {
     }
   };
 
-  // Filter photos based on active filters
-  const getFilteredPhotos = () => {
-    if (!projectData?.photos) return [];
-    
-    return projectData.photos.filter((photo, index) => {
+  // Filter helper used for both full project list (table) and paged list (grid)
+  const filterPhotoPredicate = (photo, index = 0) => {
       // Text search filter
       if (activeFilters.textSearch) {
         const searchTerm = activeFilters.textSearch.toLowerCase();
@@ -801,9 +998,7 @@ function App() {
           typeof value === 'string' && value.toLowerCase().includes(searchTerm)
         );
         
-        if (!matchesFilename && !matchesTags && !matchesMetadata) {
-          return false;
-        }
+        if (!matchesFilename && !matchesTags && !matchesMetadata) { return false; }
       }
       
       // Date range filter (only uses date_time_original field)
@@ -812,13 +1007,8 @@ function App() {
         if (photoDate) {
           const date = new Date(photoDate).toISOString().split('T')[0];
           
-          if (activeFilters.dateRange.start && date < activeFilters.dateRange.start) {
-            return false;
-          }
-          
-          if (activeFilters.dateRange.end && date > activeFilters.dateRange.end) {
-            return false;
-          }
+          if (activeFilters.dateRange.start && date < activeFilters.dateRange.start) { return false; }
+          if (activeFilters.dateRange.end && date > activeFilters.dateRange.end) { return false; }
         }
       }
       
@@ -833,11 +1023,11 @@ function App() {
 
       // Keep-type filter (based on planned keep flags)
       if (activeFilters.keepType && activeFilters.keepType !== 'any') {
-        // Defaults: treat undefined as keep_jpg=true, keep_raw=false
-        const kj = photo.keep_jpg !== false; // default true unless explicitly false
-        const kr = photo.keep_raw === true;  // default false unless explicitly true
-        if (activeFilters.keepType === 'any_kept' && !kj) return false;
-        if (activeFilters.keepType === 'none' && !(kj === false && kr === false)) return false;
+        // Only count explicitly set flags as kept
+        const kj = photo.keep_jpg === true;
+        const kr = photo.keep_raw === true;
+        if (activeFilters.keepType === 'any_kept' && !(kj || kr)) return false;
+        if (activeFilters.keepType === 'none' && !(photo.keep_jpg === false && photo.keep_raw === false)) return false;
         if (activeFilters.keepType === 'jpg_only' && !(kj === true && kr === false)) return false;
         if (activeFilters.keepType === 'raw_jpg' && !(kj === true && kr === true)) return false;
       }
@@ -886,16 +1076,19 @@ function App() {
       }
       
       return true;
-    });
+  };
+
+  // Filter photos based on active filters (full list; used by table and legacy flows)
+  const getFilteredPhotos = () => {
+    if (!projectData?.photos) return [];
+    return projectData.photos.filter((p, i) => filterPhotoPredicate(p, i));
   };
 
   // Get filtered photos for display
   const filteredPhotos = getFilteredPhotos();
 
   // Sort filtered photos (stable) with useMemo for performance
-  const sortedPhotos = useMemo(() => {
-    const arr = [...filteredPhotos];
-    const compare = (a, b) => {
+  const compareBySort = useCallback((a, b) => {
       const dir = sortDir === 'asc' ? 1 : -1;
       if (sortKey === 'name') {
         return a.filename.localeCompare(b.filename) * dir;
@@ -922,34 +1115,44 @@ function App() {
         return a.filename.localeCompare(b.filename) * dir;
       }
       return 0;
-    };
-    arr.sort(compare);
+    }, [sortKey, sortDir]);
+
+  const sortedPhotos = useMemo(() => {
+    const arr = [...filteredPhotos];
+    arr.sort(compareBySort);
     return arr;
-  }, [filteredPhotos, sortKey, sortDir]);
+  }, [filteredPhotos, compareBySort]);
+
+  // Apply filters/sorting to the paginated list for grid view
+  const filteredPagedPhotos = useMemo(() => {
+    return (pagedPhotos || []).filter((p, i) => filterPhotoPredicate(p, i));
+  }, [pagedPhotos, activeFilters]);
+
+  const sortedPagedPhotos = useMemo(() => {
+    const arr = [...filteredPagedPhotos];
+    arr.sort(compareBySort);
+    return arr;
+  }, [filteredPagedPhotos, compareBySort]);
   const filteredProjectData = projectData ? {
     ...projectData,
     photos: sortedPhotos
   } : null;
 
-  // Restore viewer state (open and index/filename) once filtered photos are ready
+  // Restore viewer state (open and index/filename) once filtered photos are ready from session state
   useEffect(() => {
     if (activeTab !== 'view') return;
     const photos = filteredProjectData?.photos || projectData?.photos;
     if (!photos || photos.length === 0) return;
     if (viewerRestoredRef.current) return;
-    let shouldOpen = false;
-    try { shouldOpen = sessionStorage.getItem('viewer_open') === '1'; } catch {}
-    if (!shouldOpen) return;
-    let idx = 0;
-    let fname = null;
-    try { fname = sessionStorage.getItem('viewer_filename') || null; } catch {}
-    if (fname) {
-      const found = photos.findIndex(p => p.filename === fname);
-      if (found >= 0) idx = found; else {
-        try { const storedIdx = parseInt(sessionStorage.getItem('viewer_index') || '0', 10); idx = isNaN(storedIdx) ? 0 : Math.min(Math.max(storedIdx, 0), photos.length - 1); } catch {}
-      }
+    const st = getSessionState();
+    const v = st?.viewer;
+    if (!v || !v.isOpen) return;
+    let idx = Number.isFinite(v.startIndex) ? v.startIndex : 0;
+    if (v.filename) {
+      const found = photos.findIndex(p => p.filename === v.filename);
+      if (found >= 0) idx = found; else idx = Math.min(Math.max(idx, 0), photos.length - 1);
     } else {
-      try { const storedIdx = parseInt(sessionStorage.getItem('viewer_index') || '0', 10); idx = isNaN(storedIdx) ? 0 : Math.min(Math.max(storedIdx, 0), photos.length - 1); } catch {}
+      idx = Math.min(Math.max(idx, 0), photos.length - 1);
     }
     viewerRestoredRef.current = true;
     setViewerState({ isOpen: true, startIndex: idx });
@@ -999,6 +1202,14 @@ function App() {
               keep_raw: !!p.raw_available,
             }));
             return { ...prev, photos };
+          });
+          setPagedPhotos(prev => {
+            if (!Array.isArray(prev)) return prev;
+            return prev.map(p => ({
+              ...p,
+              keep_jpg: !!p.jpg_available,
+              keep_raw: !!p.raw_available,
+            }));
           });
         })(),
         {
@@ -1326,6 +1537,7 @@ function App() {
                             onTagsBulkUpdated={handleTagsBulkUpdated}
                             config={config}
                             trigger="label"
+                            onRequestMove={() => setShowMoveModal(true)}
                           />
                         </div>
                       )
@@ -1334,6 +1546,31 @@ function App() {
                 </div>
               </div>
             )}
+
+            {/* Move photos modal */}
+            <MovePhotosModal
+              open={showMoveModal}
+              onClose={(res) => {
+                setShowMoveModal(false);
+                if (res && res.moved) {
+                  // Optimistically remove moved items from current source project's UI
+                  // Use selectedPhotos (Set of filenames) to filter from projectData and pagedPhotos
+                  const toRemove = new Set(Array.from(selectedPhotos || []));
+                  if (toRemove.size > 0) {
+                    setProjectData(prev => {
+                      if (!prev || !Array.isArray(prev.photos)) return prev;
+                      const photos = prev.photos.filter(p => !toRemove.has(p.filename));
+                      return { ...prev, photos };
+                    });
+                    setPagedPhotos(prev => Array.isArray(prev) ? prev.filter(p => !toRemove.has(p.filename)) : prev);
+                  }
+                  // Clear selection after updating UI
+                  setSelectedPhotos(new Set());
+                }
+              }}
+              sourceFolder={selectedProject ? selectedProject.folder : ''}
+              selectedFilenames={Array.from(selectedPhotos || [])}
+            />
 
             {/* Filters Panel */}
             {!filtersCollapsed && (
@@ -1451,14 +1688,18 @@ function App() {
                 viewMode={viewMode}
                 projectData={filteredProjectData}
                 projectFolder={selectedProject?.folder}
-                onPhotoSelect={(photo) => handlePhotoSelect(photo, sortedPhotos)}
+                onPhotoSelect={(photo) => handlePhotoSelect(photo, sortedPagedPhotos)}
                 onToggleSelection={handleToggleSelection}
                 selectedPhotos={selectedPhotos}
                 lazyLoadThreshold={config?.photo_grid?.lazy_load_threshold ?? 100}
+                dwellMs={config?.photo_grid?.dwell_ms ?? 300}
                 sortKey={sortKey}
                 sortDir={sortDir}
                 onSortChange={toggleSort}
                 sizeLevel={sizeLevel}
+                photos={sortedPagedPhotos}
+                hasMore={!!nextCursor}
+                onLoadMore={loadMore}
               />
               </>
               )}
