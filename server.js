@@ -67,6 +67,9 @@ app.use('/api/projects', maintenanceRouter);
 // Jobs routes
 const jobsRouter = require('./server/routes/jobs');
 app.use('/api', jobsRouter);
+// All Photos (cross-project) route
+const photosRouter = require('./server/routes/photos');
+app.use('/api', photosRouter);
 
 // Centralized error handler (must be after routes)
 app.use(errorHandler);

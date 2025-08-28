@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState, useCallback, useLayoutEffect } from 'react';
 import { listProjects, getProject, createProject } from './api/projectsApi';
 import { listProjectPhotos } from './api/photosApi';
+import { listAllPhotos, locateAllPhotosPage } from './api/allPhotosApi';
 import ProjectSelector from './components/ProjectSelector';
 import PhotoDisplay from './components/PhotoDisplay';
 import OperationsMenu from './components/OperationsMenu';
@@ -8,6 +9,7 @@ import OperationsMenu from './components/OperationsMenu';
 import SettingsProcessesModal from './components/SettingsProcessesModal';
 import { openJobStream, fetchTaskDefinitions, listJobs } from './api/jobsApi';
 import PhotoViewer from './components/PhotoViewer';
+import ErrorBoundary from './components/ErrorBoundary';
 // Settings rendered via SettingsProcessesModal
 import UniversalFilter from './components/UniversalFilter';
 import { UploadProvider } from './upload/UploadContext';
@@ -18,7 +20,21 @@ import GlobalDragDrop from './components/GlobalDragDrop';
 import './App.css';
 import { useToast } from './ui/toast/ToastContext';
 import MovePhotosModal from './components/MovePhotosModal';
-import { getSessionState, setSessionWindowY, setSessionMainY, setSessionViewer, clearSessionState, getLastProject, setLastProject } from './utils/storage';
+import { getSessionState, setSessionWindowY, setSessionMainY, getLastProject, setLastProject } from './utils/storage';
+
+// Normalize filenames: strip known photo extensions for tolerant comparisons
+function stripKnownExt(name) {
+  try {
+    const s = String(name || '');
+    const m = s.match(/\.[A-Za-z0-9]+$/);
+    if (!m) return s;
+    const ext = m[0].toLowerCase();
+    const known = new Set(['.jpg', '.jpeg', '.raw', '.arw', '.cr2', '.nef', '.dng']);
+    return known.has(ext) ? s.slice(0, -ext.length) : s;
+  } catch {
+    return String(name || '');
+  }
+}
 
 function App() {
   const [projects, setProjects] = useState([]);
@@ -31,7 +47,9 @@ function App() {
   const [showCreateProject, setShowCreateProject] = useState(false);
   const [newProjectName, setNewProjectName] = useState('');
   const [config, setConfig] = useState(null);
-  const [viewerState, setViewerState] = useState({ isOpen: false, startIndex: 0 });
+  const [viewerState, setViewerState] = useState({ isOpen: false, startIndex: 0, fromAll: false });
+  // When opening viewer (esp. from All -> project), pin the exact list used to compute the index
+  const [viewerList, setViewerList] = useState(null);
   const [viewMode, setViewMode] = useState('grid'); // 'grid' or 'table'
   const [selectedPhotos, setSelectedPhotos] = useState(new Set());
   const [filtersCollapsed, setFiltersCollapsed] = useState(true);
@@ -57,6 +75,25 @@ function App() {
   const [nextCursor, setNextCursor] = useState(null);
   const [loadingMore, setLoadingMore] = useState(false);
 
+  // All Photos mode state
+  const [isAllMode, setIsAllMode] = useState(false);
+  const [allPhotos, setAllPhotos] = useState([]);
+  const [allNextCursor, setAllNextCursor] = useState(null);
+  const [allLoadingMore, setAllLoadingMore] = useState(false);
+  // Guards for All Photos pagination
+  const allSeenKeysRef = useRef(new Set()); // track project_folder::filename across pages
+  const allLastCursorRef = useRef(null); // last cursor we requested
+  const allSeenCursorsRef = useRef(new Set()); // guard against repeating the same cursor
+  const allLoadingLockRef = useRef(false); // synchronous reentrancy guard
+  const allDeepLinkRef = useRef(null); // { folder, filename, attempted: false }
+  const pendingOpenRef = useRef(null); // { folder, filename } when navigating from All mode
+  // Guard to ensure we only attempt the locate-page API once per deep-link navigation
+  const allLocateTriedRef = useRef(false);
+  // Suppress URL updates until viewer stabilizes on the deep-linked target
+  const suppressUrlRef = useRef(null); // { expectName: lowercased filename/basename }
+  // Selection specific to All Photos mode (use composite key project_folder::filename)
+  const [allSelectedPhotos, setAllSelectedPhotos] = useState(new Set());
+
   // Commit and revert flows
   const [showCommitModal, setShowCommitModal] = useState(false);
   const [committing, setCommitting] = useState(false);
@@ -68,6 +105,8 @@ function App() {
   const revertOpenerElRef = useRef(null);
   // Move modal state
   const [showMoveModal, setShowMoveModal] = useState(false);
+  // All Photos mode: Move modal state
+  const [showAllMoveModal, setShowAllMoveModal] = useState(false);
 
   const handleCommitChanges = () => {
     if (!selectedProject) return;
@@ -76,19 +115,376 @@ function App() {
     setShowCommitModal(true);
   };
 
-  // Normalize filenames: strip known photo extensions for tolerant comparisons
-  const stripKnownExt = useCallback((name) => {
+  // All Photos pagination
+  const loadAllFirstPage = useCallback(async () => {
+    if (!isAllMode) return;
     try {
-      const s = String(name || '');
-      const m = s.match(/\.[A-Za-z0-9]+$/);
-      if (!m) return s;
-      const ext = m[0].toLowerCase();
-      const known = new Set(['.jpg', '.jpeg', '.raw', '.arw', '.cr2', '.nef', '.dng']);
-      return known.has(ext) ? s.slice(0, -ext.length) : s;
-    } catch {
-      return String(name || '');
+      const range = activeFilters?.dateRange || {};
+      const filterParams = {
+        limit: 100,
+        date_from: range.start || undefined,
+        date_to: range.end || undefined,
+        file_type: activeFilters?.fileType,
+        keep_type: activeFilters?.keepType,
+        orientation: activeFilters?.orientation,
+      };
+      try { console.debug('[all-photos] loadAllFirstPage with filters:', filterParams); } catch {}
+      const res = await listAllPhotos(filterParams);
+      // reset guards
+      allSeenKeysRef.current = new Set();
+      allLastCursorRef.current = null;
+      allSeenCursorsRef.current = new Set();
+      const items = Array.isArray(res.items) ? res.items : [];
+      for (const it of items) {
+        const key = `${it.project_folder}::${it.filename}`;
+        allSeenKeysRef.current.add(key);
+      }
+      setAllPhotos(items);
+      setAllNextCursor(res.next_cursor ?? null);
+    } catch (e) {
+      // Failed to load all photos first page
+      setAllPhotos([]);
+      setAllNextCursor(null);
     }
+  }, [isAllMode, activeFilters?.dateRange, activeFilters?.fileType, activeFilters?.keepType, activeFilters?.orientation]);
+
+  const loadAllMore = useCallback(async () => {
+    if (!isAllMode || !allNextCursor || allLoadingMore) return;
+    if (allLoadingLockRef.current) return; // prevent concurrent calls within same tick
+    allLoadingLockRef.current = true;
+    setAllLoadingMore(true);
+    try {
+      const range = activeFilters?.dateRange || {};
+      const currentCursor = allNextCursor;
+      allLastCursorRef.current = currentCursor;
+      // If we have already seen this cursor, bail out to avoid infinite loops
+      if (allSeenCursorsRef.current.has(currentCursor)) {
+        // Cursor already seen, stopping pagination
+        return;
+      }
+      allSeenCursorsRef.current.add(currentCursor);
+      const filterParams = {
+        cursor: currentCursor,
+        date_from: range.start || undefined,
+        date_to: range.end || undefined,
+        file_type: activeFilters?.fileType,
+        keep_type: activeFilters?.keepType,
+        orientation: activeFilters?.orientation,
+      };
+      try { console.debug('[all-photos] loadAllMore with filters:', filterParams); } catch {}
+      const res = await listAllPhotos(filterParams);
+      const incoming = Array.isArray(res.items) ? res.items : [];
+      // Dedupe by composite key across pages
+      const deduped = [];
+      for (const it of incoming) {
+        const key = `${it.project_folder}::${it.filename}`;
+        if (!allSeenKeysRef.current.has(key)) {
+          allSeenKeysRef.current.add(key);
+          deduped.push(it);
+        }
+      }
+      setAllPhotos(prev => [...prev, ...deduped]);
+      setAllNextCursor(res.next_cursor || null);
+    } catch (err) {
+      // All Photos loadAllMore error
+      setAllPhotos([]);
+      setAllNextCursor(null);
+    } finally {
+      setAllLoadingMore(false);
+      allLoadingLockRef.current = false;
+    }
+  }, [isAllMode, allNextCursor, allLoadingMore, activeFilters?.dateRange, activeFilters?.fileType, activeFilters?.keepType, activeFilters?.orientation]);
+
+  // Reload All Photos when toggled on or when filters change (date range, file/keep/orientation)
+  useEffect(() => {
+    if (!isAllMode) {
+      // Clear state when leaving All mode
+      setAllPhotos([]);
+      setAllNextCursor(null);
+      allSeenKeysRef.current = new Set();
+      allSeenCursorsRef.current = new Set();
+      allLastCursorRef.current = null;
+      return;
+    }
+    try { console.debug('[all-photos] filters changed, reloading:', { dateRange: activeFilters?.dateRange, fileType: activeFilters?.fileType, keepType: activeFilters?.keepType, orientation: activeFilters?.orientation }); } catch {}
+    const id = setTimeout(() => { loadAllFirstPage(); }, 0);
+    return () => clearTimeout(id);
+  }, [isAllMode, activeFilters?.dateRange?.start, activeFilters?.dateRange?.end, activeFilters?.fileType, activeFilters?.keepType, activeFilters?.orientation, loadAllFirstPage]);
+
+  // When All Photos load or paginate, resolve deep-link target if present.
+  // First, try the efficient locate-page endpoint once; on failure, fall back to sequential paging.
+  useEffect(() => {
+    if (!isAllMode) return;
+    if (!allPhotos.length) return;
+    const target = allDeepLinkRef.current;
+    if (!target) return;
+
+    const targetLower = String(target.filename || '').toLowerCase();
+    try {
+      console.debug('[deep-link] detected', { folder: target.folder, raw: target.filename, targetLower });
+    } catch {}
+    const isTarget = (p) => {
+      if (!p || p.project_folder !== target.folder) return false;
+      const fn = (p.filename || '').toLowerCase();
+      if (fn === targetLower) return true;
+      const base = (p.basename ? String(p.basename) : String(p.filename || ''))
+        .toLowerCase()
+        .replace(/\.[^/.]+$/, '');
+      return base === targetLower;
+    };
+
+    // If the current list already contains the target, open the viewer immediately.
+    const idx = allPhotos.findIndex(isTarget);
+    if (idx >= 0) {
+      const targetPhoto = allPhotos[idx];
+      try { console.debug('[deep-link] target found in current list', { idx, targetPhoto: targetPhoto.filename }); } catch {}
+      
+      // Disable URL updates during deep link resolution
+      suppressUrlRef.current = { disabled: true };
+      
+      setViewerList(allPhotos.slice());
+      setViewerState({ isOpen: true, startIndex: idx, fromAll: true });
+      // Session viewer state removed - URL is source of truth
+      allDeepLinkRef.current = null;
+      allLocateTriedRef.current = false;
+      
+      // Mark viewer as restored to prevent session interference
+      viewerRestoredRef.current = true;
+      
+      // Re-enable URL updates after viewer stabilizes
+      setTimeout(() => {
+        suppressUrlRef.current = null;
+      }, 100);
+      return;
+    }
+
+    // If we haven't tried locate-page yet, do so now with current filters.
+    if (!allLocateTriedRef.current) {
+      allLocateTriedRef.current = true;
+      (async () => {
+        try {
+          const range = activeFilters?.dateRange || {};
+          const maybeName = stripKnownExt(target.filename || '');
+          const hasDot = /\.[A-Za-z0-9]+$/.test(String(target.filename || ''));
+          try { console.debug('[deep-link] locate request', { folder: target.folder, use: hasDot ? 'filename' : 'name', filename: hasDot ? String(target.filename) : undefined, name: !hasDot ? String(maybeName) : undefined, filters: { date_from: range.start || undefined, date_to: range.end || undefined, file_type: activeFilters?.fileType, keep_type: activeFilters?.keepType, orientation: activeFilters?.orientation } }); } catch {}
+          const res = await locateAllPhotosPage({
+            project_folder: target.folder,
+            // Prefer filename if it appears to include an extension; otherwise use basename via `name`
+            filename: hasDot ? String(target.filename) : undefined,
+            name: !hasDot ? String(maybeName) : undefined,
+            limit: 100,
+            date_from: range.start || undefined,
+            date_to: range.end || undefined,
+            file_type: activeFilters?.fileType,
+            keep_type: activeFilters?.keepType,
+            orientation: activeFilters?.orientation,
+          });
+
+          const items = Array.isArray(res.items) ? res.items : [];
+          try { console.debug('[deep-link] locate response', { count: items.length, idx_in_items: res.idx_in_items, target: res.target, first: items[0]?.filename, last: items[items.length-1]?.filename }); } catch {}
+          // Reset guards and state to align with a fresh page
+          allSeenKeysRef.current = new Set();
+          allSeenCursorsRef.current = new Set();
+          allLastCursorRef.current = null;
+          for (const it of items) {
+            const key = `${it.project_folder}::${it.filename}`;
+            allSeenKeysRef.current.add(key);
+          }
+          setAllPhotos(items);
+          setAllNextCursor(res.next_cursor ?? null);
+
+          // CRITICAL: Use the exact index returned by locate-page API
+          const startIndex = Number.isFinite(res.idx_in_items) && res.idx_in_items >= 0 ? res.idx_in_items : -1;
+          if (startIndex >= 0 && items[startIndex]) {
+            const targetPhoto = items[startIndex];
+            try { console.debug('[deep-link] open viewer at API index', { startIndex, targetPhoto: targetPhoto.filename, expected: target.filename }); } catch {}
+            
+            // Disable URL updates completely during deep link resolution
+            suppressUrlRef.current = { disabled: true };
+            
+            setViewerList(items.slice());
+            setViewerState({ isOpen: true, startIndex, fromAll: true });
+            // Session viewer state removed - URL is source of truth
+            allDeepLinkRef.current = null;
+            
+            // Mark viewer as restored to prevent session interference
+            viewerRestoredRef.current = true;
+            
+            // Re-enable URL updates after a brief delay to let viewer stabilize
+            setTimeout(() => {
+              suppressUrlRef.current = null;
+            }, 100);
+          } else {
+            // Invalid index from locate-page
+          }
+        } catch (e) {
+          // Deep-link locate failed, falling back to first page
+          // On 404/409 or any failure, seed sequential fallback by loading the first page.
+          // This ensures allNextCursor is initialized so the fallback can paginate.
+          try { await loadAllFirstPage(); } catch {}
+        }
+      })();
+      return; // wait for locate attempt before sequential paging
+    }
+
+    // Sequential fallback: keep loading more until found or exhausted
+    if (allNextCursor && !allLoadingMore) {
+      loadAllMore();
+    }
+  }, [isAllMode, allPhotos, allNextCursor, allLoadingMore, loadAllMore, loadAllFirstPage, activeFilters?.dateRange, activeFilters?.fileType, activeFilters?.keepType, activeFilters?.orientation, stripKnownExt]);
+
+  // Handle selection of a photo in All Photos mode → open viewer without switching project
+  const handleAllPhotoSelect = useCallback((photo) => {
+    if (!photo) return;
+    const idx = allPhotos.findIndex(p => p.project_folder === photo.project_folder && p.filename === photo.filename);
+    const start = idx >= 0 ? idx : 0;
+    // Snapshot current list to avoid index drifting while pagination appends
+    setViewerList(allPhotos.slice());
+    setViewerState({ isOpen: true, startIndex: start, fromAll: true });
+    // Session viewer state removed - URL is source of truth
+    // push deep link: /all/:projectFolder/:filename
+    try {
+      const range = (activeFilters?.dateRange) || {};
+      const qp = new URLSearchParams();
+      if (range.start) qp.set('date_from', range.start);
+      if (range.end) qp.set('date_to', range.end);
+      if (activeFilters?.fileType && activeFilters.fileType !== 'any') qp.set('file_type', activeFilters.fileType);
+      if (activeFilters?.keepType && activeFilters.keepType !== 'any') qp.set('keep_type', activeFilters.keepType);
+      if (activeFilters?.orientation && activeFilters.orientation !== 'any') qp.set('orientation', activeFilters.orientation);
+      const search = qp.toString();
+      const nameForUrl = (photo.basename) || (photo.filename || '').replace(/\.[^/.]+$/, '');
+      window.history.pushState({}, '', `/all/${encodeURIComponent(photo.project_folder)}/${encodeURIComponent(nameForUrl)}${search ? `?${search}` : ''}`);
+    } catch {}
+  }, [allPhotos, activeFilters?.dateRange?.start, activeFilters?.dateRange?.end]);
+
+  // From viewer in All mode: switch to the photo's project and reopen there
+  const handleOpenInProjectFromViewer = useCallback((photo) => {
+    if (!photo || !photo.project_folder) return;
+    // Set pending open, close viewer, leave All mode and select project
+    pendingOpenRef.current = { folder: photo.project_folder, filename: photo.filename };
+    setViewerState(prev => ({ ...(prev || {}), isOpen: false }));
+    setIsAllMode(false);
+    // Push hard deep link so boot/route parser will ensure opening the exact photo
+    try {
+      const range = (activeFilters?.dateRange) || {};
+      const qp = new URLSearchParams();
+      if (range.start) qp.set('date_from', range.start);
+      if (range.end) qp.set('date_to', range.end);
+      if (activeFilters?.fileType && activeFilters.fileType !== 'any') qp.set('file_type', activeFilters.fileType);
+      if (activeFilters?.keepType && activeFilters.keepType !== 'any') qp.set('keep_type', activeFilters.keepType);
+      if (activeFilters?.orientation && activeFilters.orientation !== 'any') qp.set('orientation', activeFilters.orientation);
+      const search = qp.toString();
+      const nameForUrl = (photo.basename) || (photo.filename || '').replace(/\.[^/.]+$/, '');
+      window.history.pushState({}, '', `/${encodeURIComponent(photo.project_folder)}/${encodeURIComponent(nameForUrl)}${search ? `?${search}` : ''}`);
+    } catch {}
+    const proj = projects.find(p => p.folder === photo.project_folder);
+    if (proj) handleProjectSelect(proj);
+  }, [projects, activeFilters?.dateRange, activeFilters?.fileType, activeFilters?.keepType, activeFilters?.orientation]);
+
+  // Toggle selection for All Photos mode (composite key to avoid collisions across projects)
+  const handleToggleSelectionAll = useCallback((photo) => {
+    if (!photo) return;
+    const key = `${photo.project_folder}::${photo.filename}`;
+    setAllSelectedPhotos(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
   }, []);
+
+
+
+  // Smooth-scroll the All Photos grid to the specified photo cell by its data-key
+  const scrollAllToTarget = useCallback((folder, filename, tries = 0) => {
+    try {
+      if (!folder || !filename) return;
+      const key = `${folder}::${filename}`;
+      const sel = `[data-key="${key}"]`;
+      const el = document.querySelector(sel);
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
+        return;
+      }
+      // Retry a few times in case DOM hasn't painted yet
+      if (tries < 5) {
+        setTimeout(() => scrollAllToTarget(folder, filename, tries + 1), 60);
+      }
+    } catch {}
+  }, []);
+
+  // Initialize All Photos or Project mode and deep-link viewer from URL (takes precedence over session/last project)
+  useEffect(() => {
+    try {
+      const path = window.location?.pathname || '';
+      const qs = window.location?.search || '';
+      const params = new URLSearchParams(qs);
+      const initialFrom = params.get('date_from') || '';
+      const initialTo = params.get('date_to') || '';
+      const initialFileType = params.get('file_type') || '';
+      const initialKeepType = params.get('keep_type') || '';
+      const initialOrientation = params.get('orientation') || '';
+      if (initialFrom || initialTo) {
+        setActiveFilters(prev => ({
+          ...prev,
+          dateRange: { start: initialFrom || '', end: initialTo || '' }
+        }));
+      }
+      if (initialFileType || initialKeepType || initialOrientation) {
+        setActiveFilters(prev => ({
+          ...prev,
+          fileType: initialFileType || prev.fileType,
+          keepType: initialKeepType || prev.keepType,
+          orientation: initialOrientation || prev.orientation,
+        }));
+      }
+      if (path === '/') {
+        setIsAllMode(true);
+        try {
+          const qp = new URLSearchParams();
+          if (initialFrom) qp.set('date_from', initialFrom);
+          if (initialTo) qp.set('date_to', initialTo);
+          if (initialFileType) qp.set('file_type', initialFileType);
+          if (initialKeepType) qp.set('keep_type', initialKeepType);
+          if (initialOrientation) qp.set('orientation', initialOrientation);
+          const search = qp.toString();
+          window.history.replaceState({}, '', `/all${search ? `?${search}` : ''}`);
+        } catch {}
+        return;
+      }
+      if (path === '/all') { setIsAllMode(true); return; }
+      // match /all/:projectFolder/:filename
+      const m = path.match(/^\/all\/(.+?)\/(.+)$/);
+      if (m) {
+        const folder = decodeURIComponent(m[1]);
+        const filename = decodeURIComponent(m[2]);
+        setIsAllMode(true);
+        allDeepLinkRef.current = { folder, filename };
+        return;
+      }
+      // match /:projectFolder or /:projectFolder/:filename (exclude /all)
+      const m2 = path.match(/^\/(?!all$)([^/]+)(?:\/([^/]+))?$/);
+      if (m2) {
+        const folder = decodeURIComponent(m2[1]);
+        const filename = m2[2] ? decodeURIComponent(m2[2]) : null;
+        setIsAllMode(false);
+        // Drive initial project selection via pendingSelectProjectRef so it wins over last-project
+        pendingSelectProjectRef.current = folder;
+        if (filename) {
+          // Open in viewer after project/photos load
+          pendingOpenRef.current = { folder, filename };
+          // Session viewer state removed - URL is source of truth
+        }
+        return;
+      }
+      const saved = localStorage.getItem('all_mode');
+      if (saved === '1') setIsAllMode(true);
+    } catch {}
+  }, []);
+
+  // Persist All Photos mode
+  useEffect(() => {
+    try { localStorage.setItem('all_mode', isAllMode ? '1' : '0'); } catch {}
+  }, [isAllMode]);
 
   // Map UI sort to API sort fields
   const resolveApiSort = useCallback(() => {
@@ -106,7 +502,7 @@ function App() {
       setPagedTotal(res.total || 0);
       setNextCursor(res.nextCursor ?? null);
     } catch (e) {
-      console.warn('Failed to load first page', e);
+      // Failed to load first page
       setPagedPhotos([]);
       setPagedTotal(0);
       setNextCursor(null);
@@ -123,7 +519,7 @@ function App() {
       setPagedTotal(res.total || pagedTotal);
       setNextCursor(res.nextCursor ?? null);
     } catch (e) {
-      console.warn('Failed to load more photos', e);
+      // Failed to load more photos
     } finally {
       setLoadingMore(false);
     }
@@ -139,6 +535,62 @@ function App() {
     const id = setTimeout(() => { loadFirstPage(selectedProject.folder); }, 0);
     return () => clearTimeout(id);
   }, [selectedProject, sortKey, sortDir, loadFirstPage]);
+
+  // When target project is loaded, open the viewer at the desired photo (match by filename or basename),
+  // and ensure the paginated grid loads pages until that photo is present.
+  useEffect(() => {
+    const pending = pendingOpenRef.current;
+    if (!pending) return;
+    if (!selectedProject || selectedProject.folder !== pending.folder) return;
+    const targetNameRaw = String(pending.filename || '').trim();
+    if (!targetNameRaw) return;
+    const targetLower = targetNameRaw.toLowerCase();
+    const isTarget = (p) => {
+      if (!p) return false;
+      const fn = (p.filename || '').toLowerCase();
+      if (fn === targetLower) return true;
+      const base = (p.basename ? String(p.basename) : String(p.filename || ''))
+        .toLowerCase()
+        .replace(/\.[^/.]+$/, '');
+      return base === targetLower;
+    };
+
+    const fullList = Array.isArray(projectData?.photos) ? projectData.photos : null;
+    const idxFull = Array.isArray(fullList) ? fullList.findIndex(isTarget) : -1;
+    const idxPaged = Array.isArray(pagedPhotos) ? pagedPhotos.findIndex(isTarget) : -1;
+
+    // Open viewer once (prefer full list for complete navigation)
+    if (!viewerState?.isOpen && idxFull >= 0) {
+      setViewerList(fullList);
+      setViewerState({ isOpen: true, startIndex: idxFull });
+      // Session viewer state removed - URL is source of truth
+      try {
+        const nameForUrl = (fullList[idxFull]?.basename) || (fullList[idxFull]?.filename || '').replace(/\.[^/.]+$/, '');
+        if (selectedProject?.folder && nameForUrl) {
+          // Include current filters in URL
+          const range = (activeFilters?.dateRange) || {};
+          const qp = new URLSearchParams();
+          if (range.start) qp.set('date_from', range.start);
+          if (range.end) qp.set('date_to', range.end);
+          if (activeFilters?.fileType && activeFilters.fileType !== 'any') qp.set('file_type', activeFilters.fileType);
+          if (activeFilters?.keepType && activeFilters.keepType !== 'any') qp.set('keep_type', activeFilters.keepType);
+          if (activeFilters?.orientation && activeFilters.orientation !== 'any') qp.set('orientation', activeFilters.orientation);
+          const search = qp.toString();
+          window.history.pushState({}, '', `/${encodeURIComponent(selectedProject.folder)}/${encodeURIComponent(nameForUrl)}${search ? `?${search}` : ''}`);
+        }
+      } catch {}
+    }
+
+    // Ensure grid pagination loads until the target photo is present
+    if (idxPaged < 0) {
+      if (nextCursor && !loadingMore) {
+        loadMore();
+      }
+      return; // keep pending until item appears or no more pages
+    }
+    // Target now present in paged grid; we can clear pending
+    pendingOpenRef.current = null;
+  }, [selectedProject, projectData, pagedPhotos, nextCursor, loadingMore, loadMore, viewerState, activeFilters?.dateRange, activeFilters?.fileType, activeFilters?.keepType, activeFilters?.orientation]);
 
   const confirmCommitChanges = async () => {
     if (!selectedProject) return;
@@ -210,7 +662,7 @@ function App() {
       );
       setShowCommitModal(false);
     } catch (e) {
-      console.error('Commit changes failed', e);
+      // Commit changes failed
       // Revert optimistic changes by refetching on failure
       if (selectedProject) {
         try { await fetchProjectData(selectedProject.folder); } catch {}
@@ -219,7 +671,6 @@ function App() {
       setCommitting(false);
     }
   };
-
 
   // Refs
   const mainRef = useRef(null);
@@ -377,7 +828,7 @@ function App() {
       uiPrefsReadyRef.current = true;
       setUiPrefsReady(true);
     } catch (e) {
-      console.warn('Failed to load ui_prefs', e);
+      // Failed to load ui_prefs
       uiPrefsReadyRef.current = true;
       setUiPrefsReady(true);
     }
@@ -397,7 +848,7 @@ function App() {
       if (DEBUG_PERSIST) console.debug('[persist] save ui_prefs', toSave);
       localStorage.setItem('ui_prefs', JSON.stringify(toSave));
     } catch (e) {
-      console.warn('Failed to save ui_prefs', e);
+      // Failed to save ui_prefs
     }
   }, [uiPrefsReady, viewMode, sizeLevel, filtersCollapsed, activeFilters, activeTab]);
 
@@ -414,7 +865,7 @@ function App() {
         localStorage.setItem('ui_prefs', JSON.stringify(toSave));
       }
     } catch (e) {
-      console.warn('Failed initial save ui_prefs', e);
+      // Failed initial save ui_prefs
     }
   }, [uiPrefsReady]);
 
@@ -498,8 +949,6 @@ function App() {
     }
   };
 
-  // Keyboard shortcuts moved below filteredProjectData definition to avoid TDZ
-
   // Fetch all projects on component mount
   useEffect(() => {
     fetchProjects();
@@ -518,7 +967,6 @@ function App() {
       }
     }
   }, [config]);
-
 
   // Remember last project (configurable)
   useEffect(() => {
@@ -564,7 +1012,7 @@ function App() {
       const data = await listProjects();
       setProjects(data);
     } catch (error) {
-      console.error('Error fetching projects:', error);
+      // Error fetching projects
     }
   };
 
@@ -597,7 +1045,7 @@ function App() {
       // Kick off initial paginated load (do not await to keep UI responsive)
       try { loadFirstPage(projectFolder); } catch {}
     } catch (error) {
-      console.error('Error fetching project data:', error);
+      // Error fetching project data
     } finally {
       // Restore scroll and viewer context on next frame(s); retry a couple frames for layout settle
       try {
@@ -618,12 +1066,7 @@ function App() {
     }
   };
 
-  // Persist viewer state (session-only). Avoid overwriting saved session state on initial mount
-  useEffect(() => {
-    // If we haven't restored yet and current state isn't explicitly open, skip the initial write
-    if (!viewerRestoredRef.current && !(viewerState && viewerState.isOpen)) return;
-    try { setSessionViewer(viewerState || { isOpen: false }); } catch {}
-  }, [viewerState]);
+  // Session viewer persistence removed - URL is single source of truth
 
   // Removed premature restore: we restore after photos are available below
 
@@ -647,7 +1090,47 @@ function App() {
     setSelectedProject(project);
     fetchProjectData(project.folder);
     setSelectedPhotos(new Set()); // Clear selection when switching projects
+    // Sync URL to project base when not in All Photos mode, unless we are in a pending deep link open
+    try {
+      if (!isAllMode && project?.folder) {
+        const pending = pendingOpenRef.current;
+        const isPendingDeepLink = !!(pending && pending.folder === project.folder);
+        if (!isPendingDeepLink) {
+          window.history.pushState({}, '', `/${encodeURIComponent(project.folder)}`);
+        }
+      }
+    } catch {}
   };
+
+  // Toggle All Photos mode and sync URL
+  const toggleAllMode = useCallback(() => {
+    setIsAllMode(prev => {
+      const next = !prev;
+      try {
+        if (next) {
+          const range = (activeFilters?.dateRange) || {};
+          const qp = new URLSearchParams();
+          if (range.start) qp.set('date_from', range.start);
+          if (range.end) qp.set('date_to', range.end);
+          if (activeFilters?.fileType && activeFilters.fileType !== 'any') qp.set('file_type', activeFilters.fileType);
+          if (activeFilters?.keepType && activeFilters.keepType !== 'any') qp.set('keep_type', activeFilters.keepType);
+          if (activeFilters?.orientation && activeFilters.orientation !== 'any') qp.set('orientation', activeFilters.orientation);
+          const search = qp.toString();
+          window.history.pushState({}, '', `/all${search ? `?${search}` : ''}`);
+        } else {
+          if (selectedProject?.folder) {
+            window.history.pushState({}, '', `/${encodeURIComponent(selectedProject.folder)}`);
+          } else {
+            window.history.pushState({}, '', '/');
+          }
+        }
+      } catch {}
+      return next;
+    });
+    // Clear selections when switching modes
+    setSelectedPhotos(new Set());
+    setAllSelectedPhotos(new Set());
+  }, [selectedProject, activeFilters?.dateRange]);
 
   // Auto-refresh and fine-grained updates via SSE
   useEffect(() => {
@@ -843,7 +1326,7 @@ function App() {
         handleProjectSelect(latest[latest.length - 1]);
       }
     } catch (error) {
-      console.error('Error creating project:', error);
+      // Error creating project
     }
   };
 
@@ -924,18 +1407,55 @@ function App() {
       isOpen: true,
       startIndex: photoIndex >= 0 ? photoIndex : 0
     });
-    try {
-      setSessionViewer({
-        isOpen: true,
-        startIndex: photoIndex >= 0 ? photoIndex : 0,
-        filename: photo?.filename || undefined,
-      });
-    } catch {}
+    // Session viewer state removed - URL is source of truth
+    // push deep link: /:projectFolder/:basename
+    if (selectedProject?.folder && photo?.filename) {
+      try { 
+        const range = (activeFilters?.dateRange) || {};
+        const qp = new URLSearchParams();
+        if (range.start) qp.set('date_from', range.start);
+        if (range.end) qp.set('date_to', range.end);
+        if (activeFilters?.fileType && activeFilters.fileType !== 'any') qp.set('file_type', activeFilters.fileType);
+        if (activeFilters?.keepType && activeFilters.keepType !== 'any') qp.set('keep_type', activeFilters.keepType);
+        if (activeFilters?.orientation && activeFilters.orientation !== 'any') qp.set('orientation', activeFilters.orientation);
+        const search = qp.toString();
+        const nameForUrl = (photo.basename) || (photo.filename || '').replace(/\.[^/.]+$/, '');
+        window.history.pushState({}, '', `/${encodeURIComponent(selectedProject.folder)}/${encodeURIComponent(nameForUrl)}${search ? `?${search}` : ''}`);
+      } catch {}
+    }
   };
 
   const handleCloseViewer = () => {
-    setViewerState({ isOpen: false, startIndex: 0 });
-    try { setSessionViewer({ isOpen: false }); } catch {}
+    const wasAll = !!(isAllMode || viewerState.fromAll);
+    setViewerState(prev => ({ ...(prev || {}), isOpen: false }));
+    // pop to base path
+    try {
+      if (wasAll) {
+        const range = (activeFilters?.dateRange) || {};
+        const qp = new URLSearchParams();
+        if (range.start) qp.set('date_from', range.start);
+        if (range.end) qp.set('date_to', range.end);
+        if (activeFilters?.fileType && activeFilters.fileType !== 'any') qp.set('file_type', activeFilters.fileType);
+        if (activeFilters?.keepType && activeFilters.keepType !== 'any') qp.set('keep_type', activeFilters.keepType);
+        if (activeFilters?.orientation && activeFilters.orientation !== 'any') qp.set('orientation', activeFilters.orientation);
+        const search = qp.toString();
+        window.history.pushState({}, '', `/all${search ? `?${search}` : ''}`);
+      } else if (selectedProject?.folder) {
+        const range = (activeFilters?.dateRange) || {};
+        const qp = new URLSearchParams();
+        if (range.start) qp.set('date_from', range.start);
+        if (range.end) qp.set('date_to', range.end);
+        if (activeFilters?.fileType && activeFilters.fileType !== 'any') qp.set('file_type', activeFilters.fileType);
+        if (activeFilters?.keepType && activeFilters.keepType !== 'any') qp.set('keep_type', activeFilters.keepType);
+        if (activeFilters?.orientation && activeFilters.orientation !== 'any') qp.set('orientation', activeFilters.orientation);
+        const search = qp.toString();
+        window.history.pushState({}, '', `/${encodeURIComponent(selectedProject.folder)}${search ? `?${search}` : ''}`);
+      } else {
+        window.history.pushState({}, '', '/');
+      }
+    } catch {}
+    // Clear any snapshot list when closing the viewer
+    setViewerList(null);
   };
 
   // Update in-memory keep flags when viewer changes them
@@ -952,14 +1472,87 @@ function App() {
 
   // Stable callback to persist current viewer index/filename during navigation
   const handleViewerIndexChange = useCallback((idx, photo) => {
+    // Session viewer state removed - URL is source of truth
+    // Update URL to current photo when viewer is open
     try {
-      setSessionViewer({
-        isOpen: true,
-        startIndex: Number(idx) || 0,
-        filename: photo?.filename || undefined,
-      });
+      if (viewerState?.isOpen && photo?.filename) {
+        // While resolving an All Photos deep link, suppress URL updates to avoid premature rewrites
+        if ((isAllMode || viewerState.fromAll) && allDeepLinkRef.current) {
+          return;
+        }
+        // Block URL updates during deep link resolution
+        if (suppressUrlRef.current) {
+          try { console.debug('[deep-link] URL update blocked during resolution'); } catch {}
+          return;
+        }
+        const range = (activeFilters?.dateRange) || {};
+        const qp = new URLSearchParams();
+        if (range.start) qp.set('date_from', range.start);
+        if (range.end) qp.set('date_to', range.end);
+        if (activeFilters?.fileType && activeFilters.fileType !== 'any') qp.set('file_type', activeFilters.fileType);
+        if (activeFilters?.keepType && activeFilters.keepType !== 'any') qp.set('keep_type', activeFilters.keepType);
+        if (activeFilters?.orientation && activeFilters.orientation !== 'any') qp.set('orientation', activeFilters.orientation);
+        const search = qp.toString();
+        const nameForUrl = (photo.basename) || (photo.filename || '').replace(/\.[^/.]+$/, '');
+        if (isAllMode || viewerState.fromAll) {
+          const pf = photo.project_folder || (selectedProject?.folder || '');
+          if (pf && nameForUrl) {
+            try { console.debug('[viewer] push URL (all)', { pf, nameForUrl, filters: { start: range.start || undefined, end: range.end || undefined } }); } catch {}
+            window.history.pushState({}, '', `/all/${encodeURIComponent(pf)}/${encodeURIComponent(nameForUrl)}${search ? `?${search}` : ''}`);
+          }
+        } else if (selectedProject?.folder && nameForUrl) {
+          try { console.debug('[viewer] push URL (project)', { pf: selectedProject?.folder, nameForUrl }); } catch {}
+          window.history.pushState({}, '', `/${encodeURIComponent(selectedProject.folder)}/${encodeURIComponent(nameForUrl)}${search ? `?${search}` : ''}`);
+        }
+      }
     } catch {}
-  }, []);
+  }, [viewerState, selectedProject, isAllMode, activeFilters?.dateRange, activeFilters?.fileType, activeFilters?.keepType, activeFilters?.orientation]);
+
+  // Sync URL query with filters when in All mode (preserve current /all path and filename if any)
+  useEffect(() => {
+    if (!isAllMode) return;
+    try {
+      const path = window.location?.pathname || '/all';
+      const keepPath = path.startsWith('/all') ? path : '/all';
+      const range = (activeFilters?.dateRange) || {};
+      const qp = new URLSearchParams();
+      if (range.start) qp.set('date_from', range.start);
+      if (range.end) qp.set('date_to', range.end);
+      if (activeFilters?.fileType && activeFilters.fileType !== 'any') qp.set('file_type', activeFilters.fileType);
+      if (activeFilters?.keepType && activeFilters.keepType !== 'any') qp.set('keep_type', activeFilters.keepType);
+      if (activeFilters?.orientation && activeFilters.orientation !== 'any') qp.set('orientation', activeFilters.orientation);
+      const search = qp.toString();
+      const target = `${keepPath}${search ? `?${search}` : ''}`;
+      const current = `${path}${window.location?.search || ''}`;
+      if (target !== current) {
+        window.history.replaceState({}, '', target);
+      }
+    } catch {}
+  }, [isAllMode, activeFilters?.dateRange?.start, activeFilters?.dateRange?.end, activeFilters?.fileType, activeFilters?.keepType, activeFilters?.orientation]);
+
+  // Sync URL query with filters when in Project mode as well
+  useEffect(() => {
+    if (isAllMode) return;
+    try {
+      const basePath = selectedProject?.folder ? `/${encodeURIComponent(selectedProject.folder)}` : (window.location?.pathname || '/');
+      // Preserve filename segment if present
+      const path = window.location?.pathname || basePath;
+      const keepPath = path.startsWith('/') ? path : basePath;
+      const range = (activeFilters?.dateRange) || {};
+      const qp = new URLSearchParams();
+      if (range.start) qp.set('date_from', range.start);
+      if (range.end) qp.set('date_to', range.end);
+      if (activeFilters?.fileType && activeFilters.fileType !== 'any') qp.set('file_type', activeFilters.fileType);
+      if (activeFilters?.keepType && activeFilters.keepType !== 'any') qp.set('keep_type', activeFilters.keepType);
+      if (activeFilters?.orientation && activeFilters.orientation !== 'any') qp.set('orientation', activeFilters.orientation);
+      const search = qp.toString();
+      const target = `${keepPath}${search ? `?${search}` : ''}`;
+      const current = `${path}${window.location?.search || ''}`;
+      if (target !== current) {
+        window.history.replaceState({}, '', target);
+      }
+    } catch {}
+  }, [isAllMode, selectedProject?.folder, activeFilters?.dateRange?.start, activeFilters?.dateRange?.end, activeFilters?.fileType, activeFilters?.keepType, activeFilters?.orientation]);
 
   const handleToggleSelection = (photo) => {
     setSelectedPhotos(prev => {
@@ -983,7 +1576,7 @@ function App() {
         setConfig(await response.json());
       }
     } catch (error) {
-      console.error('Error fetching config:', error);
+      // Error fetching config
     }
   };
 
@@ -1038,13 +1631,7 @@ function App() {
         const height = photo.metadata?.exif_image_height || photo.metadata?.ExifImageHeight || photo.metadata?.ImageHeight;
         const orientation = photo.metadata?.orientation || photo.metadata?.Orientation || 1;
         
-        // Debug logging - remove this after fixing
-        if (index === 0) { // Debug first photo only
-          console.log('Orientation filter debug for:', photo.filename);
-          console.log('Available metadata keys:', Object.keys(photo.metadata || {}));
-          console.log('EXIF orientation value:', orientation);
-          console.log('Raw dimensions:', { width, height });
-        }
+        // Debug logging removed
         
         if (width && height) {
           // Determine actual orientation considering EXIF rotation
@@ -1061,11 +1648,7 @@ function App() {
             actuallyHorizontal = width > height;
           }
           
-          console.log('Final orientation determination:', {
-            actuallyVertical,
-            actuallyHorizontal,
-            orientationValue: orientation
-          });
+          // Final orientation determination complete
           
           if (activeFilters.orientation === 'vertical' && !actuallyVertical) return false;
           if (activeFilters.orientation === 'horizontal' && !actuallyHorizontal) return false;
@@ -1138,25 +1721,40 @@ function App() {
     photos: sortedPhotos
   } : null;
 
-  // Restore viewer state (open and index/filename) once filtered photos are ready from session state
-  useEffect(() => {
-    if (activeTab !== 'view') return;
-    const photos = filteredProjectData?.photos || projectData?.photos;
-    if (!photos || photos.length === 0) return;
-    if (viewerRestoredRef.current) return;
-    const st = getSessionState();
-    const v = st?.viewer;
-    if (!v || !v.isOpen) return;
-    let idx = Number.isFinite(v.startIndex) ? v.startIndex : 0;
-    if (v.filename) {
-      const found = photos.findIndex(p => p.filename === v.filename);
-      if (found >= 0) idx = found; else idx = Math.min(Math.max(idx, 0), photos.length - 1);
-    } else {
-      idx = Math.min(Math.max(idx, 0), photos.length - 1);
+  // Stable viewer data: always pass an array of photos to PhotoViewer
+  const viewerPhotos = useMemo(() => {
+    if (isAllMode || viewerState.fromAll) {
+      return (viewerList && viewerState.isOpen ? viewerList : allPhotos) || [];
     }
-    viewerRestoredRef.current = true;
-    setViewerState({ isOpen: true, startIndex: idx });
-  }, [activeTab, filteredProjectData, projectData]);
+    const pd = viewerList ? { photos: viewerList } : (filteredProjectData || projectData);
+    return (pd && Array.isArray(pd.photos)) ? pd.photos : [];
+  }, [isAllMode, viewerState.fromAll, viewerList, viewerState.isOpen, allPhotos, filteredProjectData, projectData]);
+
+  // Force a fresh mount when switching sources to avoid any subtle reuse issues
+  const viewerKey = useMemo(() => {
+    const source = (isAllMode || viewerState.fromAll) ? 'all' : (selectedProject?.folder || 'none');
+    const start = Number.isFinite(viewerState.startIndex) ? viewerState.startIndex : -1;
+    const idPart = (() => {
+      try {
+        const p = viewerPhotos[start];
+        return p ? `${p.project_folder || source}:${p.filename}` : `idx:${start}`;
+      } catch { return `idx:${start}`; }
+    })();
+    return `${source}:${idPart}`;
+  }, [isAllMode, viewerState.fromAll, selectedProject?.folder, viewerPhotos, viewerState.startIndex]);
+
+  // Debug: log viewer open state/props to detect any transient invalid data
+  useEffect(() => {
+    if (!viewerState?.isOpen) return;
+    const fromAll = !!(isAllMode || viewerState.fromAll);
+    const start = Number.isFinite(viewerState.startIndex) ? viewerState.startIndex : -1;
+    const len = Array.isArray(viewerPhotos) ? viewerPhotos.length : -1;
+    const cur = (start >= 0 && start < len) ? viewerPhotos[start] : null;
+    // eslint-disable-next-line no-console
+    console.debug('[Viewer] open', { fromAll, start, photosLen: len, startValid: start >= 0 && start < len, current: cur ? { filename: cur.filename, project_folder: cur.project_folder } : null });
+  }, [viewerState?.isOpen, viewerState?.startIndex, isAllMode, viewerState?.fromAll, viewerPhotos]);
+
+  // Session viewer restoration removed - URL is single source of truth
 
   // Active filter count for badge
   const activeFilterCount = (
@@ -1220,7 +1818,7 @@ function App() {
       );
       setShowRevertModal(false);
     } catch (e) {
-      console.error('Revert changes failed', e);
+      // Revert changes failed
     } finally {
       setReverting(false);
     }
@@ -1317,7 +1915,7 @@ function App() {
               
               {/* Right Controls: Upload (+) and Options (hamburger) */}
               <div className="flex items-center space-x-2">
-                <UploadButton disabled={!selectedProject} />
+                <UploadButton disabled={isAllMode || !selectedProject} />
                 {showOptionsModal ? (
                   <button
                     onClick={() => setShowOptionsModal(false)}
@@ -1350,34 +1948,41 @@ function App() {
         </header>
 
         {/* Project selector bar (replaces tabs) */}
-        {selectedProject && (
+        {(selectedProject || isAllMode) && (
           <div className="bg-white border-b-0 relative">
             <div className="w-full px-4 sm:px-6 lg:px-8">
               <div className="flex items-center justify-between py-2">
-                <div className="flex items-center">
+                <div className="flex items-center gap-3">
+                  {/* All toggle checkbox */}
+                  <label className="inline-flex items-center gap-2 text-sm text-gray-700 select-none">
+                    <input
+                      type="checkbox"
+                      checked={!!isAllMode}
+                      onChange={toggleAllMode}
+                      className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                      aria-label="Toggle All Photos mode"
+                    />
+                    <span>All</span>
+                  </label>
+                  {/* Project selector (disabled in All mode with placeholder) */}
                   <ProjectSelector 
                     projects={projects}
-                    selectedProject={selectedProject}
+                    selectedProject={isAllMode ? null : selectedProject}
                     onProjectSelect={handleProjectSelect}
+                    disabled={isAllMode}
+                    placeholderLabel="All Projects"
                   />
                 </div>
-                
-                {/* Filters cluster: toggle + counts + clear */}
                 <div className="flex items-center gap-2">
+                  {/* Filters button (restored) */}
                   <button
-                    onClick={() => setFiltersCollapsed(!filtersCollapsed)}
-                    className={`flex items-center gap-2 py-2 px-2 sm:py-3 sm:px-3 text-sm font-medium transition-colors text-gray-700 hover:text-gray-900`}
-                    disabled={loading}
+                    onClick={() => setFiltersCollapsed(prev => !prev)}
+                    className="inline-flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium border shadow-sm bg-white text-gray-700 hover:bg-gray-50 border-gray-300"
+                    title={filtersCollapsed ? 'Show filters' : 'Hide filters'}
+                    aria-expanded={filtersCollapsed ? 'false' : 'true'}
+                    aria-controls="filters-panel"
                   >
-                    {/* Desktop label with small badge */}
-                    <span className="hidden sm:inline relative">
-                      Filters
-                      {activeFilterCount > 0 && (
-                        <span className="absolute -top-2 -right-3 inline-flex items-center justify-center min-w-[1rem] h-4 px-[0.25rem] text-[10px] font-semibold rounded-full bg-blue-100 text-blue-800">
-                          {activeFilterCount}
-                        </span>
-                      )}
-                    </span>
+                    <span className="hidden sm:inline">Filters</span>
                     {/* Mobile funnel icon with overlaid badge */}
                     <span className="relative sm:hidden inline-flex">
                       <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -1394,16 +1999,22 @@ function App() {
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
                     </svg>
                   </button>
-                  {/* Count next to Filters: e.g., 8 of 65 */}
+                  {/* Count next to Filters: in All mode show loaded items; in Project mode show filtered/of total */}
                   <span className="text-sm text-gray-600 whitespace-nowrap">
-                    {hasActiveFilters ? (
+                    {isAllMode ? (
                       <>
-                        <span className="font-medium">{filteredPhotos.length}</span> of {projectData?.photos?.length || 0}
+                        {allPhotos.length} images
                       </>
                     ) : (
-                      <>
-                        {projectData?.photos?.length || 0} images
-                      </>
+                      hasActiveFilters ? (
+                        <>
+                          <span className="font-medium">{filteredPhotos.length}</span> of {projectData?.photos?.length || 0}
+                        </>
+                      ) : (
+                        <>
+                          {projectData?.photos?.length || 0} images
+                        </>
+                      )
                     )}
                   </span>
                   {/* Clear filters button */}
@@ -1439,25 +2050,86 @@ function App() {
                 <div className="flex items-center justify-between gap-3">
                   {/* Left: Selection + recap */}
                   <div className="flex items-center gap-3">
-                    <button
-                      onClick={() => {
-                        if (!filteredProjectData?.photos?.length) return;
-                        if (selectedPhotos.size === filteredProjectData.photos.length) {
-                          setSelectedPhotos(new Set());
-                        } else {
-                          setSelectedPhotos(new Set(filteredProjectData.photos.map(e => e.filename)));
-                        }
-                      }}
-                      className="text-sm text-blue-600 hover:underline"
-                    >
-                      {selectedPhotos.size === filteredProjectData?.photos?.length ? 'Deselect All' : 'Select All'}
-                    </button>
-                    <span className="text-sm text-gray-600">{selectedPhotos.size} selected</span>
+                    {isAllMode ? (
+                      <>
+                        <button
+                          onClick={() => {
+                            if (!allPhotos?.length) return;
+                            if (allSelectedPhotos.size === allPhotos.length) {
+                              setAllSelectedPhotos(new Set());
+                            } else {
+                              setAllSelectedPhotos(new Set(allPhotos.map(e => `${e.project_folder}::${e.filename}`)));
+                            }
+                          }}
+                          className="text-sm text-blue-600 hover:underline"
+                        >
+                          {allSelectedPhotos.size === allPhotos?.length ? 'Deselect All' : 'Select All'}
+                        </button>
+                        <span className="text-sm text-gray-600">{allSelectedPhotos.size} selected</span>
+                      </>
+                    ) : (
+                      <>
+                        <button
+                          onClick={() => {
+                            if (!filteredProjectData?.photos?.length) return;
+                            if (selectedPhotos.size === filteredProjectData.photos.length) {
+                              setSelectedPhotos(new Set());
+                            } else {
+                              setSelectedPhotos(new Set(filteredProjectData.photos.map(e => e.filename)));
+                            }
+                          }}
+                          className="text-sm text-blue-600 hover:underline"
+                        >
+                          {selectedPhotos.size === filteredProjectData?.photos?.length ? 'Deselect All' : 'Select All'}
+                        </button>
+                        <span className="text-sm text-gray-600">{selectedPhotos.size} selected</span>
+                      </>
+                    )}
                   </div>
 
                   {/* Right: View toggle + Operations */}
                   <div className="flex items-center gap-2">
-                    {selectedPhotos.size === 0 ? (
+                    {isAllMode ? (
+                      allSelectedPhotos.size === 0 ? (
+                        <div key="controls-all" className="flex items-center gap-2 transition-all duration-150 ease-out transform opacity-100 scale-100 animate-fadeInScale">
+                          <div className="flex space-x-2">
+                            {/* Gallery (grid) icon */}
+                            <button
+                              onClick={() => setViewMode('grid')}
+                              className={`px-2.5 py-1.5 rounded-md ${viewMode === 'grid' ? 'bg-blue-500 text-white' : 'bg-gray-200 text-gray-700'}`}
+                              title="Gallery view"
+                              aria-label="Gallery view"
+                            >
+                              <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                                <path d="M3 3h6v6H3V3zm8 0h6v6H11V3zM3 11h6v6H3v-6zm8 6h6v-6H11v6z" />
+                              </svg>
+                            </button>
+                            {/* Details (table/list) icon */}
+                            <button
+                              onClick={() => setViewMode('table')}
+                              className={`px-2.5 py-1.5 rounded-md ${viewMode === 'table' ? 'bg-blue-500 text-white' : 'bg-gray-200 text-gray-700'}`}
+                              title="Details view"
+                              aria-label="Details view"
+                            >
+                              <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                                <path d="M3 5h14v2H3V5zm0 4h14v2H3V9zm0 4h14v2H3v-2z" />
+                              </svg>
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div key="actions-all" className="transition-all duration-150 ease-out transform opacity-100 scale-100 animate-fadeInScale">
+                          <button
+                            onClick={() => setShowAllMoveModal(true)}
+                            className="inline-flex items-center px-3 py-1.5 rounded-md bg-blue-600 text-white hover:bg-blue-700"
+                            title="Move selected photos to another project"
+                          >
+                            Move to…
+                          </button>
+                        </div>
+                      )
+                    ) : (
+                      selectedPhotos.size === 0 ? (
                       <div key="controls" className="flex items-center gap-2 transition-all duration-150 ease-out transform opacity-100 scale-100 animate-fadeInScale">
                         <div className="flex space-x-2">
                           {/* Gallery (grid) icon */}
@@ -1541,7 +2213,7 @@ function App() {
                           />
                         </div>
                       )
-                    )}
+                    ))}
                   </div>
                 </div>
               </div>
@@ -1572,6 +2244,51 @@ function App() {
               selectedFilenames={Array.from(selectedPhotos || [])}
             />
 
+            {/* Move photos modal — All Photos mode */}
+            <MovePhotosModal
+              open={showAllMoveModal}
+              onClose={(res) => {
+                setShowAllMoveModal(false);
+                if (res && res.moved) {
+                  const dest = res.destFolder;
+                  const movedKeys = new Set(Array.from(allSelectedPhotos || []));
+                  if (movedKeys.size > 0) {
+                    // Optimistically keep photos but update their project_folder to the destination
+                    setAllPhotos(prev => Array.isArray(prev)
+                      ? prev.map(p => {
+                          const key = `${p.project_folder}::${p.filename}`;
+                          return movedKeys.has(key)
+                            ? { ...p, project_folder: dest }
+                            : p;
+                        })
+                      : prev
+                    );
+                    // Maintain dedupe set by swapping old keys with new destination keys
+                    try {
+                      for (const key of movedKeys) {
+                        const idx = key.indexOf('::');
+                        const filename = idx >= 0 ? key.slice(idx + 2) : key;
+                        const newKey = `${dest}::${filename}`;
+                        if (allSeenKeysRef.current) {
+                          allSeenKeysRef.current.delete(key);
+                          allSeenKeysRef.current.add(newKey);
+                        }
+                      }
+                    } catch {}
+                  }
+                  // Clear All Photos selection after updating UI
+                  setAllSelectedPhotos(new Set());
+                }
+              }}
+              // In All mode we allow selecting any destination (no single source folder)
+              sourceFolder={''}
+              // Map composite keys → filenames and dedupe
+              selectedFilenames={Array.from(allSelectedPhotos || []).map(k => {
+                const idx = k.indexOf('::');
+                return idx >= 0 ? k.slice(idx + 2) : k;
+              })}
+            />
+
             {/* Filters Panel */}
             {!filtersCollapsed && (
               <div className="bg-white border-t-0 animate-slideDownFade">
@@ -1580,6 +2297,7 @@ function App() {
                   filters={activeFilters}
                   onFilterChange={setActiveFilters}
                   disabled={loading}
+                  isAllMode={isAllMode}
                   onClose={() => setFiltersCollapsed(true)}
                 />
               </div>
@@ -1684,23 +2402,44 @@ function App() {
                   </button>
                 </div>
               )}
-              <PhotoDisplay 
-                viewMode={viewMode}
-                projectData={filteredProjectData}
-                projectFolder={selectedProject?.folder}
-                onPhotoSelect={(photo) => handlePhotoSelect(photo, sortedPagedPhotos)}
-                onToggleSelection={handleToggleSelection}
-                selectedPhotos={selectedPhotos}
-                lazyLoadThreshold={config?.photo_grid?.lazy_load_threshold ?? 100}
-                dwellMs={config?.photo_grid?.dwell_ms ?? 300}
-                sortKey={sortKey}
-                sortDir={sortDir}
-                onSortChange={toggleSort}
-                sizeLevel={sizeLevel}
-                photos={sortedPagedPhotos}
-                hasMore={!!nextCursor}
-                onLoadMore={loadMore}
-              />
+              {isAllMode ? (
+                <PhotoDisplay
+                  viewMode={viewMode}
+                  projectData={null}
+                  projectFolder={undefined}
+                  onPhotoSelect={(photo) => handleAllPhotoSelect(photo)}
+                  onToggleSelection={handleToggleSelectionAll}
+                  selectedPhotos={allSelectedPhotos}
+                  lazyLoadThreshold={config?.photo_grid?.lazy_load_threshold ?? 100}
+                  dwellMs={config?.photo_grid?.dwell_ms ?? 300}
+                  sortKey={sortKey}
+                  sortDir={sortDir}
+                  onSortChange={toggleSort}
+                  sizeLevel={sizeLevel}
+                  photos={allPhotos}
+                  hasMore={!!allNextCursor}
+                  onLoadMore={loadAllMore}
+                  simplifiedMode={true}
+                />
+              ) : (
+                <PhotoDisplay 
+                  viewMode={viewMode}
+                  projectData={filteredProjectData}
+                  projectFolder={selectedProject?.folder}
+                  onPhotoSelect={(photo) => handlePhotoSelect(photo, sortedPagedPhotos)}
+                  onToggleSelection={handleToggleSelection}
+                  selectedPhotos={selectedPhotos}
+                  lazyLoadThreshold={config?.photo_grid?.lazy_load_threshold ?? 100}
+                  dwellMs={config?.photo_grid?.dwell_ms ?? 300}
+                  sortKey={sortKey}
+                  sortDir={sortDir}
+                  onSortChange={toggleSort}
+                  sizeLevel={sizeLevel}
+                  photos={sortedPagedPhotos}
+                  hasMore={!!nextCursor}
+                  onLoadMore={loadMore}
+                />
+              )}
               </>
               )}
             </div>
@@ -1756,18 +2495,24 @@ function App() {
       )}
 
       {viewerState.isOpen && (
-        <PhotoViewer 
-          projectData={filteredProjectData || projectData}
-          projectFolder={selectedProject?.folder}
-          startIndex={viewerState.startIndex}
-          onClose={handleCloseViewer}
-          config={config}
-          selectedPhotos={selectedPhotos}
-          onToggleSelect={handleToggleSelection}
-          onKeepUpdated={handleKeepUpdated}
-          onCurrentIndexChange={handleViewerIndexChange}
-        />
+        <ErrorBoundary>
+          <PhotoViewer
+            key={viewerKey}
+            projectData={{ photos: viewerPhotos }}
+            projectFolder={selectedProject?.folder}
+            startIndex={Number.isFinite(viewerState.startIndex) ? viewerState.startIndex : -1}
+            onClose={handleCloseViewer}
+            config={config}
+            selectedPhotos={selectedPhotos}
+            onToggleSelect={handleToggleSelection}
+            onKeepUpdated={handleKeepUpdated}
+            onCurrentIndexChange={handleViewerIndexChange}
+            fromAllMode={!!(isAllMode || viewerState.fromAll)}
+            onOpenInProject={handleOpenInProjectFromViewer}
+          />
+        </ErrorBoundary>
       )}
+
 
       {showOptionsModal && (
         <SettingsProcessesModal

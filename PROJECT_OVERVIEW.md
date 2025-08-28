@@ -164,10 +164,11 @@ Refer to `SCHEMA_DOCUMENTATION.md` for detailed table structures and relationshi
 
 #### Session‑only UI State Persistence
 
-*   **What persists within the tab session**: window scroll (`windowY`), main list scroll (`mainY`), and viewer state (`open`, `index`, `filename`, `showInfo`). Stored under a single `sessionStorage` key: `session_ui_state`.
-*   **Restore behavior**: On reload, scroll positions are restored using a retry loop to account for layout timing; viewer state restores after photos load to avoid races.
+*   **What persists within the tab session**: window scroll (`windowY`) and main list scroll (`mainY`). Stored under a single `sessionStorage` key: `session_ui_state`.
+*   **Viewer state removed**: Viewer state (open/closed, current photo) is no longer persisted in session storage. The URL is the single source of truth for viewer state to prevent conflicts with deep linking.
+*   **Restore behavior**: On reload, scroll positions are restored using a retry loop to account for layout timing.
 *   **Reset behavior**: Session UI state is cleared only when switching to a different project during the same session. Initial project selection after a reload does not clear it.
-*   **Removed legacy APIs**: Per‑project `localStorage` keys (e.g., `app_state::<folder>`) and their migration helpers were removed. Use `client/src/utils/storage.js → getSessionState()/setSessionState()/clearSessionState()` and the small helpers `setSessionWindowY()`, `setSessionMainY()`, `setSessionViewer()`.
+*   **Removed legacy APIs**: Per‑project `localStorage` keys (e.g., `app_state::<folder>`) and their migration helpers were removed. Use `client/src/utils/storage.js → getSessionState()/setSessionState()/clearSessionState()` and the small helpers `setSessionWindowY()`, `setSessionMainY()`.
 
 ### Tagging System
 *   **Flexible Tagging**: Add custom tags to photos for organization
@@ -487,6 +488,40 @@ Response shape:
     - Item updates now include keep flag changes. The `PUT /api/projects/:folder/keep` route emits `type: "item"` with `keep_jpg`/`keep_raw` so the client can reconcile preview/filters without a page refresh. The client normalizes filenames (strips known photo extensions) so SSE events reconcile correctly whether the DB stored a filename with or without an extension.
     - Grid sync: the paginated grid state (`pagedPhotos`) is kept in sync with optimistic actions (commit/revert/keep changes) and SSE `item`, `item_removed`, and `manifest_changed` events so preview mode reflects changes immediately without page refresh.
     - Dev-only logs: `[SSE] ...` messages from the client are printed only in Vite dev mode (`import.meta.env.DEV`). Production builds suppress these logs.
+
+### All Photos (cross-project)
+
+*   `GET /api/photos` — Keyset-paginated list across all non-archived projects
+    - Query: `?limit&cursor&date_from&date_to&file_type&keep_type&orientation`
+      - `limit`: default 200, max 300
+      - `file_type`: `any|jpg_only|raw_only|both`
+      - `keep_type`: `any|any_kept|jpg_only|raw_jpg|none`
+      - `orientation`: `any|vertical|horizontal`
+    - Returns: `{ items, next_cursor, limit, date_from, date_to }`
+    - Headers: `Cache-Control: no-store`
+
+*   `GET /api/photos/locate-page` — Locate and return the page that contains a specific photo
+    - Required: `project_folder` and one of `filename` (full, with extension) or `name` (basename without extension)
+    - Optional: `limit` (1–300, default 100), `date_from`, `date_to`, `file_type`, `keep_type`, `orientation`
+    - Returns: `{ items, position, page_index, idx_in_items, next_cursor, prev_cursor, target, limit, date_from?, date_to? }`
+    - Behavior:
+      - Resolves the target within the filtered global set, ordered by `taken_at DESC, id DESC`
+      - For basename collisions, deterministically chooses: filters-passing candidates first, then JPG/JPEG extension, then highest ID (newest)
+      - Computes rank (`position`) and fetches the containing page slice (`page_index`, `idx_in_items`)
+      - Cursors are compatible with `GET /api/photos`
+    - Errors:
+      - `400` invalid parameters
+      - `404` not found or filtered out by the provided filters
+      - `409` ambiguous basename when `name` matches multiple files (use `filename` to disambiguate)
+      - `500` server error
+    - Headers: `Cache-Control: no-store`; rate-limited at 60 req/min per IP
+
+#### Deep Link Stability
+
+*   **URL as source of truth**: Deep links like `/all/p6/DSC02415` reliably open the exact target photo without redirects
+*   **Session storage conflicts resolved**: Removed viewer state persistence that was overriding deep link targets
+*   **Deterministic backend resolution**: The `locate-page` API resolves basename collisions predictably
+*   **Client URL suppression**: Brief URL update blocking during deep link resolution prevents premature redirects
 
 ### Endpoint Notes (validation & CORS)
 

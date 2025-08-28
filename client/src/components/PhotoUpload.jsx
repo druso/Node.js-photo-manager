@@ -23,12 +23,12 @@ const PhotoUpload = ({ projectFolder, onPhotosUploaded }) => {
       type: file.type
     }));
     
-    console.log('Sending file list to backend for analysis:', fileList);
+    // Sending file list to backend for analysis
     
     try {
       // Send file list to backend for authoritative analysis
       const analysisResult = await apiAnalyzeFiles(projectFolder, fileList);
-      console.log('Backend analysis result:', analysisResult);
+      // Backend analysis result received
       
       // Add file objects back to the groups for upload
       Object.values(analysisResult.imageGroups).forEach(group => {
@@ -46,7 +46,7 @@ const PhotoUpload = ({ projectFolder, onPhotosUploaded }) => {
       };
       
     } catch (error) {
-      console.error('File analysis failed:', error);
+      // File analysis failed
       throw new Error(`File analysis failed: ${error.message}`);
     }
   };
@@ -191,6 +191,7 @@ const PhotoUpload = ({ projectFolder, onPhotosUploaded }) => {
         try {
           const previewResult = await apiGeneratePreviews(projectFolder);
           console.log('Preview generation result:', previewResult);
+          alert(`Upload completed successfully, ${previewResult.processed} previews generated.`);
           setUploadProgress(
             prevProgress => prevProgress.map(p => ({ 
               ...p, 

@@ -32,6 +32,9 @@ This application helps photographers manage their photo collections by:
   - `GET /api/projects/:folder/photos` — paginated photos (`?limit&cursor&sort&dir`)
 - **Uploads & Processing**
   - `POST /api/projects/:folder/upload` — upload files
+    - Flags (multipart fields parsed as strings "true"/"false", default false):
+      - `overwriteInThisProject` — overwrite existing files in the same project
+      - `reloadConflictsIntoThisProject` — detect cross‑project conflicts and enqueue `image_move` into `:folder`
   - `POST /api/projects/:folder/process` — queue derivative generation
 - **Assets**
   - `GET /api/projects/:folder/thumbnail/:filename` — thumbnail (public)
@@ -42,6 +45,21 @@ This application helps photographers manage their photo collections by:
 - **Realtime Jobs**
   - `GET /api/jobs/stream` — SSE stream
   - `GET /api/jobs` — list jobs (admin/dev)
+
+- **All Photos (cross-project)**
+  - `GET /api/photos` — paginated list across all non-archived projects
+    - Query: `?limit&cursor&date_from&date_to&file_type&keep_type&orientation`
+      - `limit`: default 200, max 300
+      - `file_type`: `any|jpg_only|raw_only|both`
+      - `keep_type`: `any|any_kept|jpg_only|raw_jpg|none`
+      - `orientation`: `any|vertical|horizontal`
+    - Returns: `{ items, next_cursor, limit, date_from, date_to }`
+    - Headers: `Cache-Control: no-store`
+  - `GET /api/photos/locate-page` — locate and return the page that contains a specific photo
+    - Required: `project_folder`, and one of `filename` (with extension) or `name` (basename)
+    - Optional: `limit(1-300)`, `date_from`, `date_to`, `file_type`, `keep_type`, `orientation`
+    - Returns: `{ items, position, page_index, idx_in_items, next_cursor, prev_cursor, target, limit, date_from?, date_to? }`
+    - Notes: 404 if not found/filtered out; 409 if basename is ambiguous; Cache-Control: `no-store`; rate limit: 60 req/min per IP
 
 ## Quick Start
 

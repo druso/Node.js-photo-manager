@@ -3,7 +3,7 @@ import { getSessionState, setSessionViewer } from '../utils/storage';
 import { updateKeep } from '../api/keepApi';
 import { useToast } from '../ui/toast/ToastContext';
 
-const PhotoViewer = ({ projectData, projectFolder, startIndex, onClose, config, selectedPhotos, onToggleSelect, onKeepUpdated, onCurrentIndexChange }) => {
+const PhotoViewer = ({ projectData, projectFolder, startIndex, onClose, config, selectedPhotos, onToggleSelect, onKeepUpdated, onCurrentIndexChange, fromAllMode = false, onOpenInProject }) => {
   // All hooks are called at the top level, unconditionally.
   const [currentIndex, setCurrentIndex] = useState(startIndex);
   const [zoomPercent, setZoomPercent] = useState(0); // 0 = Fit, 100 = Actual size, 200 = 2x
@@ -19,6 +19,7 @@ const PhotoViewer = ({ projectData, projectFolder, startIndex, onClose, config, 
   const [naturalSize, setNaturalSize] = useState({ w: 0, h: 0 });
   const [usePreview, setUsePreview] = useState(true);
   const [imageLoading, setImageLoading] = useState(true);
+  const imgRef = useRef(null);
   const fallbackTriedRef = useRef(false);
   const [isPanning, setIsPanning] = useState(false);
   const panRef = useRef({ startX: 0, startY: 0, origX: 0, origY: 0 });
@@ -41,6 +42,14 @@ const PhotoViewer = ({ projectData, projectFolder, startIndex, onClose, config, 
   // Whenever the photo index or preview/full-res mode changes, show loading until onLoad
   useEffect(() => {
     setImageLoading(true);
+  }, [currentIndex, usePreview]);
+
+  // If the browser has the image cached, onLoad may not fire; clear spinner if complete
+  useEffect(() => {
+    const img = imgRef.current;
+    if (img && img.complete && img.naturalWidth > 0) {
+      setImageLoading(false);
+    }
   }, [currentIndex, usePreview]);
 
   // Keep a ref in sync with position to avoid stale values inside event handlers
@@ -87,7 +96,7 @@ const PhotoViewer = ({ projectData, projectFolder, startIndex, onClose, config, 
       a.remove();
       URL.revokeObjectURL(href);
     } catch (err) {
-      console.error('Download error:', err);
+      // Download error
       alert('Download failed. Please try again.');
     }
   }, [currentPhoto]);
@@ -110,7 +119,8 @@ const PhotoViewer = ({ projectData, projectFolder, startIndex, onClose, config, 
   }, [showInfo]);
 
   const applyKeep = useCallback(async (mode) => {
-    console.log('applyKeep invoked with mode:', mode);
+    if (fromAllMode) return; // disabled in All mode
+    // applyKeep invoked
     if (!currentPhoto || !projectFolder) return;
     let target;
     let msg;
@@ -130,17 +140,17 @@ const PhotoViewer = ({ projectData, projectFolder, startIndex, onClose, config, 
       const total = (projectData?.photos?.length || photos.length || 1);
       msg += ` • 1 of ${total}`;
       toast.show({ emoji: '📝', message: msg, variant: 'notification' });
-      console.log('Sending keep update for', currentPhoto.filename, target);
+      // Sending keep update
       await updateKeep(projectFolder, [{ filename: currentPhoto.filename, ...target }]);
       // notify parent to update in-memory data so lists/grid refresh without full reload
       onKeepUpdated && onKeepUpdated({ filename: currentPhoto.filename, ...target });
-      console.log('Keep update success');
+      // Keep update success
       // Do not auto-advance on delete; only show toast and stay on current index
     } catch (e) {
-      console.error('Viewer keep error:', e);
+      // Viewer keep error
       alert(e.message || 'Failed to update keep flags');
     }
-  }, [currentPhoto, projectFolder, toast, onKeepUpdated, nextPhoto]);
+  }, [currentPhoto, projectFolder, toast, onKeepUpdated, nextPhoto, fromAllMode]);
 
   const prevPhoto = useCallback(() => {
     if (photos.length === 0) return;
@@ -181,13 +191,13 @@ const PhotoViewer = ({ projectData, projectFolder, startIndex, onClose, config, 
       } else if (e.key === keyZoomOut) {
         setZoomPercent((z) => Math.max(0, z - 5));
         if (zoomPercent - 5 <= 0) setPosition({ x: 0, y: 0 });
-      } else if (e.key === keyCancelKeep) {
+      } else if (!fromAllMode && e.key === keyCancelKeep) {
         e.preventDefault();
         applyKeep('none');
-      } else if (e.key && e.key.toLowerCase() === String(keyKeepJpg).toLowerCase()) {
+      } else if (!fromAllMode && e.key && e.key.toLowerCase() === String(keyKeepJpg).toLowerCase()) {
         e.preventDefault();
         applyKeep('jpg_only');
-      } else if (e.key && e.key.toLowerCase() === String(keyKeepRawJpg).toLowerCase()) {
+      } else if (!fromAllMode && e.key && e.key.toLowerCase() === String(keyKeepRawJpg).toLowerCase()) {
         e.preventDefault();
         applyKeep('raw_jpg');
       }
@@ -195,7 +205,7 @@ const PhotoViewer = ({ projectData, projectFolder, startIndex, onClose, config, 
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [nextPhoto, prevPhoto, onClose, config, photos, currentIndex, onToggleSelect, zoomPercent]);
+  }, [nextPhoto, prevPhoto, onClose, config, photos, currentIndex, onToggleSelect, zoomPercent, fromAllMode]);
 
   // Lock body scroll/zoom while viewer open (must be before any conditional returns)
   useEffect(() => {
@@ -367,6 +377,66 @@ const PhotoViewer = ({ projectData, projectFolder, startIndex, onClose, config, 
     };
   }, []);
 
+  // Helper: ensure filename with extension for full-res image requests
+  const filenameWithExtForImage = useCallback((p) => {
+    const fn = p?.filename || '';
+    // if already has an extension, return as-is
+    if (/\.[A-Za-z0-9]+$/.test(fn)) return fn;
+    // if JPG is available, default to .jpg for full-res endpoint
+    if (p?.jpg_available) return `${fn}.jpg`;
+    return fn;
+  }, []);
+
+  // Ensure 0% zoom stays centered when toggling details: recenter now and after the panel slide completes
+  useEffect(() => {
+    if (zoomPercent === 0) {
+      // immediate recenter
+      setPosition(clampPosition(0, 0));
+      // recenter again after the sidebar transition (~100ms) to account for new container size
+      const t = setTimeout(() => {
+        setPosition(clampPosition(0, 0));
+      }, 140);
+      return () => clearTimeout(t);
+    }
+  }, [showInfo, zoomPercent, clampPosition]);
+
+  // Preload adjacent images according to config.viewer.preload_count (default 1)
+  useEffect(() => {
+    if (!photos.length) return;
+    const preloadCount = Math.max(0, config?.viewer?.preload_count ?? 1);
+    if (preloadCount === 0) return;
+    const created = [];
+    const makeUrl = (p) => {
+      const rawOnly = !!p?.raw_available && !p?.jpg_available;
+      if (rawOnly) return null; // nothing to preload for RAW-only placeholder
+      const pf = fromAllMode ? (p?.project_folder || projectFolder) : projectFolder;
+      const v = encodeURIComponent(String(p?.updated_at || p?.taken_at || p?.id || ''));
+      return usePreview
+        ? `/api/projects/${encodeURIComponent(pf)}/preview/${encodeURIComponent(p.filename)}?v=${v}`
+        : `/api/projects/${encodeURIComponent(pf)}/image/${encodeURIComponent(filenameWithExtForImage(p))}?v=${v}`;
+    };
+    for (let offset = 1; offset <= preloadCount; offset++) {
+      const nextIdx = (currentIndex + offset) % photos.length;
+      const prevIdx = (currentIndex - offset + photos.length) % photos.length;
+      const toPreload = [photos[nextIdx], photos[prevIdx]];
+      for (const p of toPreload) {
+        if (!p) continue;
+        const url = makeUrl(p);
+        if (!url) continue;
+        const img = new Image();
+        img.decoding = 'async';
+        img.src = url;
+        created.push(img);
+      }
+    }
+    // Cleanup: abort any in-flight by clearing src
+    return () => {
+      for (const img of created) {
+        try { img.src = ''; } catch (_) {}
+      }
+    };
+  }, [currentIndex, photos, projectFolder, usePreview, config?.viewer?.preload_count, fromAllMode]);
+
   // Conditional rendering is handled here, after all hooks are called.
   if (startIndex === -1) {
     return (
@@ -392,74 +462,22 @@ const PhotoViewer = ({ projectData, projectFolder, startIndex, onClose, config, 
     onClose();
   };
 
-  // Helper: ensure filename with extension for full-res image requests
-  const filenameWithExtForImage = useCallback((p) => {
-    const fn = p?.filename || '';
-    // if already has an extension, return as-is
-    if (/\.[A-Za-z0-9]+$/.test(fn)) return fn;
-    // if JPG is available, default to .jpg for full-res endpoint
-    if (p?.jpg_available) return `${fn}.jpg`;
-    return fn;
-  }, []);
+  // moved: filenameWithExtForImage hook is defined above conditional returns
 
   // Determine image source: preview by default, toggle to full-res
+  const effectiveFolder = fromAllMode ? (currentPhoto?.project_folder || projectFolder) : projectFolder;
+  const cacheV = encodeURIComponent(String(currentPhoto?.updated_at || currentPhoto?.taken_at || currentPhoto?.id || currentIndex || '')); 
   const imageSrc = usePreview
-    ? `/api/projects/${encodeURIComponent(projectFolder)}/preview/${encodeURIComponent(currentPhoto.filename)}`
-    : `/api/projects/${encodeURIComponent(projectFolder)}/image/${encodeURIComponent(filenameWithExtForImage(currentPhoto))}`;
-
-  // Ensure 0% zoom stays centered when toggling details: recenter now and after the panel slide completes
-  useEffect(() => {
-    if (zoomPercent === 0) {
-      // immediate recenter
-      setPosition(clampPosition(0, 0));
-      // recenter again after the sidebar transition (~100ms) to account for new container size
-      const t = setTimeout(() => {
-        setPosition(clampPosition(0, 0));
-      }, 140);
-      return () => clearTimeout(t);
-    }
-  }, [showInfo, zoomPercent, clampPosition]);
-
-  // Preload adjacent images according to config.viewer.preload_count (default 1)
-  useEffect(() => {
-    if (!photos.length) return;
-    const preloadCount = Math.max(0, config?.viewer?.preload_count ?? 1);
-    if (preloadCount === 0) return;
-    const created = [];
-    const makeUrl = (p) => {
-      const rawOnly = !!p?.raw_available && !p?.jpg_available;
-      if (rawOnly) return null; // nothing to preload for RAW-only placeholder
-      return usePreview
-        ? `/api/projects/${encodeURIComponent(projectFolder)}/preview/${encodeURIComponent(p.filename)}`
-        : `/api/projects/${encodeURIComponent(projectFolder)}/image/${encodeURIComponent(filenameWithExtForImage(p))}`;
-    };
-    for (let offset = 1; offset <= preloadCount; offset++) {
-      const nextIdx = (currentIndex + offset) % photos.length;
-      const prevIdx = (currentIndex - offset + photos.length) % photos.length;
-      const toPreload = [photos[nextIdx], photos[prevIdx]];
-      for (const p of toPreload) {
-        if (!p) continue;
-        const url = makeUrl(p);
-        if (!url) continue;
-        const img = new Image();
-        img.decoding = 'async';
-        img.src = url;
-        created.push(img);
-      }
-    }
-    // Cleanup: abort any in-flight by clearing src
-    return () => {
-      for (const img of created) {
-        try { img.src = ''; } catch (_) {}
-      }
-    };
-  }, [currentIndex, photos, projectFolder, usePreview, config?.viewer?.preload_count]);
+    ? `/api/projects/${encodeURIComponent(effectiveFolder)}/preview/${encodeURIComponent(currentPhoto.filename)}?v=${cacheV}`
+    : `/api/projects/${encodeURIComponent(effectiveFolder)}/image/${encodeURIComponent(filenameWithExtForImage(currentPhoto))}?v=${cacheV}`;
+  // moved: preloading and recentering effects are defined above conditional returns
 
 
   return (
     <div className="fixed inset-0 bg-black/90 z-50 flex" onClick={handleBackdropClick} style={{ overscrollBehavior: 'contain', touchAction: 'none' }}>
       {/* Toolbar (right-aligned) */}
       <div className="absolute top-3 left-3 right-3 z-50 flex items-center justify-end pointer-events-none" onMouseDown={(e)=>e.stopPropagation()} onClick={(e)=>e.stopPropagation()}>
+        {/* Right section: details + close */}
         <div className="flex items-center gap-2 pointer-events-auto">
           {/* Detail toggle (same height as close) */}
           <button
@@ -517,6 +535,7 @@ const PhotoViewer = ({ projectData, projectFolder, startIndex, onClose, config, 
           <>
             <img 
               key={imageSrc}
+              ref={imgRef}
               src={imageSrc}
               alt={currentPhoto.filename}
               onLoad={(e)=>{ onImgLoad(e); setImageLoading(false); }}
@@ -535,6 +554,8 @@ const PhotoViewer = ({ projectData, projectFolder, startIndex, onClose, config, 
                 e.target.style.display = 'none';
                 const fallback = e.target.parentElement?.nextElementSibling;
                 if (fallback) fallback.style.display = 'flex';
+                // Stop the loading overlay so UI doesn't get stuck
+                setImageLoading(false);
               }}
             />
             <div className="flex flex-col items-center justify-center text-white" style={{display: 'none'}}>
@@ -569,9 +590,35 @@ const PhotoViewer = ({ projectData, projectFolder, startIndex, onClose, config, 
         onMouseDown={(e)=>e.stopPropagation()}
         onClick={(e)=>e.stopPropagation()}
       >
-          {/* Panel spacer top (no header or title now) */}
+          {/* Project context (All Photos only) */}
+          {fromAllMode && currentPhoto?.project_folder && (
+            <div className="mb-4">
+              <h3 className="text-sm font-semibold mb-2">Project</h3>
+              <div className="flex items-center justify-between gap-3 bg-gray-50 rounded-md px-3 py-2 border">
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm font-medium text-gray-900 truncate" title={currentPhoto.project_name || currentPhoto.project_folder}>
+                    {currentPhoto.project_name || currentPhoto.project_folder}
+                  </div>
+                  <div className="text-xs text-gray-600 truncate" title={currentPhoto.project_folder}>
+                    {currentPhoto.project_folder}
+                  </div>
+                </div>
+                {typeof onOpenInProject === 'function' && (
+                  <button
+                    onClick={() => onOpenInProject(currentPhoto)}
+                    className="h-8 px-3 inline-flex items-center text-sm rounded-md shadow bg-blue-600 text-white hover:bg-blue-700 border border-blue-600 flex-none"
+                    title="Open in project"
+                  >
+                    Open in project
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+          {/* Panel spacer top (after project block) */}
           <div className="mb-2"></div>
           {/* Keep actions expander (above Quality) */}
+          {!fromAllMode && (
           <details className="mb-4" open>
             <summary className="cursor-pointer text-sm font-semibold select-none">Plan</summary>
             <div className="mt-2 grid grid-cols-3 gap-2">
@@ -629,6 +676,7 @@ const PhotoViewer = ({ projectData, projectFolder, startIndex, onClose, config, 
               </div>
             </div>
           </details>
+          )}
           {/* Quality section */}
           {!isRawFile && (
             <div className="mb-4">

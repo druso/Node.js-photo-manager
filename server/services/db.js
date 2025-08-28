@@ -143,6 +143,14 @@ function applySchema(db) {
   } catch (e) {
     try { log.warn('index_create_failed', { index: 'idx_jobs_status_priority_created', error: e && e.message }); } catch {}
   }
+
+  // Index to support cross-project photos ordering (taken_at DESC, id DESC)
+  // taken_at is COALESCE(date_time_original, created_at); we index both date_time_original and created_at with id
+  try {
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_photos_taken_created_id ON photos(date_time_original DESC, created_at DESC, id DESC)`);
+  } catch (e) {
+    try { log.warn('index_create_failed', { index: 'idx_photos_taken_created_id', error: e && e.message }); } catch {}
+  }
 }
 
 function withTransaction(fn) {

@@ -64,7 +64,7 @@ export default function OperationsMenu({
         onTagsUpdated();
       }
     } catch (e) {
-      console.error('OperationsMenu tags error:', e);
+      console.error('Tag operation failed:', e);
       alert(e.message || 'Failed to update tags');
     } finally {
       setBusy(false);

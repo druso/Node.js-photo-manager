@@ -14,6 +14,7 @@ const UniversalFilter = ({
   },
   onFilterChange, 
   disabled = false,
+  isAllMode = false,
   onClose
 }) => {
 
@@ -22,6 +23,10 @@ const UniversalFilter = ({
   const [openSelect, setOpenSelect] = useState(null); // 'orientation' | 'fileType' | 'keepType' | null
   const [isDateOpen, setIsDateOpen] = useState(false);
   const panelRef = useRef(null);
+
+  // In All Photos mode, deactivate specific controls per product request
+  const disableTextSearch = !!isAllMode;
+  const disableKeepType = !!isAllMode;
 
   const orientationOptions = [
     { value: 'any', label: 'Any' },
@@ -171,8 +176,10 @@ const UniversalFilter = ({
               onFocus={() => setShowSuggestions(filters.textSearch.length > 0)}
               onBlur={() => setTimeout(() => setShowSuggestions(false), 200)}
               placeholder="Type to search filenames, tags, or metadata..."
-              className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
-              disabled={disabled}
+              className={`w-full px-3 py-2 text-sm border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 ${disableTextSearch ? 'bg-gray-50 text-gray-400 cursor-not-allowed' : ''}`}
+              disabled={disabled || disableTextSearch}
+              aria-disabled={disabled || disableTextSearch ? 'true' : 'false'}
+              title={disableTextSearch ? 'Disabled in All Photos view' : undefined}
             />
             
             {/* Suggestions Dropdown */}
@@ -253,11 +260,13 @@ const UniversalFilter = ({
             </label>
             <button
               type="button"
-              onClick={() => !disabled && setOpenSelect('keepType')}
-              disabled={disabled}
-              className={`w-full ${filterTriggerClass} justify-between ${disabled ? 'text-gray-400 border-gray-200 cursor-not-allowed' : ''}`}
+              onClick={() => !disabled && !disableKeepType && setOpenSelect('keepType')}
+              disabled={disabled || disableKeepType}
+              className={`w-full ${filterTriggerClass} justify-between ${(disabled || disableKeepType) ? 'text-gray-400 border-gray-200 cursor-not-allowed' : ''}`}
               name="keepType"
               aria-labelledby="keepType-label"
+              aria-disabled={(disabled || disableKeepType) ? 'true' : 'false'}
+              title={disableKeepType ? 'Disabled in All Photos view' : undefined}
             >
               <span className="truncate">
                 {keepTypeOptions.find(o => o.value === filters.keepType)?.label || 'Show all (no filter)'}

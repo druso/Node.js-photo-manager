@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import Thumbnail from './Thumbnail';
 
-const PhotoGridView = ({ projectData, projectFolder, onPhotoSelect, selectedPhotos, onToggleSelection, lazyLoadThreshold = 100, sizeLevel = 's', photos: externalPhotos, hasMore, onLoadMore, dwellMs = 300 }) => {
+const PhotoGridView = ({ projectData, projectFolder, onPhotoSelect, selectedPhotos, onToggleSelection, lazyLoadThreshold = 100, sizeLevel = 's', photos: externalPhotos, hasMore, onLoadMore, dwellMs = 300, simplifiedMode = false }) => {
   const [visibleCount, setVisibleCount] = useState(lazyLoadThreshold);
   const containerRef = useRef(null);
   const [containerWidth, setContainerWidth] = useState(0);
@@ -12,6 +12,8 @@ const PhotoGridView = ({ projectData, projectFolder, onPhotoSelect, selectedPhot
   const dwellTimersRef = useRef(new Map()); // key -> timeoutId
   const [visibleKeys, setVisibleKeys] = useState(() => new Set());
   const visibleKeysRef = useRef(visibleKeys);
+  // Bottom sentinel for robust pagination triggering
+  const bottomRef = useRef(null);
   useEffect(() => { visibleKeysRef.current = visibleKeys; }, [visibleKeys]);
 
   useEffect(() => {
@@ -25,7 +27,9 @@ const PhotoGridView = ({ projectData, projectFolder, onPhotoSelect, selectedPhot
     function onWindowScroll() {
       const list = externalPhotos ?? projectData?.photos ?? [];
       if (!list.length) return;
-      const nearBottom = (window.innerHeight + window.scrollY) >= (document.body.offsetHeight - 200);
+      const root = document.documentElement;
+      const pageHeight = (root && root.scrollHeight) || document.body.offsetHeight;
+      const nearBottom = (window.innerHeight + window.scrollY) >= (pageHeight - 200);
       if (!nearBottom) return;
       // Backend-driven pagination when hooks are provided
       if (typeof onLoadMore === 'function') {
@@ -44,6 +48,8 @@ const PhotoGridView = ({ projectData, projectFolder, onPhotoSelect, selectedPhot
     window.addEventListener('scroll', onWindowScroll, { passive: true });
     return () => window.removeEventListener('scroll', onWindowScroll);
   }, [projectData, externalPhotos, hasMore, onLoadMore, lazyLoadThreshold]);
+
+  
 
   const sourcePhotos = externalPhotos ?? projectData?.photos ?? [];
   const isEmpty = !sourcePhotos || sourcePhotos.length === 0;
@@ -125,6 +131,49 @@ const PhotoGridView = ({ projectData, projectFolder, onPhotoSelect, selectedPhot
     }
     return rowsOut;
   }, [containerWidth, photos, ratios, targetRowH, gap]);
+
+  // If content doesn't fill the viewport, auto-trigger a load (debounced via guard)
+  useEffect(() => {
+    if (typeof onLoadMore !== 'function' || !hasMore) return;
+    const maybeLoad = () => {
+      const root = document.documentElement;
+      const contentH = (root && root.scrollHeight) || document.body.offsetHeight;
+      if (contentH <= window.innerHeight + 40) {
+        const now = Date.now();
+        if (now - loadMoreGuardRef.current > 500) {
+          loadMoreGuardRef.current = now;
+          onLoadMore();
+        }
+      }
+    };
+    // Try immediately after rows compute and also on resize
+    const id = setTimeout(maybeLoad, 0);
+    window.addEventListener('resize', maybeLoad, { passive: true });
+    return () => { clearTimeout(id); window.removeEventListener('resize', maybeLoad); };
+  }, [rows, hasMore, onLoadMore]);
+
+  // Observe bottom sentinel to trigger onLoadMore when it comes into view
+  useEffect(() => {
+    if (typeof onLoadMore !== 'function' || !hasMore) return;
+    const el = bottomRef.current;
+    if (!el) return;
+    let obs;
+    try {
+      obs = new IntersectionObserver((entries) => {
+        for (const entry of entries) {
+          if (entry.isIntersecting) {
+            const now = Date.now();
+            if (now - loadMoreGuardRef.current > 500) {
+              loadMoreGuardRef.current = now;
+              onLoadMore();
+            }
+          }
+        }
+      }, { root: null, rootMargin: '200px 0px', threshold: 0.01 });
+      obs.observe(el);
+    } catch {}
+    return () => { try { obs && obs.disconnect(); } catch {} };
+  }, [hasMore, onLoadMore, rows]);
 
   // Setup a single IntersectionObserver to lazily mark items visible with dwell
   useEffect(() => {
@@ -224,43 +273,52 @@ const PhotoGridView = ({ projectData, projectFolder, onPhotoSelect, selectedPhot
           <div key={`row-${rowIdx}`} className="flex" style={{ marginBottom: `${gap}px` }}>
             {rowItems.map(({ idx, w, h }, j) => {
               const photo = photos[idx];
-              const isSelected = selectedPhotos?.has(photo.filename);
+              const isSelected = simplifiedMode
+                ? selectedPhotos?.has(`${photo.project_folder || projectFolder || 'pf'}::${photo.filename}`)
+                : selectedPhotos?.has(photo.filename);
               const marginRight = j < rowItems.length - 1 ? gap : 0;
-              const key = photo.filename || `${photo.id}-${idx}`;
+              const key = `${photo.project_folder || projectFolder || 'pf'}::${photo.filename || `${photo.id}-${idx}`}`;
               return (
                 <div
-                  key={`${photo.id}-${photo.filename}`}
+                  key={`${photo.project_folder || projectFolder || 'pf'}-${photo.id}-${photo.filename}`}
                   className={`relative bg-gray-200 overflow-hidden cursor-pointer group ${isSelected ? 'border-2 border-blue-600 ring-2 ring-blue-400' : 'border-0 ring-0'} transition-all flex-none`}
                   style={{ width: `${w}px`, height: `${Math.round(h)}px`, marginRight }}
-                  onClick={() => onToggleSelection(photo)}
+                  onClick={() => {
+                    // Phase 1 behavior:
+                    // - simplifiedMode (All Photos): clicking toggles selection
+                    // - project mode: clicking toggles selection; viewer opens only via overlay button
+                    onToggleSelection && onToggleSelection(photo);
+                  }}
                   ref={(el) => observeCell(el, key)}
                 >
-                  {/* Selection toggle in top-left */}
-                  <button
-                    type="button"
-                    aria-label={isSelected ? 'Deselect photo' : 'Select photo'}
-                    onClick={(e) => { e.stopPropagation(); onToggleSelection(photo); }}
-                    className={`absolute top-1 left-1 z-10 flex items-center justify-center h-6 w-6 rounded-full border transition shadow-sm
-                      ${isSelected
-                        ? 'bg-blue-600 text-white border-blue-600 opacity-100'
-                        : 'bg-white/80 text-gray-600 border-gray-300 opacity-0 group-hover:opacity-100'}
-                    `}
-                  >
-                    {isSelected ? (
-                      // Check icon
-                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4">
-                        <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-7.25 7.25a1 1 0 01-1.414 0l-3-3a1 1 0 111.414-1.414L8.5 11.086l6.543-6.543a1 1 0 011.414 0z" clipRule="evenodd" />
-                      </svg>
-                    ) : (
-                      // Empty circle (no check)
-                      <span className="block h-3.5 w-3.5 rounded-full border border-gray-400" />
-                    )}
-                  </button>
+                  {/* Selection toggle in top-left (hidden in simplified mode) */}
+                  {(
+                    <button
+                      type="button"
+                      aria-label={isSelected ? 'Deselect photo' : 'Select photo'}
+                      onClick={(e) => { e.stopPropagation(); onToggleSelection && onToggleSelection(photo); }}
+                      className={`absolute top-1 left-1 z-10 flex items-center justify-center h-6 w-6 rounded-full border transition shadow-sm
+                        ${isSelected
+                          ? 'bg-blue-600 text-white border-blue-600 opacity-100'
+                          : 'bg-white/80 text-gray-600 border-gray-300 opacity-0 group-hover:opacity-100'}
+                      `}
+                    >
+                      {isSelected ? (
+                        // Check icon
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4">
+                          <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-7.25 7.25a1 1 0 01-1.414 0l-3-3a1 1 0 111.414-1.414L8.5 11.086l6.543-6.543a1 1 0 011.414 0z" clipRule="evenodd" />
+                        </svg>
+                      ) : (
+                        // Empty circle (no check)
+                        <span className="block h-3.5 w-3.5 rounded-full border border-gray-400" />
+                      )}
+                    </button>
+                  )}
 
                 {visibleKeys.has(key) ? (
                   <Thumbnail
                     photo={photo}
-                    projectFolder={projectFolder}
+                    projectFolder={photo.project_folder || projectFolder}
                     className="w-full h-full group-hover:opacity-75 transition-all duration-300"
                     objectFit="cover"
                     rounded={false}
@@ -271,11 +329,11 @@ const PhotoGridView = ({ projectData, projectFolder, onPhotoSelect, selectedPhot
                 {isSelected && (
                   <div className="absolute inset-0 bg-blue-500/25 pointer-events-none"></div>
                 )}
-                <div className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity p-2">
+                <div className={`absolute inset-0 bg-black/40 flex items-center justify-center transition-opacity p-2 ${isSelected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
-                      onPhotoSelect(photo, photos);
+                      onPhotoSelect && onPhotoSelect(photo, photos);
                     }}
                     className="px-4 py-2 text-base font-semibold text-white bg-gray-900/90 rounded-md hover:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-white cursor-pointer"
                   >
@@ -304,6 +362,8 @@ const PhotoGridView = ({ projectData, projectFolder, onPhotoSelect, selectedPhot
           )}
         </div>
       )}
+      {/* Invisible sentinel */}
+      {hasMore && <div ref={bottomRef} style={{ height: 1 }} aria-hidden="true" />}
     </div>
   );
 };

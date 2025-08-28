@@ -30,6 +30,11 @@ Tables and relationships:
     during ingestion and `upload_postprocess` so that new variants don’t create spurious pending deletions.
   - Manual changes to `keep_*` are honored until either Commit (destructive) or Revert (non‑destructive) is invoked.
 
+  Date semantics used by cross‑project APIs:
+  - `taken_at := coalesce(date_time_original, created_at)` is the canonical timestamp for ordering and filtering in
+    `GET /api/photos` and `GET /api/photos/locate-page`.
+  - Date filters `date_from`/`date_to` operate on `taken_at`.
+
 - `tags`
   - Columns: `id`, `project_id` (FK), `name`, `UNIQUE(project_id, name)`
 
@@ -250,6 +255,8 @@ Deletions:
 - POST `/api/projects/:folder/process` — queue thumbnail/preview generation (supports optional `{ force, filenames[] }` payload)
 - GET `/api/projects/:folder/thumbnail/:filename` → serves generated thumbnail JPG
 - GET `/api/projects/:folder/preview/:filename` → serves generated preview JPG
+- GET `/api/photos` — keyset‑paginated list across all non‑archived projects (supports `limit`, `cursor`, `date_from`, `date_to`, `file_type`, `keep_type`, `orientation`)
+- GET `/api/photos/locate-page` — locate a specific photo and return its containing page (requires `project_folder` and `filename` or `name`; returns `{ items, position, page_index, idx_in_items, next_cursor, prev_cursor, target }`)
 
 See implementations in `server/routes/uploads.js` and `server/routes/assets.js`.
 

@@ -193,7 +193,7 @@ const Settings = ({ project, config, onConfigUpdate, onProjectDelete, onProjectR
       setShowDeleteModal(false);
       setDeleteConfirmText('');
     } catch (error) {
-      console.error('Error deleting project:', error);
+      // Error deleting project
       // error may contain server message in error.message
       alert(`An error occurred while deleting the project. ${error?.message || ''}`);
     }

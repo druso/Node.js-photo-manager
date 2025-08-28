@@ -78,6 +78,13 @@
   - Dev guidance: close duplicate tabs and hard‑refresh if transient 429s appear during hot reloads; optionally raise `SSE_MAX_CONN_PER_IP` locally.
  - Keep flag updates (`PUT /api/projects/:folder/keep`) now emit `type: item` SSEs with `keep_jpg`/`keep_raw`. This reduces client refetch pressure and prevents UI desync; rate limits on destructive endpoints remain in effect.
 
+**All Photos (cross-project)**:
+- `GET /api/photos` supports keyset pagination across all non-archived projects. Responses are short-lived and include `Cache-Control` headers appropriate for list data.
+- `GET /api/photos/locate-page` locates a specific photo and returns its containing page. Protections:
+  - Cache behavior: `Cache-Control: no-store` to avoid stale pagination (+ sensitive deep-linking) artifacts.
+  - Rate limiting: 60 requests per minute per IP. Intended for occasional deep-link navigations, not for bulk iteration.
+  - Errors: 404 when target not found/filtered out; 409 for ambiguous basename (client should pass full filename to disambiguate).
+
 **Client-side Storage**:
 - UI state persistence is session-only using `sessionStorage` (single key `session_ui_state`). No long-lived UI data is kept in `localStorage`.
 - Impact: reduces risk of stale/sensitive UI state persisting across sessions or shared machines.
@@ -179,3 +186,17 @@ This ensures all functionality receives security review before deployment.
 All items from the previous cycle were assessed on 2025-08-20 UTC. Notes have been incorporated into this document (Security Overview and Suggested Interventions). No pending items remain here.
 
 2025-08-24 UTC — Frontend lazy-loading observer hardened to prevent random blank thumbnails and to shape thumbnail request rates (buffer margin + dwell). No new risks introduced; this reduces potential client-side request spikes during fast scrolling.
+
+2025-08-28 UTC — Deep-link photo redirect issue resolved. Removed session storage viewer state persistence that was causing conflicts with URL-based deep linking. The URL is now the single source of truth for viewer state, eliminating redirect loops and ensuring stable deep links like `/all/p6/DSC02415`. No new security risks introduced; this actually reduces client-side state complexity and potential for stale session data conflicts.
+
+2025-08-28 UTC — Documentation alignment and endpoint hardening notes
+
+- README and PROJECT_OVERVIEW updated to explicitly document All Photos filters and defaults:
+  - `/api/photos`: `limit` default 200 (max 300); filters `file_type(any|jpg_only|raw_only|both)`, `keep_type(any|any_kept|jpg_only|raw_jpg|none)`, `orientation(any|vertical|horizontal)`; headers include `Cache-Control: no-store`.
+  - `/api/photos/locate-page`: requires `project_folder` and `filename` or `name`; `limit` default 100 (max 300); `Cache-Control: no-store`; rate limit 60 req/min/IP; 400/404/409 errors documented.
+- Uploads section now states multipart flags parsed as strings ("true"/"false", default false): `overwriteInThisProject`, `reloadConflictsIntoThisProject` (triggers `image_move`).
+- Asset endpoints section reiterates rate‑limit defaults (per IP per minute) and ETag/caching behavior; originals/zip require signed tokens and `REQUIRE_SIGNED_DOWNLOADS=true` by default; `DOWNLOAD_SECRET` must be strong in production.
+- SCHEMA docs clarify `taken_at := coalesce(date_time_original, created_at)` as the basis for cross‑project ordering and date filters.
+- Cross-links verified so `JOBS_OVERVIEW.md` remains the canonical jobs catalog for `upload_postprocess` and `image_move` semantics.
+
+No functional changes were introduced by this documentation update; it reflects the current implementation in `server/routes/photos.js`, `server/routes/assets.js`, and `server/routes/uploads.js`.
