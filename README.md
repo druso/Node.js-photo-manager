@@ -31,6 +31,9 @@ This application helps photographers manage their photo collections by:
   - `GET /api/projects/:folder` — metadata
   - `GET /api/projects/:folder/photos` — paginated photos (`?limit&cursor&sort&dir`)
 - **Uploads & Processing**
+  - `POST /api/projects/:folder/analyze-files` — analyze files for conflicts before upload
+    - Returns: `{ imageGroups, conflicts, completion_conflicts, summary }`
+    - Detects: duplicates within project, cross-project conflicts, format completion conflicts
   - `POST /api/projects/:folder/upload` — upload files
     - Flags (multipart fields parsed as strings "true"/"false", default false):
       - `overwriteInThisProject` — overwrite existing files in the same project

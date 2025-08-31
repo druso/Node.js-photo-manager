@@ -18,11 +18,13 @@ The application is built around a few key concepts:
 
 *   **Projects**: A Project is the primary organizational unit, representing a collection of photos from a single event or shooting session. Think of it as an "album" or a specific shoot. A photo belongs to exactly one Project.
 
-*   **Photo Ingestion**: This is the process of adding photos to the application. Users can drag-and-drop files or use an upload button. The backend handles the file storage, creates database records, and queues up post-processing tasks.
+*   **Photo Ingestion**: This is the process of adding photos to the application. Users can drag-and-drop files or use an upload button. The backend analyzes files for conflicts (duplicates within project, cross-project conflicts, and format completion conflicts), presents conflict resolution options to users, then handles file storage, creates database records, and queues up post-processing tasks.
+
+*   **Upload Conflict Handling**: The system provides two main options for handling conflicts during upload: (1) "Skip project duplicates" - when unchecked, existing images in the current project are overwritten; (2) "Move conflicting items into this project" - when enabled, images that exist in other projects are moved to the current project via background image_move tasks. Cross-project conflicts are never uploaded directly but are handled through the move pipeline to maintain data consistency.
 
 *   **List and Viewer**: These are the main UI components for interacting with photos. The "List" view shows thumbnails of photos within a project, and the "Viewer" provides a full-size view of a single selected photo.
 
-*   **Worker Pipeline**: To ensure the UI remains responsive, time-consuming tasks like generating thumbnails and previews are handled asynchronously by a background worker pipeline. This system is designed to be extensible for future processing needs.
+*   **Worker Pipeline**: To ensure the UI remains responsive, time-consuming tasks like generating thumbnails and previews are handled asynchronously by a background worker pipeline. The system includes specialized workers for image moves between projects, which update database records, move files and derivatives, and emit real-time SSE events to keep the UI synchronized. This system is designed to be extensible for future processing needs.
 
 *   **Database**: While photo files (originals, raws, previews) are stored on the file system, all their metadata—such as project association, tags, timestamps, and file paths—is stored in a central SQLite database. The frontend application relies on this database for fast access to photo information.
 

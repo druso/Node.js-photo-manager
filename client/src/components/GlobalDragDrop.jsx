@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useUpload } from '../upload/UploadContext';
 
-export default function GlobalDragDrop() {
+export default function GlobalDragDrop({ onFilesDroppedInAllView }) {
   const { actions } = useUpload();
   const [dragActive, setDragActive] = useState(false);
   const dragCounterRef = useRef(0);
@@ -44,8 +44,14 @@ export default function GlobalDragDrop() {
       if (files.length === 0 && e.dataTransfer.files) {
         for (let i = 0; i < e.dataTransfer.files.length; i++) files.push(e.dataTransfer.files[i]);
       }
-      if (files.length > 0 && typeof actions.startAnalyze === 'function') {
-        actions.startAnalyze(files);
+      if (files.length > 0) {
+        if (typeof onFilesDroppedInAllView === 'function') {
+          // In All view - need project selection first
+          onFilesDroppedInAllView(files);
+        } else if (typeof actions.startAnalyze === 'function') {
+          // In project view - proceed directly
+          actions.startAnalyze(files);
+        }
       }
     };
 

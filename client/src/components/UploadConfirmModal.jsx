@@ -3,11 +3,18 @@ import { useUpload } from '../upload/UploadContext';
 
 const UploadConfirmModal = () => {
   const { state, actions } = useUpload();
-  const { operation, analysisResult, summary, skipDuplicates } = state;
+  const {
+    operation,
+    analysisResult,
+    summary,
+    skipDuplicates,
+    reloadConflictsIntoThisProject,
+  } = state;
 
   const isPreparing = operation && operation.type === 'upload' && operation.phase === 'preparation';
   const showConfirm = operation && operation.type === 'upload' && operation.phase === 'idle' && analysisResult;
   const visible = isPreparing || showConfirm;
+  const conflictsCount = Array.isArray(analysisResult?.conflicts) ? analysisResult.conflicts.length : 0;
 
   if (!visible) return null;
 
@@ -51,21 +58,48 @@ const UploadConfirmModal = () => {
                     <span className="font-medium text-orange-900">True duplicates:</span>
                     <span className="ml-2 text-orange-700">{summary?.duplicateImages ?? 0}</span>
                   </div>
+                  <div className="col-span-2">
+                    <span className="font-medium text-purple-900">Cross-project conflicts:</span>
+                    <span className="ml-2 text-purple-700">{conflictsCount}</span>
+                  </div>
                 </div>
               </div>
 
               {/* Options */}
-              <div className="flex items-center justify-between mb-4">
-                <label className="flex items-center gap-2 text-sm text-gray-800">
-                  <input
-                    type="checkbox"
-                    checked={!!skipDuplicates}
-                    onChange={(e) => actions.setSkipDuplicates(e.target.checked)}
-                  />
-                  Skip duplicates (default)
-                </label>
-                <div className="text-xs text-gray-500">
-                  Uncheck to overwrite duplicates
+              <div className="space-y-3">
+                {/* 1. Skip project duplicates */}
+                <div className="border border-orange-200 rounded-lg p-4">
+                  <label className="flex items-center gap-2 text-sm text-gray-800">
+                    <input
+                      type="checkbox"
+                      checked={!!skipDuplicates}
+                      onChange={(e) => actions.setSkipDuplicates(e.target.checked)}
+                    />
+                    Skip project duplicates
+                  </label>
+                  <p className="text-xs text-gray-600 mt-1">
+                    {skipDuplicates
+                      ? 'Checked: images already present in this project will be skipped.'
+                      : 'Unchecked: existing images in this project will be overwritten during upload.'}
+                  </p>
+                </div>
+
+                {/* 2. Move conflicting items into this project */}
+                <div className="border border-purple-200 rounded-lg p-4">
+                  <label className={`flex items-center gap-2 text-sm ${conflictsCount === 0 ? 'text-gray-400' : 'text-purple-900'}`}>
+                    <input
+                      type="checkbox"
+                      disabled={conflictsCount === 0}
+                      checked={!!reloadConflictsIntoThisProject}
+                      onChange={(e) => actions.setReloadConflictsIntoThisProject(e.target.checked)}
+                    />
+                    Move conflicting items into this project
+                  </label>
+                  <p className={`text-xs mt-1 ${conflictsCount === 0 ? 'text-gray-400' : 'text-purple-700'}`}>
+                    {conflictsCount === 0
+                      ? 'No cross-project conflicts detected.'
+                      : 'Checked: items that exist in other projects will be moved into this project; otherwise they will be left in their original project.'}
+                  </p>
                 </div>
               </div>
 

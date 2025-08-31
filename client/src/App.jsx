@@ -20,6 +20,8 @@ import GlobalDragDrop from './components/GlobalDragDrop';
 import './App.css';
 import { useToast } from './ui/toast/ToastContext';
 import MovePhotosModal from './components/MovePhotosModal';
+import ProjectSelectionModal from './components/ProjectSelectionModal';
+import UploadHandler from './components/UploadHandler';
 import { getSessionState, setSessionWindowY, setSessionMainY, getLastProject, setLastProject } from './utils/storage';
 
 // Normalize filenames: strip known photo extensions for tolerant comparisons
@@ -107,6 +109,9 @@ function App() {
   const [showMoveModal, setShowMoveModal] = useState(false);
   // All Photos mode: Move modal state
   const [showAllMoveModal, setShowAllMoveModal] = useState(false);
+  // Project selection for uploads from All view
+  const [showProjectSelection, setShowProjectSelection] = useState(false);
+  const [pendingUploadFiles, setPendingUploadFiles] = useState(null);
 
   const handleCommitChanges = () => {
     if (!selectedProject) return;
@@ -1260,9 +1265,10 @@ function App() {
       }
 
       // 2) Task completion toasts (user-relevant tasks only)
-      if (evt && selectedProject && evt.payload_json && evt.payload_json.task_id && evt.payload_json.task_type && (evt.status === 'completed' || evt.status === 'failed')) {
-        const tid = evt.payload_json.task_id;
-        const ttype = evt.payload_json.task_type;
+      // Server emits task metadata at top-level: { task_id, task_type }
+      if (evt && selectedProject && evt.task_id && evt.task_type && (evt.status === 'completed' || evt.status === 'failed')) {
+        const tid = evt.task_id;
+        const ttype = evt.task_type;
         const meta = taskDefs?.[ttype];
         const userRelevant = meta ? (meta.user_relevant !== false) : true;
         if (userRelevant && !notifiedTasksRef.current.has(tid)) {
@@ -2587,7 +2593,42 @@ function App() {
       {/* Global upload UI */}
       <UploadConfirmModal />
       <BottomUploadBar />
-      {selectedProject?.folder && <GlobalDragDrop />}
+      <UploadHandler 
+        selectedProject={selectedProject} 
+        pendingUploadFiles={pendingUploadFiles}
+        onUploadStarted={() => setPendingUploadFiles(null)}
+      />
+      {(selectedProject?.folder || isAllMode) && (
+        <GlobalDragDrop
+          onFilesDroppedInAllView={isAllMode ? (files) => {
+            setPendingUploadFiles(files);
+            setShowProjectSelection(true);
+          } : undefined}
+        />
+      )}
+      
+      {/* Project selection modal for uploads from All view */}
+      <ProjectSelectionModal
+        isOpen={showProjectSelection}
+        projects={projects}
+        onSelect={(project) => {
+          setShowProjectSelection(false);
+          if (pendingUploadFiles && project?.folder) {
+            // Switch to the selected project and start upload
+            setSelectedProject(project);
+            setIsAllMode(false);
+            // Store files and project for the upload handler
+            const filesToUpload = pendingUploadFiles;
+            setPendingUploadFiles({ files: filesToUpload, targetProject: project });
+          } else {
+            setPendingUploadFiles(null);
+          }
+        }}
+        onCancel={() => {
+          setShowProjectSelection(false);
+          setPendingUploadFiles(null);
+        }}
+      />
       {/* Persistent bottom bar for pending commit/revert */}
       {selectedProject && pendingDeletes.total > 0 && (
         <div ref={commitBarRef} className="fixed bottom-0 inset-x-0 z-30">

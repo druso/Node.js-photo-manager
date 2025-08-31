@@ -1,10 +1,15 @@
 // API client for uploads-related operations
 
 export async function analyzeFiles(folder, files) {
+  const fileMetadata = files.map(file => ({
+    name: file.name,
+    type: file.type
+  }));
+  
   const res = await fetch(`/api/projects/${encodeURIComponent(folder)}/analyze-files`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ files })
+    body: JSON.stringify({ files: fileMetadata })
   });
   if (!res.ok) throw new Error(`analyzeFiles failed: ${res.status}`);
   return res.json();

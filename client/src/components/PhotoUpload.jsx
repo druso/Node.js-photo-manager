@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { analyzeFiles as apiAnalyzeFiles, generateThumbnails as apiGenerateThumbnails, generatePreviews as apiGeneratePreviews } from '../api/uploadsApi';
+import { analyzeFiles as apiAnalyzeFiles, processPerImage as apiProcessPerImage } from '../api/uploadsApi';
 
 const PhotoUpload = ({ projectFolder, onPhotosUploaded }) => {
   const [isDragOver, setIsDragOver] = useState(false);
@@ -10,6 +10,9 @@ const PhotoUpload = ({ projectFolder, onPhotosUploaded }) => {
   const [showConfirmation, setShowConfirmation] = useState(false);
   const [expandedDetails, setExpandedDetails] = useState(false);
   const [skipDuplicates, setSkipDuplicates] = useState(true); // Default to skip duplicates
+  // Upload conflict handling flags (wired to backend multipart fields)
+  // Overwrite is now implied when skipping duplicates is OFF.
+  const [reloadConflictsIntoThisProject, setReloadConflictsIntoThisProject] = useState(false);
   const fileInputRef = useRef(null);
 
   // Helper function to analyze files and group by base name
@@ -42,7 +45,9 @@ const PhotoUpload = ({ projectFolder, onPhotosUploaded }) => {
       
       return {
         imageGroups: analysisResult.imageGroups,
-        summary: analysisResult.summary
+        summary: analysisResult.summary,
+        conflicts: Array.isArray(analysisResult.conflicts) ? analysisResult.conflicts : [],
+        completion_conflicts: Array.isArray(analysisResult.completion_conflicts) ? analysisResult.completion_conflicts : []
       };
       
     } catch (error) {
@@ -86,7 +91,19 @@ const PhotoUpload = ({ projectFolder, onPhotosUploaded }) => {
 
     try {
       const analysis = await analyzeFiles(files);
+      console.log('Analysis result:', analysis); // Debug log
+      console.log('Analysis conflicts check:', {
+        hasConflicts: Array.isArray(analysis?.conflicts),
+        conflictsLength: analysis?.conflicts?.length,
+        conflicts: analysis?.conflicts
+      }); // Debug log
       setAnalysisResult(analysis);
+      // Initialize conflict flags based on analysis
+      try {
+        const hasCrossConflicts = Array.isArray(analysis?.conflicts) && analysis.conflicts.length > 0;
+        console.log('Cross conflicts detected:', hasCrossConflicts, 'conflicts:', analysis?.conflicts); // Debug log
+        setReloadConflictsIntoThisProject(hasCrossConflicts);
+      } catch {}
 
       // Backend now handles file validation, so no rejectedFiles array
       // File validation is done server-side in the analyze-files endpoint
@@ -113,46 +130,91 @@ const PhotoUpload = ({ projectFolder, onPhotosUploaded }) => {
   const proceedWithUpload = async () => {
     if (!analysisResult) return;
 
-    // Filter files based on skip/overwrite setting
+    // Filter files based on skip/overwrite setting and cross-project conflicts
     let filesToUpload;
     let imagesToProcess;
+    const conflictArray = Array.isArray(analysisResult.conflicts)
+      ? analysisResult.conflicts.map(c => c.filename)
+      : [];
+    const conflictNames = new Set(conflictArray);
+    
+    console.log('Conflict filtering setup:', {
+      conflictArray,
+      conflictNames: Array.from(conflictNames),
+      reloadConflictsIntoThisProject,
+      shouldExcludeConflicts: !reloadConflictsIntoThisProject
+    });
+    
+    console.log('Filtering debug:', {
+      conflictArray,
+      conflictNames: Array.from(conflictNames),
+      imageGroups: Object.keys(analysisResult.imageGroups),
+      imageGroupDetails: analysisResult.imageGroups,
+      reloadConflictsIntoThisProject
+    });
     
     if (skipDuplicates) {
-      // Skip true duplicates, but include new images and format completions
-      const allowedGroups = Object.values(analysisResult.imageGroups).filter(group => 
-        group.isNew || group.conflictType === 'completion'
-      );
+      // Skip true duplicates, include new images and format completions
+      // Exclude cross-project conflicts unless user chose to reload them
+      const allowedGroups = Object.values(analysisResult.imageGroups).filter(group => {
+        const isCrossProjectConflict = conflictNames.has(group.baseName);
+        const shouldExcludeConflict = isCrossProjectConflict && !reloadConflictsIntoThisProject;
+        const allowed = (group.isNew || group.conflictType === 'completion') && !shouldExcludeConflict;
+        console.log(`Group ${group.baseName}: isNew=${group.isNew}, conflictType=${group.conflictType}, isCrossProjectConflict=${isCrossProjectConflict}, shouldExcludeConflict=${shouldExcludeConflict}, allowed=${allowed}`);
+        return allowed;
+      });
       filesToUpload = allowedGroups.flatMap(group => group.files.map(f => f.file));
       imagesToProcess = allowedGroups.length;
     } else {
-      // Upload all files (overwrite duplicates)
-      filesToUpload = Object.values(analysisResult.imageGroups)
-        .flatMap(group => group.files.map(f => f.file));
-      imagesToProcess = analysisResult.summary.totalImages;
+      // Overwrite duplicates within this project, but NEVER upload cross-project conflicts.
+      // Cross-project conflicts are handled via move scheduling when selected.
+      const allowedGroups = Object.values(analysisResult.imageGroups).filter(group => {
+        const isCrossProjectConflict = conflictNames.has(group.baseName);
+        const allowed = !isCrossProjectConflict;
+        console.log(`Group ${group.baseName}: isCrossProjectConflict=${isCrossProjectConflict}, allowed=${allowed}`);
+        return allowed;
+      });
+      filesToUpload = allowedGroups.flatMap(group => group.files.map(f => f.file));
+      imagesToProcess = allowedGroups.length;
     }
 
-    if (filesToUpload.length === 0) {
+    const moveOnly = reloadConflictsIntoThisProject && conflictArray.length > 0 && filesToUpload.length === 0;
+    if (!moveOnly && filesToUpload.length === 0) {
       alert('No files to upload after filtering.');
       return;
     }
 
+    // Keep overwrite flag visually aligned: overwrite = !skipDuplicates unless user changed it explicitly
+    // We do not force it here to respect any manual toggle the user made; default was synced with skipDuplicates in UI
     setShowConfirmation(false);
     setUploading(true);
     setUploadPhase('loading');
 
     // Phase 2: Loading - Upload files
     setUploadProgress([{ 
-      name: `Uploading ${filesToUpload.length} file${filesToUpload.length > 1 ? 's' : ''}`, 
+      name: moveOnly
+        ? `Consolidating ${conflictArray.length} conflicted item${conflictArray.length > 1 ? 's' : ''}`
+        : `Uploading ${filesToUpload.length} file${filesToUpload.length > 1 ? 's' : ''}`,
       progress: 0, 
       status: 'uploading',
-      totalFiles: filesToUpload.length,
-      totalImages: imagesToProcess
+      totalFiles: moveOnly ? 0 : filesToUpload.length,
+      totalImages: moveOnly ? 0 : imagesToProcess
     }]);
 
     const formData = new FormData();
-    filesToUpload.forEach(file => {
-      formData.append('photos', file);
-    });
+    if (!moveOnly) {
+      filesToUpload.forEach(file => {
+        formData.append('photos', file);
+      });
+    }
+    // Wire flags expected by backend (string booleans, lowercase)
+    // Overwrite is implied when not skipping duplicates
+    const effectiveOverwrite = !skipDuplicates;
+    formData.append('overwriteInThisProject', String(!!effectiveOverwrite).toLowerCase());
+    formData.append('reloadConflictsIntoThisProject', String(!!reloadConflictsIntoThisProject).toLowerCase());
+    if (reloadConflictsIntoThisProject && conflictArray.length > 0) {
+      try { formData.append('conflictItems', JSON.stringify(conflictArray)); } catch (_) {}
+    }
 
     const xhr = new XMLHttpRequest();
 
@@ -171,52 +233,61 @@ const PhotoUpload = ({ projectFolder, onPhotosUploaded }) => {
 
     xhr.onload = async function() {
       if (xhr.status >= 200 && xhr.status < 300) {
-        const result = JSON.parse(xhr.responseText);
-        
-        // Phase 3: Post-processing - Generate thumbnails & previews
+        let result = {};
+        try { result = JSON.parse(xhr.responseText); } catch {}
+        // Treat 202 and consolidation-only responses as move-only, even if files were included in the request
+        const treatAsMoveOnly = (
+          moveOnly ||
+          xhr.status === 202 ||
+          (result && result.flags && result.flags.reloadConflictsIntoThisProject && Array.isArray(result.files) && result.files.length === 0)
+        );
+
+        // Phase 3: Post-processing - Generate derivatives per image (only when not consolidation-only)
         setUploadProgress(prevProgress => 
           prevProgress.map(p => ({
           ...p, 
           progress: 100, 
           status: 'post-processing',
-          name: `Processing ${p.totalImages} image${p.totalImages > 1 ? 's' : ''} (generating thumbnails & previews...)`
+          name: treatAsMoveOnly
+            ? `Consolidation scheduled for ${conflictArray.length} conflicted item${conflictArray.length > 1 ? 's' : ''}.`
+            : `Processing ${p.totalImages} image${p.totalImages > 1 ? 's' : ''} (generating derivatives...)`
         }))
       );
       
-      // Call thumbnail generation endpoint
       try {
-        const thumbnailResult = await apiGenerateThumbnails(projectFolder);
-        console.log('Thumbnail generation result:', thumbnailResult);
-        // Call preview generation endpoint
-        try {
-          const previewResult = await apiGeneratePreviews(projectFolder);
-          console.log('Preview generation result:', previewResult);
-          alert(`Upload completed successfully, ${previewResult.processed} previews generated.`);
-          setUploadProgress(
-            prevProgress => prevProgress.map(p => ({ 
-              ...p, 
-              status: 'completed',
-              name: `Successfully uploaded ${p.totalImages} image${p.totalImages > 1 ? 's' : ''} (${p.totalFiles} files)! Generated ${thumbnailResult.processed} thumbnails and ${previewResult.processed} previews.`
-            }))
-          );
-        } catch (err) {
-          console.warn('Preview generation failed:', err);
-          setUploadProgress(
-            prevProgress => prevProgress.map(p => ({ 
-              ...p, 
-              status: 'completed',
-              name: `Successfully uploaded ${p.totalImages} image${p.totalImages > 1 ? 's' : ''} (${p.totalFiles} files)! Generated ${thumbnailResult.processed} thumbnails. (Preview generation failed)`
-            }))
-          );
+        // Derive basenames for subset processing when not consolidation-only
+        const basenames = treatAsMoveOnly
+          ? []
+          : Array.from(new Set(filesToUpload.map(f => {
+              const dot = f.name.lastIndexOf('.');
+              return dot > 0 ? f.name.substring(0, dot) : f.name;
+            })));
+
+        if (!treatAsMoveOnly) {
+          const processResult = await apiProcessPerImage(projectFolder, { force: false, filenames: basenames });
+          console.log('Derivatives job enqueued:', processResult);
         }
-        
-      } catch (err) {
-        console.warn('Thumbnail generation failed:', err);
+
+        const successMsg = treatAsMoveOnly
+          ? `Consolidation scheduled for ${conflictArray.length} conflicted item${conflictArray.length > 1 ? 's' : ''}.`
+          : `Upload completed successfully. Derivatives generation started for ${imagesToProcess} image${imagesToProcess > 1 ? 's' : ''}.`;
+        alert(successMsg);
         setUploadProgress(
           prevProgress => prevProgress.map(p => ({ 
             ...p, 
             status: 'completed',
-            name: `Successfully uploaded ${p.totalImages} image${p.totalImages > 1 ? 's' : ''} (${p.totalFiles} files)! (Thumbnail/Preview generation failed)`
+            name: (treatAsMoveOnly)
+              ? `Scheduled consolidation for ${conflictArray.length} conflicted item${conflictArray.length > 1 ? 's' : ''}.`
+              : `Successfully uploaded ${p.totalImages} image${p.totalImages > 1 ? 's' : ''} (${p.totalFiles} files)! Derivatives job enqueued.`
+          }))
+        );
+      } catch (err) {
+        console.warn('Derivatives processing enqueue failed:', err);
+        setUploadProgress(
+          prevProgress => prevProgress.map(p => ({ 
+            ...p, 
+            status: 'completed',
+            name: `Successfully uploaded ${p.totalImages} image${p.totalImages > 1 ? 's' : ''} (${p.totalFiles} files)! (Derivatives enqueue failed)`
           }))
         );
       }
@@ -331,11 +402,10 @@ const PhotoUpload = ({ projectFolder, onPhotosUploaded }) => {
         </div>
       </div>
 
-      {/* Confirmation UI */}
+      {/* Confirmation Panel */}
       {showConfirmation && analysisResult && (
         <div className="bg-white rounded-lg shadow-sm border-2 border-blue-200 p-6">
-          <h4 className="text-lg font-medium text-gray-900 mb-4">📋 Upload Confirmation</h4>
-          
+          <h4 className="text-lg font-medium text-gray-900 mb-4">Upload Confirmation</h4>
           <div className="space-y-4">
             {/* Summary */}
             <div className="bg-blue-50 rounded-lg p-4">
@@ -363,66 +433,43 @@ const PhotoUpload = ({ projectFolder, onPhotosUploaded }) => {
               </div>
             </div>
 
-            {/* Format Completions Info */}
-            {analysisResult.summary.completionImages > 0 && (
-              <div className="border border-green-200 rounded-lg p-4 mb-4">
-                <h5 className="font-medium text-green-900 mb-2">✅ Format Completions ({analysisResult.summary.completionImages})</h5>
-                <p className="text-sm text-green-700 mb-2">
-                  These files will add new formats to existing images (e.g., adding JPG to RAW-only images).
-                </p>
-                {expandedDetails && (
-                  <div className="space-y-2 text-sm">
-                    {Object.values(analysisResult.imageGroups)
-                      .filter(group => group.conflictType === 'completion')
-                      .map((group, index) => (
-                        <div key={index} className="bg-green-50 rounded p-2">
-                          <div className="font-medium text-green-900">{group.baseName}</div>
-                          <div className="text-green-700 text-xs">
-                            Adding: {group.files.map(f => f.name).join(', ')}
-                          </div>
-                        </div>
-                      ))
-                    }
-                  </div>
-                )}
+            {/* Cross-project conflicts - Force show for debugging */}
+            {analysisResult && analysisResult.conflicts && analysisResult.conflicts.length > 0 && (
+              <div className="border border-purple-200 rounded-lg p-4">
+                <h5 className="font-medium text-purple-900 mb-2">Cross-project conflicts ({analysisResult.conflicts.length})</h5>
+                <p className="text-sm text-purple-700 mb-2">Items with the same base name exist in other projects. You can reload them into this project now.</p>
+                <label className="flex items-center cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={reloadConflictsIntoThisProject}
+                    onChange={(e) => setReloadConflictsIntoThisProject(e.target.checked)}
+                    className="mr-2"
+                  />
+                  <span className="text-sm font-medium text-purple-900">Move conflicting items into this project</span>
+                </label>
               </div>
             )}
-            
-            {/* Conflict Details */}
-            {analysisResult.summary.conflictImages > 0 && (
+
+            {/* Duplicate handling */}
+            {analysisResult.summary.duplicateImages > 0 && (
               <div className="border border-orange-200 rounded-lg p-4">
                 <div className="flex items-center justify-between mb-3">
-                  <h5 className="font-medium text-orange-900">⚠️ True duplicates ({analysisResult.summary.duplicateImages})</h5>
-                  <button
-                    onClick={() => setExpandedDetails(!expandedDetails)}
-                    className="text-sm text-orange-700 hover:text-orange-900"
-                  >
+                  <h5 className="font-medium text-orange-900">True duplicates ({analysisResult.summary.duplicateImages})</h5>
+                  <button onClick={() => setExpandedDetails(!expandedDetails)} className="text-sm text-orange-700 hover:text-orange-900">
                     {expandedDetails ? 'Hide details' : 'Show details'}
                   </button>
                 </div>
-                
-                {/* Skip/Overwrite Switch */}
                 <div className="mb-3 p-3 bg-orange-50 rounded">
-                  <div className="flex items-center space-x-3">
-                    <label className="flex items-center cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={skipDuplicates}
-                        onChange={(e) => setSkipDuplicates(e.target.checked)}
-                        className="mr-2"
-                      />
-                      <span className="text-sm font-medium text-orange-900">
-                        Skip duplicate files (recommended)
-                      </span>
-                    </label>
-                  </div>
+                  <label className="flex items-center cursor-pointer">
+                    <input type="checkbox" checked={skipDuplicates} onChange={(e) => setSkipDuplicates(e.target.checked)} className="mr-2" />
+                    <span className="text-sm font-medium text-orange-900">Skip project duplicates</span>
+                  </label>
                   <p className="text-xs text-orange-700 mt-1">
-                    {skipDuplicates 
-                      ? `Will upload ${analysisResult.summary.newImages + analysisResult.summary.completionImages} images (${analysisResult.summary.newImages} new + ${analysisResult.summary.completionImages} completions)` 
-                      : `Will overwrite ${analysisResult.summary.duplicateImages} duplicate images and upload ${analysisResult.summary.newImages + analysisResult.summary.completionImages} others`}
+                    {skipDuplicates
+                      ? `Will upload ${analysisResult.summary.newImages + analysisResult.summary.completionImages} images (${analysisResult.summary.newImages} new + ${analysisResult.summary.completionImages} completions). Duplicates will be skipped.`
+                      : `Will overwrite ${analysisResult.summary.duplicateImages} duplicate images and upload ${analysisResult.summary.newImages + analysisResult.summary.completionImages} others.`}
                   </p>
                 </div>
-                
                 {expandedDetails && (
                   <div className="space-y-2 text-sm">
                     {Object.values(analysisResult.imageGroups)
@@ -430,37 +477,38 @@ const PhotoUpload = ({ projectFolder, onPhotosUploaded }) => {
                       .map((group, index) => (
                         <div key={index} className="bg-orange-50 rounded p-2">
                           <div className="font-medium text-orange-900">{group.baseName}</div>
-                          <div className="text-orange-700 text-xs">
-                            Duplicate files: {group.files.map(f => f.name).join(', ')}
-                          </div>
+                          <div className="text-orange-700 text-xs">Duplicate files: {group.files.map(f => f.name).join(', ')}</div>
                         </div>
-                      ))
-                    }
+                      ))}
                   </div>
                 )}
-                
-                <p className="text-sm text-orange-700 mt-2">
-                  {skipDuplicates 
-                    ? 'These duplicate files will be skipped during upload.' 
-                    : 'These duplicate files will overwrite existing files with the same format.'}
-                </p>
               </div>
             )}
 
-            {/* Action Buttons */}
-            <div className="flex space-x-3 pt-4">
-              <button
-                onClick={proceedWithUpload}
-                className="flex-1 bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
-              >
-                Proceed with Upload
-              </button>
-              <button
-                onClick={cancelUpload}
-                className="px-4 py-2 text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200 focus:outline-none focus:ring-2 focus:ring-gray-500"
-              >
-                Cancel
-              </button>
+            {/* Format completions */}
+            {analysisResult.summary.completionImages > 0 && (
+              <div className="border border-green-200 rounded-lg p-4">
+                <h5 className="font-medium text-green-900 mb-2">Format Completions ({analysisResult.summary.completionImages})</h5>
+                <p className="text-sm text-green-700 mb-2">These files will add new formats to existing images.</p>
+                {expandedDetails && (
+                  <div className="space-y-2 text-sm">
+                    {Object.values(analysisResult.imageGroups)
+                      .filter(group => group.conflictType === 'completion')
+                      .map((group, index) => (
+                        <div key={index} className="bg-green-50 rounded p-2">
+                          <div className="font-medium text-green-900">{group.baseName}</div>
+                          <div className="text-green-700 text-xs">Adding: {group.files.map(f => f.name).join(', ')}</div>
+                        </div>
+                      ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Actions */}
+            <div className="flex space-x-3 pt-2">
+              <button onClick={proceedWithUpload} className="flex-1 bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500">Proceed with Upload</button>
+              <button onClick={cancelUpload} className="px-4 py-2 text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200 focus:outline-none focus:ring-2 focus:ring-gray-500">Cancel</button>
             </div>
           </div>
         </div>

@@ -21,6 +21,8 @@ export function UploadProvider({ children, projectFolder, onCompleted }) {
   const [analysisResult, setAnalysisResult] = useState(null);
   const [summary, setSummary] = useState(null);
   const [skipDuplicates, setSkipDuplicates] = useState(true);
+  // Conflict-handling flag: cross-project moves
+  const [reloadConflictsIntoThisProject, setReloadConflictsIntoThisProject] = useState(false);
   const lingerTimerRef = useRef(null);
   const progressTimerRef = useRef(null);
   const hideTimerRef = useRef(null);
@@ -45,7 +47,8 @@ export function UploadProvider({ children, projectFolder, onCompleted }) {
   const startAnalyze = async (files) => {
     if (!files || files.length === 0) return;
     if (!projectFolder) {
-      setOperation({ type: 'upload', phase: 'error', label: 'Select a project first', percent: null });
+      console.error('UploadContext.startAnalyze called without projectFolder:', { projectFolder, filesCount: files?.length });
+      setOperation({ type: 'upload', phase: 'error', label: 'No project selected for upload', percent: null });
       return;
     }
     clearLingerTimer();
@@ -72,6 +75,8 @@ export function UploadProvider({ children, projectFolder, onCompleted }) {
         return withFiles;
       });
       setSummary(result.summary);
+      // Initialize flags for a new analysis session
+      setReloadConflictsIntoThisProject(false);
       // If no valid files were accepted by the server, stop here and show a clear message
       if (!result.summary || (result.summary.totalFiles || 0) === 0) {
         const rejectedCount = Array.isArray(result.rejected) ? result.rejected.length : 0;
@@ -97,17 +102,36 @@ export function UploadProvider({ children, projectFolder, onCompleted }) {
     }
     clearLingerTimer();
 
-    const { filesToUpload, imagesToProcess } = pickFilesForUpload(analysisResult, skip);
-    if (filesToUpload.length === 0) {
+    const { filesToUpload, imagesToProcess, conflictArray } = pickFilesForUpload(analysisResult, skip);
+    const moveOnly = !!reloadConflictsIntoThisProject && conflictArray.length > 0 && filesToUpload.length === 0;
+    if (!moveOnly && filesToUpload.length === 0) {
       setOperation({ type: 'upload', phase: 'error', label: 'No files to upload', percent: null });
       return;
     }
 
     // Phase: uploading (XHR to get progress)
-    setOperation({ type: 'upload', phase: 'uploading', label: `Uploading ${filesToUpload.length} file${filesToUpload.length > 1 ? 's' : ''}…`, percent: 0, meta: { totalFiles: filesToUpload.length, totalImages: imagesToProcess } });
+    const initialLabel = moveOnly
+      ? `Consolidating ${conflictArray.length} conflicted item${conflictArray.length > 1 ? 's' : ''}…`
+      : `Uploading ${filesToUpload.length} file${filesToUpload.length > 1 ? 's' : ''}…`;
+    setOperation({
+      type: 'upload',
+      phase: 'uploading',
+      label: initialLabel,
+      percent: 0,
+      meta: { totalFiles: moveOnly ? 0 : filesToUpload.length, totalImages: moveOnly ? 0 : imagesToProcess }
+    });
 
     const formData = new FormData();
-    filesToUpload.forEach(file => formData.append('photos', file));
+    if (!moveOnly) {
+      filesToUpload.forEach(file => formData.append('photos', file));
+    }
+    // Flags expected by backend: overwrite is implied when not skipping duplicates
+    const effectiveOverwrite = !skip;
+    formData.append('overwriteInThisProject', String(effectiveOverwrite).toLowerCase());
+    formData.append('reloadConflictsIntoThisProject', String(!!reloadConflictsIntoThisProject).toLowerCase());
+    if (reloadConflictsIntoThisProject && conflictArray.length > 0) {
+      try { formData.append('conflictItems', JSON.stringify(conflictArray)); } catch {}
+    }
 
     const xhr = new XMLHttpRequest();
     xhrRef.current = xhr;
@@ -121,8 +145,8 @@ export function UploadProvider({ children, projectFolder, onCompleted }) {
 
     xhr.onload = async function () {
       if (xhr.status >= 200 && xhr.status < 300) {
-        // Background job will process uploaded files. Mark upload complete.
-        finishSuccess({ note: 'Upload complete. Processing in background.' });
+        // Background job will process uploaded files or consolidation. Mark as complete.
+        finishSuccess({ note: moveOnly ? 'Consolidation scheduled.' : 'Upload complete. Processing in background.' });
       } else {
         finishError(parseErrorText(xhr));
       }
@@ -191,24 +215,37 @@ export function UploadProvider({ children, projectFolder, onCompleted }) {
   const pickFilesForUpload = (analysis, skip) => {
     let filesToUpload = [];
     let imagesToProcess = 0;
+    let conflictArray = [];
     if (!analysis || !analysis.imageGroups) return { filesToUpload, imagesToProcess };
 
+    // Build conflict set from analysis (cross-project conflicts only)
+    try {
+      conflictArray = Array.isArray(analysis.conflicts) ? analysis.conflicts.map(c => c.filename) : [];
+    } catch {}
+    const conflictSet = new Set(conflictArray);
+
     if (skip) {
-      const allowedGroups = Object.values(analysis.imageGroups).filter(group => group.isNew || group.conflictType === 'completion');
+      // Skip true duplicates, include new images and format completions.
+      // Cross-project conflicts are NEVER uploaded (handled via move when selected).
+      const allowedGroups = Object.values(analysis.imageGroups).filter(group => {
+        const isCrossConflict = conflictSet.has(group.baseName);
+        return (group.isNew || group.conflictType === 'completion') && !isCrossConflict;
+      });
       filesToUpload = allowedGroups.flatMap(group => group.files.map(f => f.file).filter(Boolean));
       imagesToProcess = allowedGroups.length;
     } else {
-      const allGroups = Object.values(analysis.imageGroups);
-      filesToUpload = allGroups.flatMap(group => group.files.map(f => f.file).filter(Boolean));
-      imagesToProcess = analysis.summary?.totalImages ?? allGroups.length;
+      // Overwrite duplicates in this project, but NEVER upload cross-project conflicts.
+      const allowedGroups = Object.values(analysis.imageGroups).filter(group => !conflictSet.has(group.baseName));
+      filesToUpload = allowedGroups.flatMap(group => group.files.map(f => f.file).filter(Boolean));
+      imagesToProcess = allowedGroups.length;
     }
-    return { filesToUpload, imagesToProcess };
+    return { filesToUpload, imagesToProcess, conflictArray };
   };
 
   const value = useMemo(() => ({
-    state: { operation, analysisResult, summary, skipDuplicates },
-    actions: { startAnalyze, confirmUpload, cancel, startProcess, setSkipDuplicates }
-  }), [operation, analysisResult, summary, skipDuplicates, projectFolder]);
+    state: { operation, analysisResult, summary, skipDuplicates, reloadConflictsIntoThisProject },
+    actions: { startAnalyze, confirmUpload, cancel, startProcess, setSkipDuplicates, setReloadConflictsIntoThisProject }
+  }), [operation, analysisResult, summary, skipDuplicates, reloadConflictsIntoThisProject, projectFolder]);
 
   return (
     <UploadContext.Provider value={value}>

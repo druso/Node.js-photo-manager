@@ -23,6 +23,7 @@ Tables and relationships:
     `date_time_original`, `jpg_available`, `raw_available`, `other_available`, `keep_jpg`, `keep_raw`,
     `thumbnail_status`, `preview_status`, `orientation`, `meta_json`
   - Indexes: filename, basename, ext, date, raw_available, orientation
+  - Cross-project conflict detection: `photosRepo.getGlobalByFilename()` queries by filename excluding a project_id to detect conflicts across projects
 
   Semantics of availability vs keep flags:
   - `jpg_available`, `raw_available`, `other_available`: reflect files actually present on disk (derived from folder state).

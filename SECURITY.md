@@ -19,6 +19,10 @@
 - **Risk**: Limited forensics capability
 - **Action**: Structured logs for file ops, job failures, and project rename events (old_name → new_name, id)
 
+**6. Upload Conflict Controls** ✅ *Completed 2025-08-31*
+- **Risk**: User-controlled overwrite and cross-project move operations
+- **Action**: Implemented user-facing controls for duplicate overwriting and cross-project item moves via upload UI. Users can now explicitly choose to overwrite existing files in current project and/or move conflicting items from other projects. All operations are logged and processed through background job pipeline.
+
 ### 🟢 **LOW PRIORITY** (Future)
 
 **6. User Authentication** 🏗️ *2-3 weeks*

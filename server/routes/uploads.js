@@ -88,23 +88,48 @@ router.post('/:folder/upload', async (req, res) => {
       // Parse optional flags from multipart fields
       const overwriteInThisProject = String(req.body?.overwriteInThisProject ?? 'false').toLowerCase() === 'true';
       const reloadConflictsIntoThisProject = String(req.body?.reloadConflictsIntoThisProject ?? 'false').toLowerCase() === 'true';
+      // Parse conflictItems early to support move-only flows (no uploaded files)
+      let conflictItemsParsed = [];
+      if (req.body && req.body.conflictItems) {
+        try {
+          const arr = JSON.parse(req.body.conflictItems);
+          if (Array.isArray(arr)) {
+            conflictItemsParsed = arr.filter(v => typeof v === 'string' && v.trim().length > 0).map(v => v.trim());
+          }
+        } catch (e) {
+          log.warn('parse_conflictItems_early_failed', { error: e && e.message });
+        }
+      }
 
       if (!req.files || req.files.length === 0) {
-        return res.status(400).json({ error: 'No files uploaded' });
+        if (!(reloadConflictsIntoThisProject && conflictItemsParsed.length > 0)) {
+          return res.status(400).json({ error: 'No files uploaded' });
+        }
+        log.info('upload_move_only_request', { project_id: project.id, conflict_items: conflictItemsParsed.length });
       }
 
       // If requested, compute cross-project conflicts and enqueue image_move task for destination project
+      let scheduledConsolidations = 0;
       if (reloadConflictsIntoThisProject) {
         try {
           const conflictSet = new Set();
-          for (const f of req.files) {
+          // From uploaded files (if any present)
+          for (const f of (req.files || [])) {
             const base = path.parse(f.originalname).name;
+            const other = photosRepo.getGlobalByFilename(base, { exclude_project_id: project.id });
+            if (other) conflictSet.add(base);
+          }
+          // From optional multipart field conflictItems (JSON array of basenames) parsed earlier
+          for (const it of conflictItemsParsed) {
+            const base = String(it || '').trim();
+            if (!base) continue;
             const other = photosRepo.getGlobalByFilename(base, { exclude_project_id: project.id });
             if (other) conflictSet.add(base);
           }
           if (conflictSet.size > 0) {
             const items = Array.from(conflictSet);
             tasksOrchestrator.startTask({ project_id: project.id, type: 'image_move', source: 'upload', items });
+            scheduledConsolidations = conflictSet.size;
           }
         } catch (e) {
           log.warn('enqueue_image_move_from_upload_failed', { project_id: project.id, error: e && e.message });
@@ -133,6 +158,23 @@ router.post('/:folder/upload', async (req, res) => {
           const originalName = path.parse(sanitizedName).name;
           const ext = path.extname(sanitizedName).toLowerCase();
           const fileType = getFileType(sanitizedName);
+
+          // Cross-project duplicate guard: prevent the same basename across projects
+          try {
+            const cross = photosRepo.getGlobalByFilename(originalName, { exclude_project_id: project.id });
+            if (cross) {
+              if (reloadConflictsIntoThisProject) {
+                // We already enqueue image_move above; skip saving duplicate into this project
+                perFileErrors.push({ filename: sanitizedName, error: 'Exists in another project; scheduled for consolidation into this project' });
+                continue;
+              } else {
+                perFileErrors.push({ filename: sanitizedName, error: 'Exists in another project; upload rejected to prevent cross-project duplicates' });
+                continue;
+              }
+            }
+          } catch (e) {
+            log.warn('cross_project_duplicate_check_failed', { filename: sanitizedName, error: e && e.message });
+          }
 
           // Save original file (existing overwrite behavior retained; overwriteInThisProject reserved for future stricter handling)
           const filePath = path.join(projectPath, sanitizedName);
@@ -206,8 +248,29 @@ router.post('/:folder/upload', async (req, res) => {
         }
       }
 
+      // If this is a move-only request (no uploaded files but conflicts reload requested), return 202 Accepted
+      if ((!req.files || req.files.length === 0) && reloadConflictsIntoThisProject && conflictItemsParsed.length > 0) {
+        const response = {
+          message: `Scheduled consolidation of ${conflictItemsParsed.length} item${conflictItemsParsed.length > 1 ? 's' : ''} from other projects`,
+          files: [],
+          flags: { overwriteInThisProject, reloadConflictsIntoThisProject }
+        };
+        return res.status(202).json(response);
+      }
+
       // Check if any files were successfully uploaded
       if (uploadedFiles.length === 0) {
+        // If we scheduled consolidations due to cross-project conflicts and the user requested reload into this project,
+        // respond 202 Accepted rather than 400 to reflect successful scheduling of a move operation.
+        if (reloadConflictsIntoThisProject && scheduledConsolidations > 0) {
+          const response = {
+            message: `Scheduled consolidation of ${scheduledConsolidations} item${scheduledConsolidations > 1 ? 's' : ''} from other projects`,
+            files: [],
+            flags: { overwriteInThisProject, reloadConflictsIntoThisProject }
+          };
+          if (perFileErrors.length > 0) response.warnings = perFileErrors;
+          return res.status(202).json(response);
+        }
         const errorMsg = perFileErrors.length > 0 
           ? `No valid files uploaded. Errors: ${perFileErrors.map(e => `${e.filename}: ${e.error}`).join('; ')}`
           : 'No valid files uploaded';
@@ -275,7 +338,10 @@ router.post('/:folder/analyze-files', async (req, res) => {
           files: [],
           hasJpg: false,
           hasRaw: false,
-          analysis: []
+          analysis: [],
+          isNew: true,
+          hasConflict: false,
+          conflictType: null
         };
       }
       imageGroups[baseName].files.push(file);
@@ -285,12 +351,29 @@ router.post('/:folder/analyze-files', async (req, res) => {
       const existing = photosRepo.getByProjectAndFilename(project.id, baseName);
       // Cross-project conflict detection (by full filename base)
       const otherProjectEntry = photosRepo.getGlobalByFilename(baseName, { exclude_project_id: project.id });
-      if (otherProjectEntry) {
+      
+      
+      if (existing) {
+        const hasCompletion = (existing.raw_available && /\.(jpe?g)$/i.test(ext)) || (existing.jpg_available && /\.(arw|cr2|nef|dng|raw)$/i.test(ext));
+        if (hasCompletion) {
+          imageGroups[baseName].isNew = false;
+          imageGroups[baseName].hasConflict = true;
+          imageGroups[baseName].conflictType = 'completion';
+        } else {
+          imageGroups[baseName].isNew = false;
+          imageGroups[baseName].hasConflict = true;
+          imageGroups[baseName].conflictType = 'duplicate';
+        }
+      } else if (otherProjectEntry) {
+        // Cross-project conflict - exists in another project but not this one
         const otherProj = projectsRepo.getById(otherProjectEntry.project_id);
         conflicts.push({
           filename: baseName,
           exists_in: otherProj ? { project_id: otherProj.id, project_folder: otherProj.project_folder, project_name: otherProj.project_name } : { project_id: otherProjectEntry.project_id }
         });
+        imageGroups[baseName].isNew = false;
+        imageGroups[baseName].hasConflict = true;
+        imageGroups[baseName].conflictType = 'cross_project';
         // Completion conflicts: when uploading a variant whose sibling exists in another project
         const isJpg = /\.(jpe?g)$/i.test(ext);
         const isRaw = /\.(arw|cr2|nef|dng|raw)$/i.test(ext);
@@ -307,22 +390,21 @@ router.post('/:folder/analyze-files', async (req, res) => {
             sibling_in: otherProj ? { project_id: otherProj.id, project_folder: otherProj.project_folder, project_name: otherProj.project_name } : { project_id: otherProjectEntry.project_id }
           });
         }
-      }
-      if (existing) {
-        const hasCompletion = (existing.raw_available && /\.(jpe?g)$/i.test(ext)) || (existing.jpg_available && /\.(arw|cr2|nef|dng|raw)$/i.test(ext));
-        if (hasCompletion) {
-          imageGroups[baseName].isNew = false;
-          imageGroups[baseName].hasConflict = true;
-          imageGroups[baseName].conflictType = 'completion';
-        } else {
-          imageGroups[baseName].isNew = false;
-          imageGroups[baseName].hasConflict = true;
-          imageGroups[baseName].conflictType = 'duplicate';
-        }
       } else {
+        // Truly new image - no conflicts anywhere
         imageGroups[baseName].analysis.push(`New image ${baseName}`);
         imageGroups[baseName].isNew = true;
         imageGroups[baseName].hasConflict = false;
+      }
+    }
+
+    // Ensure imageGroups reflect cross-project conflicts
+    for (const conflict of conflicts) {
+      const baseName = conflict.filename;
+      if (imageGroups[baseName]) {
+        imageGroups[baseName].isNew = false;
+        imageGroups[baseName].hasConflict = true;
+        imageGroups[baseName].conflictType = 'cross_project';
       }
     }
 
