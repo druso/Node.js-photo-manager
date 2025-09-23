@@ -22,7 +22,9 @@ The application is built around a few key concepts:
 
 *   **Upload Conflict Handling**: The system provides two main options for handling conflicts during upload: (1) "Skip project duplicates" - when unchecked, existing images in the current project are overwritten; (2) "Move conflicting items into this project" - when enabled, images that exist in other projects are moved to the current project via background image_move tasks. Cross-project conflicts are never uploaded directly but are handled through the move pipeline to maintain data consistency.
 
-*   **List and Viewer**: These are the main UI components for interacting with photos. The "List" view shows thumbnails of photos within a project, and the "Viewer" provides a full-size view of a single selected photo.
+*   **List and Viewer**: These are the main UI components for interacting with photos. The application provides two main views: "All Photos" (cross-project view) and "Project" view (single project). Both use virtualized grids for performance with large datasets and support server-side filtering by date range, file type, keep status, and orientation. The "Viewer" provides a full-size view of a single selected photo with keyboard navigation.
+
+*   **Unified Filtering System**: Both All Photos and Project views use identical server-side filtering with consistent "filtered of total" count displays. Filters include date ranges, file type availability (JPG/RAW), keep flags, and photo orientation. This ensures scalable performance and consistent user experience across views.
 
 *   **Worker Pipeline**: To ensure the UI remains responsive, time-consuming tasks like generating thumbnails and previews are handled asynchronously by a background worker pipeline. The system includes specialized workers for image moves between projects, which update database records, move files and derivatives, and emit real-time SSE events to keep the UI synchronized. This system is designed to be extensible for future processing needs.
 

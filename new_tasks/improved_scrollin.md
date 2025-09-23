@@ -125,23 +125,260 @@ Goal: Virtualized grid with smooth bidirectional pagination (down AND up), fully
 
 # Incremental Implementation Plan
 
-- __Phase 1: Virtualization (front-end only)__
-  - Introduce a `VirtualizedPhotoGrid` (new component) that wraps the justified layout with row virtualization and spacers.
-  - Keep current forward-only pagination; no API changes.
-  - Keep All/Project mode behaviors and deep links intact.
-  - Metrics: DOM node count vs. items; memory and FPS while scrolling.
-  - Add precise scroll restore using session storage and cumulative row heights; implement center-on-open for deep links.
+## Phase 1: Core Virtualization Infrastructure
 
-- __Phase 2: Bidirectional pagination__
-  - Backend: add `before_cursor` support to All Photos and Project list endpoints; return both `prev_cursor` and `next_cursor`.
-  - Client: add the paged window manager with prepend/append support; integrate with virtualization window.
-  - Bootstrap from `locateAllPhotosPage()` for deep links; wire `prev_cursor` immediately.
+### Step 1.1: Create VirtualizedPhotoGrid Component Foundation
+- [x] Create `client/src/components/VirtualizedPhotoGrid.jsx` with basic structure
+- [x] Implement row height calculation utilities in `client/src/utils/gridVirtualization.js`
+- [x] Add cumulative height mapping for Y→row translation
+- [x] Create spacer components (top/bottom) for scroll position preservation
 
-- __Phase 3: Polish__
-  - Smooth scroll anchoring across page inserts/removals; ensure no jump when prepending pages.
-  - Add idle prefetch (one page in each available direction).
-  - Add test coverage.
-  - Add tests for scroll restore across reloads and deep-link center-on-open.
+Developer notes:
+- Implemented custom row virtualization per Option A. Verified component renders justified rows using existing layout calculations.
+- Kept `IntersectionObserver` hooks in place for visible window.
+
+**🛑 STOP FOR USER TESTING:**
+Test that the new component renders without breaking existing grid layout. Verify:
+- Grid still displays photos in justified rows
+- No visual regressions in spacing or alignment
+- Component accepts same props as original PhotoGridView
+
+### Step 1.2: Implement Basic Row Virtualization
+- [x] Add viewport detection and visible row range calculation
+- [x] Implement windowed rendering (only render visible + buffer rows)
+- [x] Add top/bottom spacers to maintain total scroll height
+- [x] Preserve existing IntersectionObserver for lazy loading within visible window
+
+**🛑 STOP FOR USER TESTING:**
+Test virtualization with large photo sets (500+ photos). Verify:
+- DOM node count significantly reduced (check DevTools Elements tab)
+- Smooth scrolling performance maintained
+- No flickering or layout jumps during scroll
+- Lazy loading still works for visible images
+
+Developer notes:
+- Basic performance verified in development with medium datasets; large dataset testing still recommended.
+
+### Step 1.3: Integrate Virtualization with Existing Grid
+- [x] Replace `PhotoGridView` usage in `client/src/App.jsx` with `VirtualizedPhotoGrid`
+- [x] Ensure All Photos and Project views both use virtualized grid
+- [x] Maintain existing prop interfaces and event handlers
+- [x] Add feature flag `ENABLE_VIRTUALIZATION` for rollback capability
+
+**🛑 STOP FOR USER TESTING:**
+Full regression test of existing functionality:
+- All Photos view loads and scrolls correctly
+- Project view loads and scrolls correctly
+- Photo selection works across virtualized boundaries
+- Viewer opening/closing maintains grid position
+
+Developer notes:
+- Feature flag present in `client/src/components/PhotoDisplay.jsx` and currently enabled.
+- `PhotoDisplay.jsx` remains the integration point; toggling flag reverts to legacy `PhotoGridView`.
+
+## Phase 2: Scroll Position Management
+
+### Step 2.1: Implement Session-Based Scroll Restoration
+- [x] Extend `client/src/utils/storage.js` with scroll position persistence
+- [x] Add throttled scroll position saving (mainY for grid container)
+- [x] Implement scroll restoration on grid mount with virtualization compatibility
+- [ ] Handle edge cases: filter changes, route changes, page refreshes
+
+**🛑 STOP FOR USER TESTING:**
+Test scroll position persistence:
+- Navigate away and back - scroll position restored
+- Refresh page - scroll position restored
+- Change filters - scroll resets appropriately
+- Switch between All/Project views - positions maintained separately
+
+Developer notes:
+- Implemented in `client/src/components/VirtualizedPhotoGrid.jsx` using `getSessionState`/`setSessionMainY` and a 200ms throttle.
+- Restoration runs only when no `anchorIndex` is active to avoid fighting deep-link centering.
+- Uses rows’ computed cumulative heights to ensure restoration happens after layout is known.
+- Known limitation: if refreshed on page > 1 (paginated content), restoration lands near the end of page 1 because only the first page is loaded on mount. Resolving requires preloading prior pages or bidirectional pagination (before_cursor/prev_cursor) plus a window manager to reconstruct the page window before applying Y.
+
+### Step 2.2: Implement Precise Deep-Link Centering
+- [ ] Add photo centering utilities in `client/src/utils/scrollUtils.js`
+- [ ] Implement `scrollToPhotoCenter()` function with viewport calculation
+- [x] Integrate centering with `locateAllPhotosPage()` flow
+- [ ] Add retry mechanism for virtualization timing issues
+- [ ] Handle both filename and basename matching (existing behavior)
+
+Developer notes:
+- Implemented anchor-based centering via `anchorIndex` in `client/src/components/VirtualizedPhotoGrid.jsx`.
+- `client/src/App.jsx` sets `gridAnchorIndex` (Project) and `allGridAnchorIndex` (All Photos) on deep-link locate/full-list match and clears via `onAnchored`.
+- Project view: canonical deep-link URL now uses basename without filters; conflicting filters are reset on deep-link open.
+- Optional: extract centering math into `scrollUtils.js` for reuse.
+- Note: observed occasional off-by-some-pixels centering due to row height estimation/timing; acceptable for now and non-breaking. Can be refined with a measurement pass or a small retry using `requestAnimationFrame`.
+
+**🛑 STOP FOR USER TESTING:**
+Test deep-link centering:
+- Direct URL to specific photo centers it in viewport
+- Opening viewer from deep-link maintains centering
+- Closing viewer returns to centered position
+- Works in both All Photos and Project views
+
+## Phase 3: Bidirectional Pagination Backend
+
+### Step 3.1: Extend All Photos API for Backward Pagination
+- [ ] Modify `server/routes/photos.js` - add `before_cursor` parameter support
+- [ ] Update `server/services/repositories/photosRepo.js` - implement backward cursor logic
+- [ ] Ensure `prev_cursor` is returned in responses when applicable
+- [ ] Maintain backward compatibility (existing clients unaffected)
+
+**🛑 STOP FOR USER TESTING:**
+Test API extensions with curl/Postman:
+- Forward pagination still works identically
+- `before_cursor` parameter returns correct previous page
+- `prev_cursor` and `next_cursor` both present in responses
+- Edge cases: first page, last page, invalid cursors
+
+### Step 3.2: Extend Project Photos API for Backward Pagination
+- [ ] Modify `server/routes/projects.js` - add `before_cursor` parameter support
+- [ ] Update project-specific photo listing logic
+- [ ] Ensure consistent cursor behavior between All Photos and Project views
+- [ ] Test with different project sorting options
+
+**🛑 STOP FOR USER TESTING:**
+Test Project API backward pagination:
+- Works with all existing project sort orders
+- Cursor behavior consistent with All Photos API
+- Project-specific filters work with bidirectional pagination
+
+## Phase 4: Bidirectional Pagination Frontend
+
+### Step 4.1: Create Paged Window Manager
+- [ ] Create `client/src/utils/pagedWindowManager.js` with core data structure
+- [ ] Implement `pages` map with negative/positive indices around anchor
+- [ ] Add `itemsIndex` synthesis for rendering
+- [ ] Implement page append/prepend with deduplication
+- [ ] Add memory management (drop far pages, adjust spacers)
+
+**🛑 STOP FOR USER TESTING:**
+Unit test the window manager:
+- Pages can be appended and prepended correctly
+- Item synthesis maintains correct order
+- Deduplication works with composite keys
+- Memory limits respected (old pages dropped)
+
+### Step 4.2: Integrate Window Manager with All Photos
+- [ ] Replace linear array state in `client/src/App.jsx` with paged window
+- [ ] Implement scroll-triggered backward pagination (near top edge)
+- [ ] Maintain existing forward pagination behavior
+- [ ] Bootstrap from `locateAllPhotosPage()` with both cursors available
+
+**🛑 STOP FOR USER TESTING:**
+Test All Photos bidirectional scrolling:
+- Scroll down loads more pages (existing behavior maintained)
+- Scroll up from mid-list loads previous pages
+- Deep links work and allow scrolling in both directions
+- Performance remains smooth with large datasets
+
+### Step 4.3: Integrate Window Manager with Project Views
+- [ ] Apply same paged window pattern to project photo lists
+- [ ] Ensure project-specific sorting works with bidirectional pagination
+- [ ] Maintain existing project view behaviors and filters
+
+**🛑 STOP FOR USER TESTING:**
+Test Project view bidirectional scrolling:
+- Same bidirectional behavior as All Photos
+- Project filters work correctly
+- Project sorting maintained
+- Deep links within projects work
+
+## Phase 5: Advanced Features & Polish
+
+### Step 5.1: Implement Smooth Scroll Anchoring
+- [ ] Add scroll position preservation during page prepends
+- [ ] Implement spacer height adjustments to prevent jumps
+- [ ] Handle virtualization window shifts during pagination
+- [ ] Add smooth transitions for better UX
+
+**🛑 STOP FOR USER TESTING:**
+Test scroll anchoring:
+- No visible jumps when scrolling up loads previous pages
+- Scroll position feels natural and predictable
+- Virtualization doesn't cause layout shifts
+
+### Step 5.2: Add Idle Prefetching
+- [ ] Implement idle detection utilities
+- [ ] Add prefetch logic for next/previous pages when user is idle
+- [ ] Respect memory limits and user bandwidth
+- [ ] Add configuration options for prefetch behavior
+
+**🛑 STOP FOR USER TESTING:**
+Test prefetching behavior:
+- Pages load proactively during idle periods
+- No impact on active scrolling performance
+- Memory usage remains bounded
+- Works well on slower connections
+
+### Step 5.3: Error Handling & Recovery
+- [ ] Add retry mechanisms for failed page loads
+- [ ] Implement graceful degradation when cursors become invalid
+- [ ] Add user-visible error states with retry options
+- [ ] Handle network interruptions gracefully
+
+**🛑 STOP FOR USER TESTING:**
+Test error scenarios:
+- Network failures show appropriate error states
+- Retry mechanisms work correctly
+- Invalid cursors handled gracefully
+- App remains functional during partial failures
+
+## Phase 6: Testing & Documentation
+
+### Step 6.1: Comprehensive Testing Suite
+- [ ] Add unit tests for virtualization utilities
+- [ ] Add integration tests for paged window manager
+- [ ] Add E2E tests for deep-link scenarios
+- [ ] Add performance benchmarks and regression tests
+
+**🛑 STOP FOR USER TESTING:**
+Run full test suite and verify:
+- All tests pass consistently
+- Performance benchmarks meet targets
+- No regressions in existing functionality
+
+### Step 6.2: Update Documentation
+- [ ] Update `PROJECT_OVERVIEW.md` with virtualization details
+- [ ] Document new API parameters in `SCHEMA_DOCUMENTATION.md`
+- [ ] Add troubleshooting guide for common issues
+- [ ] Update `README.md` with performance improvements
+
+**🛑 STOP FOR USER TESTING:**
+Review documentation:
+- Technical details are accurate and complete
+- User-facing changes are clearly explained
+- Troubleshooting guides are helpful
+
+## Phase 7: Production Readiness
+
+### Step 7.1: Performance Optimization
+- [ ] Profile and optimize critical rendering paths
+- [ ] Implement memory leak detection and prevention
+- [ ] Add performance monitoring and metrics
+- [ ] Optimize for mobile devices and slower hardware
+
+**🛑 STOP FOR USER TESTING:**
+Performance validation:
+- Memory usage stable over extended use
+- Smooth performance on target devices
+- No memory leaks detected
+- Metrics show improvement over baseline
+
+### Step 7.2: Feature Flag Management & Rollout
+- [ ] Implement comprehensive feature flags for gradual rollout
+- [ ] Add monitoring and rollback procedures
+- [ ] Create deployment checklist and validation steps
+- [ ] Plan phased rollout strategy
+
+**🛑 STOP FOR USER TESTING:**
+Final validation:
+- Feature flags work correctly
+- Rollback procedures tested
+- Production deployment ready
+- All acceptance criteria met
 
 # Risks & Mitigations
 

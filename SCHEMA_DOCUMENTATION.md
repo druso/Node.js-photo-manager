@@ -36,6 +36,20 @@ Tables and relationships:
     `GET /api/photos` and `GET /api/photos/locate-page`.
   - Date filters `date_from`/`date_to` operate on `taken_at`.
 
+### All Photos API (Cross-Project)
+
+- All photos (paginated): `GET /api/photos`
+  - Query params: `limit`, `cursor`, `before_cursor`, `date_from`, `date_to`, `file_type`, `keep_type`, `orientation`
+  - Returns: `{ items: [...], total: number, unfiltered_total: number, next_cursor: string|null, prev_cursor: string|null }`
+  - Filter params: same as project photos API
+  - `total`: count of photos matching current filters across all projects, `unfiltered_total`: total photos across all non-canceled projects
+  - Default sort: `taken_at DESC, id DESC` for consistent pagination
+
+- Locate photo page: `GET /api/photos/locate-page`
+  - Query params: `filename` or `name`, plus same filter params as above
+  - Returns: page containing the specified photo with surrounding items
+  - Used for deep-linking to specific photos in filtered views
+
 - `tags`
   - Columns: `id`, `project_id` (FK), `name`, `UNIQUE(project_id, name)`
 
@@ -65,6 +79,12 @@ Project-related endpoints return consistent shapes including the immutable numer
 - Project detail: `GET /api/projects/:folder`
   - Returns: `{ id, name, folder, created_at, updated_at, photos: [...] }`
   - The `photos` array contains the full photo objects as documented in this file.
+
+- Project photos (paginated): `GET /api/projects/:folder/photos`
+  - Query params: `limit`, `cursor`, `before_cursor`, `sort`, `dir`, `date_from`, `date_to`, `file_type`, `keep_type`, `orientation`
+  - Returns: `{ items: [...], total: number, unfiltered_total: number, nextCursor: string|null, prevCursor: string|null }`
+  - Filter params: `file_type` (jpg_only|raw_only|both|any), `keep_type` (any_kept|jpg_only|raw_jpg|none|any), `orientation` (vertical|horizontal|any)
+  - `total`: count of photos matching current filters, `unfiltered_total`: total photos in project
 
 - Rename project: `PATCH /api/projects/:id`
   - Payload: `{ name: string }`

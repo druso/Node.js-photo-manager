@@ -81,7 +81,7 @@ router.get('/photos/locate-page', apiRateLimit, async (req, res) => {
       thumbnail_status: r.thumbnail_status || undefined,
       preview_status: r.preview_status || undefined,
       orientation: r.orientation ?? undefined,
-      metadata: r.meta_json ? JSON.parse(r.meta_json) : undefined,
+      metadata: (() => { try { return r.meta_json ? JSON.parse(r.meta_json) : undefined; } catch { return undefined; } })(),
     }));
     
     log.debug('locate_page_resp', {
@@ -135,6 +135,7 @@ router.get('/photos/locate-page', apiRateLimit, async (req, res) => {
 //   - limit: default 200, max 300
 //   - cursor: base64 of { taken_at, id }
 //   - date_from, date_to: ISO strings (operate on taken_at := coalesce(date_time_original, created_at))
+// GET /api/photos - cross-project photos (All Photos)
 router.get('/photos', async (req, res) => {
   try {
     // This endpoint is cursor-paginated and must not be cached; stale caches can freeze pagination.
@@ -146,11 +147,23 @@ router.get('/photos', async (req, res) => {
     const limit = Number.isFinite(limitRaw) && limitRaw > 0 ? Math.min(limitRaw, 300) : 200;
 
     const cursor = typeof q.cursor === 'string' && q.cursor.length ? q.cursor : null;
+    const before_cursor = typeof q.before_cursor === 'string' && q.before_cursor.length ? q.before_cursor : null;
     const date_from = typeof q.date_from === 'string' && q.date_from.length ? q.date_from : null;
     const date_to = typeof q.date_to === 'string' && q.date_to.length ? q.date_to : null;
     const file_type = typeof q.file_type === 'string' && q.file_type.length ? q.file_type : null; // any | jpg_only | raw_only | both
     const keep_type = typeof q.keep_type === 'string' && q.keep_type.length ? q.keep_type : null; // any | any_kept | jpg_only | raw_jpg | none
     const orientation = typeof q.orientation === 'string' && q.orientation.length ? q.orientation : null; // any | vertical | horizontal
+    
+    // Calculate total count directly
+    let totalCount = 0;
+    try {
+      const db = require('../services/db').getDb();
+      const countResult = db.prepare('SELECT COUNT(*) as c FROM photos').get();
+      totalCount = countResult ? countResult.c : 0;
+      console.log('DEBUG: Total count =', totalCount);
+    } catch (err) {
+      console.error('ERROR: Failed to get total count', err);
+    }
 
     log.debug('all_photos_req', {
       limit,
@@ -159,7 +172,7 @@ router.get('/photos', async (req, res) => {
       date_from,
       date_to,
     });
-    const page = photosRepo.listAll({ limit, cursor, date_from, date_to, file_type, keep_type, orientation });
+    const page = photosRepo.listAll({ limit, cursor, before_cursor, date_from, date_to, file_type, keep_type, orientation });
     const items = (page.items || []).map(r => ({
       id: r.id,
       project_id: r.project_id,
@@ -180,7 +193,7 @@ router.get('/photos', async (req, res) => {
       thumbnail_status: r.thumbnail_status || undefined,
       preview_status: r.preview_status || undefined,
       orientation: r.orientation ?? undefined,
-      metadata: r.meta_json ? JSON.parse(r.meta_json) : undefined,
+      metadata: (() => { try { return r.meta_json ? JSON.parse(r.meta_json) : undefined; } catch { return undefined; } })(),
     }));
 
     log.debug('all_photos_resp', {
@@ -190,8 +203,20 @@ router.get('/photos', async (req, res) => {
       last_id: items[items.length - 1]?.id,
       last_taken_at: items[items.length - 1]?.taken_at,
       next_cursor_len: page.nextCursor ? String(page.nextCursor).length : 0,
+      total: page.total,
+      page_keys: Object.keys(page),
     });
-    res.json({ items, next_cursor: page.nextCursor, limit, date_from, date_to });
+    // Simple response with real SQL totals and ensuring prevCursor is passed correctly
+    res.json({
+      items, 
+      next_cursor: page.nextCursor, 
+      prev_cursor: page.prevCursor, 
+      total: page.total, 
+      unfiltered_total: page.unfiltered_total,
+      limit, 
+      date_from, 
+      date_to
+    });
   } catch (err) {
     log.error('all_photos_failed', { error: err && err.message, stack: err && err.stack });
     res.status(500).json({ error: 'Failed to list photos' });

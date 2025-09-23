@@ -32,6 +32,13 @@ async function ensureProjectDirs(folderName) {
   return projectPath;
 }
 
+// Apply rate limiting (60 requests per minute per IP) for locate endpoints
+const apiRateLimit = rateLimit({
+  windowMs: 60 * 1000,
+  max: 60,
+  message: 'Too many requests, please try again later.'
+});
+
 // GET /api/projects - list projects
 router.get('/', async (req, res) => {
   try {
@@ -167,30 +174,127 @@ router.get('/:folder', async (req, res) => {
   }
 });
 
-// GET /api/projects/:folder/photos - paginated photos for a project
-// Supports query: ?limit=250&cursor=0&sort=filename|date_time_original|created_at|updated_at&dir=ASC|DESC
-router.get('/:folder/photos', async (req, res) => {
+// GET /api/projects/:folder/photos/locate-page - Locate a specific photo within a project and return its page
+router.get('/:folder/photos/locate-page', apiRateLimit, async (req, res) => {
   try {
+    // Ensure fresh pagination data
+    res.set('Cache-Control', 'no-store');
+
     const { folder } = req.params;
     if (!isCanonicalProjectFolder(folder)) {
       return res.status(400).json({ error: 'Invalid project folder format' });
     }
-    const project = projectsRepo.getByFolder(folder);
-    if (!project || project.status === 'canceled') {
-      return res.status(404).json({ error: 'Project not found' });
-    }
-
-    const cfg = getConfig();
-    const defaultPageSize = Number(cfg?.photo_grid?.page_size) > 0 ? Number(cfg.photo_grid.page_size) : 250;
 
     const q = req.query || {};
-    const limitRaw = q.limit != null ? Number(q.limit) : defaultPageSize;
-    const limit = Number.isFinite(limitRaw) && limitRaw > 0 ? Math.min(limitRaw, 1000) : defaultPageSize; // hard cap
-    const cursor = q.cursor != null ? String(q.cursor) : null;
+    const { filename, name, limit, date_from, date_to, file_type, keep_type, orientation } = q;
+
+    if (!filename && !name) {
+      return res.status(400).json({ error: 'filename or name is required' });
+    }
+
+    const result = await photosRepo.locateProjectPage({
+      project_folder: folder,
+      filename: filename || undefined,
+      name: name || undefined,
+      limit: limit ? parseInt(limit, 10) : undefined,
+      date_from: date_from || undefined,
+      date_to: date_to || undefined,
+      file_type: file_type || undefined,
+      keep_type: keep_type || undefined,
+      orientation: orientation || undefined,
+    });
+
+    const items = (result.items || []).map(r => ({
+      id: r.id,
+      manifest_id: r.manifest_id,
+      filename: r.filename,
+      basename: r.basename || undefined,
+      ext: r.ext || undefined,
+      created_at: r.created_at,
+      updated_at: r.updated_at,
+      date_time_original: r.date_time_original || undefined,
+      jpg_available: !!r.jpg_available,
+      raw_available: !!r.raw_available,
+      other_available: !!r.other_available,
+      keep_jpg: !!r.keep_jpg,
+      keep_raw: !!r.keep_raw,
+      thumbnail_status: r.thumbnail_status || undefined,
+      preview_status: r.preview_status || undefined,
+      orientation: r.orientation ?? undefined,
+      metadata: r.meta_json ? JSON.parse(r.meta_json) : undefined,
+    }));
+
+    return res.json({
+      items,
+      position: result.position,
+      page_index: result.page_index,
+      limit: result.limit,
+      next_cursor: result.nextCursor || null,
+      prev_cursor: result.prevCursor || null,
+      idx_in_items: result.idx_in_items,
+      target: result.target,
+      date_from: date_from || null,
+      date_to: date_to || null,
+    });
+  } catch (err) {
+    log.error('project_locate_page_failed', {
+      error: err && err.message,
+      code: err && err.code,
+      stack: err && err.stack,
+      project_folder: req.params && req.params.folder,
+    });
+    if (err.code === 'NOT_FOUND') {
+      return res.status(404).json({ error: err.message || 'Photo not found or filtered out' });
+    } else if (err.code === 'AMBIGUOUS') {
+      return res.status(409).json({ error: err.message || 'Multiple photos match the provided name' });
+    } else if (err.code === 'INVALID') {
+      return res.status(400).json({ error: err.message || 'Invalid request parameters' });
+    }
+    return res.status(500).json({ error: 'Failed to locate photo' });
+  }
+});
+
+// GET /api/projects/:folder/photos - paginated photos for a project
+// Supports query: ?limit=250&cursor=0&sort=filename|date_time_original|created_at|updated_at&dir=ASC|DESC
+// Also supports filtering: ?date_from=YYYY-MM-DD&date_to=YYYY-MM-DD&file_type=jpg_only&keep_type=any&orientation=vertical
+router.get('/:folder/photos', async (req, res) => {
+  try {
+    const { folder } = req.params;
+    if (!isCanonicalProjectFolder(folder)) {
+      return res.status(400).json({ error: 'Invalid project folder' });
+    }
+    
+    const project = projectsRepo.getByFolder(folder);
+    if (!project) {
+      return res.status(404).json({ error: 'Project not found' });
+    }
+    
+    const q = req.query;
+    const limit = Math.min(300, Math.max(1, Number(q.limit) || 100));
+    const cursor = q.cursor || null;
+    const before_cursor = q.before_cursor || null;
     const sort = typeof q.sort === 'string' ? q.sort : 'filename';
     const dir = (typeof q.dir === 'string' && q.dir.toUpperCase() === 'DESC') ? 'DESC' : 'ASC';
+    
+    // Extract filter parameters (same as All Photos)
+    const date_from = q.date_from || null;
+    const date_to = q.date_to || null;
+    const file_type = q.file_type || null;
+    const keep_type = q.keep_type || null;
+    const orientation = q.orientation || null;
 
-    const page = photosRepo.listPaged({ project_id: project.id, limit, cursor, sort, dir });
+    const page = photosRepo.listProjectFiltered({ 
+      project_id: project.id, 
+      limit, 
+      cursor, 
+      before_cursor,
+      date_from,
+      date_to,
+      file_type,
+      keep_type,
+      orientation
+    });
+
     const items = (page.items || []).map(r => ({
       id: r.id,
       manifest_id: r.manifest_id,
@@ -211,7 +315,18 @@ router.get('/:folder/photos', async (req, res) => {
       metadata: r.meta_json ? JSON.parse(r.meta_json) : undefined,
     }));
 
-    res.json({ items, total: page.total, nextCursor: page.nextCursor, limit, sort, dir });
+    res.json({ 
+      items, 
+      total: page.total, 
+      unfiltered_total: page.unfiltered_total,
+      nextCursor: page.nextCursor, 
+      prevCursor: page.prevCursor || null, 
+      limit, 
+      sort, 
+      dir,
+      date_from,
+      date_to
+    });
   } catch (err) {
     log.error('project_photos_paged_failed', { error: err && err.message, stack: err && err.stack, project_folder: req.params && req.params.folder });
     res.status(500).json({ error: 'Failed to get photos' });

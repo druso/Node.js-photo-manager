@@ -69,12 +69,14 @@ export async function locateAllPhotosPage(opts = {}) {
  * @param {('any'|'jpg_only'|'raw_only'|'both')} [opts.file_type]
  * @param {('any'|'any_kept'|'jpg_only'|'raw_jpg'|'none')} [opts.keep_type]
  * @param {('any'|'vertical'|'horizontal')} [opts.orientation]
- * @returns {Promise<{ items: any[], next_cursor: string|null, limit: number }>}
+ * @param {string|null} [opts.before_cursor]
+ * @returns {Promise<{ items: any[], next_cursor: string|null, prev_cursor: string|null, limit: number }>}
  */
 export async function listAllPhotos(opts = {}) {
   const params = new URLSearchParams();
   if (opts.limit != null) params.set('limit', String(opts.limit));
   if (opts.cursor != null) params.set('cursor', String(opts.cursor));
+  if (opts.before_cursor != null) params.set('before_cursor', String(opts.before_cursor));
   if (opts.date_from) params.set('date_from', String(opts.date_from));
   if (opts.date_to) params.set('date_to', String(opts.date_to));
   if (opts.file_type && opts.file_type !== 'any') params.set('file_type', String(opts.file_type));

@@ -204,3 +204,20 @@ All items from the previous cycle were assessed on 2025-08-20 UTC. Notes have be
 - Cross-links verified so `JOBS_OVERVIEW.md` remains the canonical jobs catalog for `upload_postprocess` and `image_move` semantics.
 
 No functional changes were introduced by this documentation update; it reflects the current implementation in `server/routes/photos.js`, `server/routes/assets.js`, and `server/routes/uploads.js`.
+
+2025-09-23 UTC — Unified Photo Filtering Implementation
+
+- **Feature**: Implemented server-side filtering for Project views to match All Photos functionality
+- **Changes**: 
+  - Added `listProjectFiltered()` function in `photosRepo.js` with same filter parameters as All Photos
+  - Extended `GET /api/projects/:folder/photos` to accept filter parameters: `date_from`, `date_to`, `file_type`, `keep_type`, `orientation`
+  - Both APIs now return dual totals: `total` (filtered count) and `unfiltered_total` (total count)
+  - Frontend updated to use server-side filtering for both views, eliminating client-side filtering of large datasets
+- **Security Assessment**:
+  - ✅ **No new attack vectors**: Uses existing parameterized query patterns and input validation
+  - ✅ **Performance improvement**: Reduces client-side memory usage and eliminates large dataset transfers
+  - ✅ **Consistent validation**: Filter parameters validated server-side using same logic as All Photos
+  - ✅ **Rate limiting preserved**: Existing endpoint rate limits remain in effect
+  - ✅ **SQL injection protection**: All new queries use parameterized statements via `better-sqlite3`
+- **Risk**: None identified. This change improves scalability and reduces client-side resource consumption.
+- **Monitoring**: Server debug logs include filter parameter values and count calculations for troubleshooting.

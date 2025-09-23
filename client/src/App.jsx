@@ -1,7 +1,8 @@
 import React, { useEffect, useMemo, useRef, useState, useCallback, useLayoutEffect } from 'react';
 import { listProjects, getProject, createProject } from './api/projectsApi';
-import { listProjectPhotos } from './api/photosApi';
+import { listProjectPhotos, locateProjectPhotosPage } from './api/photosApi';
 import { listAllPhotos, locateAllPhotosPage } from './api/allPhotosApi';
+import PagedWindowManager from './utils/pagedWindowManager';
 import ProjectSelector from './components/ProjectSelector';
 import PhotoDisplay from './components/PhotoDisplay';
 import OperationsMenu from './components/OperationsMenu';
@@ -73,15 +74,27 @@ function App() {
 
   // Backend pagination state for grid view
   const [pagedPhotos, setPagedPhotos] = useState([]);
-  const [pagedTotal, setPagedTotal] = useState(0);
+  const [pagedTotal, setPagedTotal] = useState(0); // Filtered total count from backend
+  const [pagedUnfilteredTotal, setPagedUnfilteredTotal] = useState(0); // Unfiltered total count from backend
   const [nextCursor, setNextCursor] = useState(null);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [projectHasPrev, setProjectHasPrev] = useState(false);
+  const projectWindowRef = useRef(null);
+  // Anchor index for VirtualizedPhotoGrid to center a target row (deep-link/open)
+  const [gridAnchorIndex, setGridAnchorIndex] = useState(null);
 
   // All Photos mode state
   const [isAllMode, setIsAllMode] = useState(false);
   const [allPhotos, setAllPhotos] = useState([]);
+  const [allTotal, setAllTotal] = useState(0); // Filtered total count from backend
+  const [allUnfilteredTotal, setAllUnfilteredTotal] = useState(0); // Unfiltered total count from backend
   const [allNextCursor, setAllNextCursor] = useState(null);
+  const [allHasPrev, setAllHasPrev] = useState(false);
   const [allLoadingMore, setAllLoadingMore] = useState(false);
+  // Anchor index for All Photos Virtualized grid
+  const [allGridAnchorIndex, setAllGridAnchorIndex] = useState(null);
+  // Paged window manager for All Photos (evicts old pages automatically)
+  const allWindowRef = useRef(null);
   // Guards for All Photos pagination
   const allSeenKeysRef = useRef(new Set()); // track project_folder::filename across pages
   const allLastCursorRef = useRef(null); // last cursor we requested
@@ -91,6 +104,7 @@ function App() {
   const pendingOpenRef = useRef(null); // { folder, filename } when navigating from All mode
   // Guard to ensure we only attempt the locate-page API once per deep-link navigation
   const allLocateTriedRef = useRef(false);
+  const projectLocateTriedRef = useRef(false);
   // Suppress URL updates until viewer stabilizes on the deep-linked target
   const suppressUrlRef = useRef(null); // { expectName: lowercased filename/basename }
   // Selection specific to All Photos mode (use composite key project_folder::filename)
@@ -101,6 +115,13 @@ function App() {
   const [committing, setCommitting] = useState(false);
   // Track the opener to restore focus when modal closes
   const commitOpenerElRef = useRef(null);
+
+  // Reset the project locate attempt guard on new deep link or context changes
+  useEffect(() => {
+    if (pendingOpenRef.current) {
+      projectLocateTriedRef.current = false;
+    }
+  }, [selectedProject?.folder, activeFilters?.dateRange, activeFilters?.fileType, activeFilters?.keepType, activeFilters?.orientation]);
   // Revert modal state
   const [showRevertModal, setShowRevertModal] = useState(false);
   const [reverting, setReverting] = useState(false);
@@ -124,32 +145,46 @@ function App() {
   const loadAllFirstPage = useCallback(async () => {
     if (!isAllMode) return;
     try {
+      // Initialize manager (or reset) with current filters
       const range = activeFilters?.dateRange || {};
-      const filterParams = {
-        limit: 100,
+      const extra = {
         date_from: range.start || undefined,
         date_to: range.end || undefined,
-        file_type: activeFilters?.fileType,
-        keep_type: activeFilters?.keepType,
-        orientation: activeFilters?.orientation,
+        file_type: activeFilters?.fileType && activeFilters.fileType !== 'any' ? activeFilters.fileType : undefined,
+        keep_type: activeFilters?.keepType && activeFilters.keepType !== 'any' ? activeFilters.keepType : undefined,
+        orientation: activeFilters?.orientation && activeFilters.orientation !== 'any' ? activeFilters.orientation : undefined,
       };
-      try { console.debug('[all-photos] loadAllFirstPage with filters:', filterParams); } catch {}
-      const res = await listAllPhotos(filterParams);
-      // reset guards
+      if (!allWindowRef.current) {
+        allWindowRef.current = new PagedWindowManager({
+          limit: 100,
+          maxPages: 4, // Increased from 2 to prevent eviction issues with small final pages
+          keyOf: (it) => `${it.project_folder}::${it.filename}`,
+          fetchPage: async ({ cursor, before_cursor, limit, extra }) => {
+            const params = { limit, ...extra };
+            if (cursor) params.cursor = cursor;
+            if (before_cursor) params.before_cursor = before_cursor;
+            const res = await listAllPhotos(params);
+            return { items: res.items || [], nextCursor: res.next_cursor ?? null, prevCursor: res.prev_cursor ?? null, total: res.total, unfiltered_total: res.unfiltered_total };
+          },
+        });
+      }
+      const page = await allWindowRef.current.loadInitial(extra);
+      const snap = allWindowRef.current.snapshot();
+      // Reset guards based on manager contents
       allSeenKeysRef.current = new Set();
       allLastCursorRef.current = null;
       allSeenCursorsRef.current = new Set();
-      const items = Array.isArray(res.items) ? res.items : [];
-      for (const it of items) {
-        const key = `${it.project_folder}::${it.filename}`;
-        allSeenKeysRef.current.add(key);
-      }
-      setAllPhotos(items);
-      setAllNextCursor(res.next_cursor ?? null);
+      for (const it of page.items) allSeenKeysRef.current.add(`${it.project_folder}::${it.filename}`);
+      setAllPhotos(snap.pages.flatMap(p => p.items));
+      setAllTotal(Number.isFinite(page?.total) ? Number(page.total) : snap.pages.flatMap(p => p.items).length);
+      setAllUnfilteredTotal(Number.isFinite(page?.unfiltered_total) ? Number(page.unfiltered_total) : Number(page?.total) || snap.pages.flatMap(p => p.items).length);
+      setAllNextCursor(snap.tailNextCursor);
+      setAllHasPrev(!!snap.headPrevCursor);
     } catch (e) {
       // Failed to load all photos first page
       setAllPhotos([]);
       setAllNextCursor(null);
+      setAllHasPrev(false);
     }
   }, [isAllMode, activeFilters?.dateRange, activeFilters?.fileType, activeFilters?.keepType, activeFilters?.orientation]);
 
@@ -160,36 +195,30 @@ function App() {
     setAllLoadingMore(true);
     try {
       const range = activeFilters?.dateRange || {};
-      const currentCursor = allNextCursor;
-      allLastCursorRef.current = currentCursor;
-      // If we have already seen this cursor, bail out to avoid infinite loops
-      if (allSeenCursorsRef.current.has(currentCursor)) {
-        // Cursor already seen, stopping pagination
-        return;
-      }
-      allSeenCursorsRef.current.add(currentCursor);
-      const filterParams = {
-        cursor: currentCursor,
+      const extra = {
         date_from: range.start || undefined,
         date_to: range.end || undefined,
         file_type: activeFilters?.fileType,
         keep_type: activeFilters?.keepType,
         orientation: activeFilters?.orientation,
       };
-      try { console.debug('[all-photos] loadAllMore with filters:', filterParams); } catch {}
-      const res = await listAllPhotos(filterParams);
-      const incoming = Array.isArray(res.items) ? res.items : [];
-      // Dedupe by composite key across pages
-      const deduped = [];
-      for (const it of incoming) {
-        const key = `${it.project_folder}::${it.filename}`;
-        if (!allSeenKeysRef.current.has(key)) {
-          allSeenKeysRef.current.add(key);
-          deduped.push(it);
-        }
+      const mgr = allWindowRef.current;
+      if (!mgr) return;
+      const currentCursor = allNextCursor;
+      allLastCursorRef.current = currentCursor;
+      if (allSeenCursorsRef.current.has(currentCursor)) return; // avoid loops
+      allSeenCursorsRef.current.add(currentCursor);
+      const page = await mgr.loadNext(extra);
+      const snap = mgr.snapshot();
+      // Update seen keys only for the newly added page
+      if (page && Array.isArray(page.items)) {
+        for (const it of page.items) allSeenKeysRef.current.add(`${it.project_folder}::${it.filename}`);
       }
-      setAllPhotos(prev => [...prev, ...deduped]);
-      setAllNextCursor(res.next_cursor || null);
+      setAllPhotos(snap.pages.flatMap(p => p.items));
+      setAllTotal(Number.isFinite(page?.total) ? Number(page.total) : allTotal);
+      setAllUnfilteredTotal(Number.isFinite(page?.unfiltered_total) ? Number(page.unfiltered_total) : allUnfilteredTotal);
+      setAllNextCursor(snap.tailNextCursor);
+      setAllHasPrev(!!snap.headPrevCursor);
     } catch (err) {
       // All Photos loadAllMore error
       setAllPhotos([]);
@@ -205,7 +234,11 @@ function App() {
     if (!isAllMode) {
       // Clear state when leaving All mode
       setAllPhotos([]);
+      setAllTotal(0);
+      setAllUnfilteredTotal(0);
       setAllNextCursor(null);
+      setAllHasPrev(false);
+      allWindowRef.current = null; // drop window manager to release memory
       allSeenKeysRef.current = new Set();
       allSeenCursorsRef.current = new Set();
       allLastCursorRef.current = null;
@@ -215,6 +248,42 @@ function App() {
     const id = setTimeout(() => { loadAllFirstPage(); }, 0);
     return () => clearTimeout(id);
   }, [isAllMode, activeFilters?.dateRange?.start, activeFilters?.dateRange?.end, activeFilters?.fileType, activeFilters?.keepType, activeFilters?.orientation, loadAllFirstPage]);
+
+  // Upward pagination for All Photos (to be hooked into grid when user scrolls near top)
+  const loadAllPrev = useCallback(async () => {
+    if (!isAllMode || allLoadingMore) return;
+    const mgr = allWindowRef.current;
+    if (!mgr) return;
+    const snapBefore = mgr.snapshot();
+    if (!snapBefore.headPrevCursor) return; // nothing to load upward
+    setAllLoadingMore(true);
+    try {
+      const range = activeFilters?.dateRange || {};
+      const extra = {
+        date_from: range.start || undefined,
+        date_to: range.end || undefined,
+        file_type: activeFilters?.fileType,
+        keep_type: activeFilters?.keepType,
+        orientation: activeFilters?.orientation,
+      };
+      const page = await mgr.loadPrev(extra);
+      const snap = mgr.snapshot();
+      if (page && Array.isArray(page.items)) {
+        for (const it of page.items) allSeenKeysRef.current.add(`${it.project_folder}::${it.filename}`);
+      }
+      setAllPhotos(snap.pages.flatMap(p => p.items));
+      setAllTotal(Number.isFinite(page?.total) ? Number(page.total) : allTotal);
+      setAllUnfilteredTotal(Number.isFinite(page?.unfiltered_total) ? Number(page.unfiltered_total) : allUnfilteredTotal);
+      setAllNextCursor(snap.tailNextCursor);
+      setAllHasPrev(!!snap.headPrevCursor);
+      
+      // CRITICAL FIX: Clear seen cursors after backward navigation
+      // This allows forward navigation to work with previously seen cursors
+      allSeenCursorsRef.current.clear();
+    } finally {
+      setAllLoadingMore(false);
+    }
+  }, [isAllMode, allLoadingMore, activeFilters?.dateRange, activeFilters?.fileType, activeFilters?.keepType, activeFilters?.orientation]);
 
   // When All Photos load or paginate, resolve deep-link target if present.
   // First, try the efficient locate-page endpoint once; on failure, fall back to sequential paging.
@@ -249,6 +318,8 @@ function App() {
       
       setViewerList(allPhotos.slice());
       setViewerState({ isOpen: true, startIndex: idx, fromAll: true });
+      // Center the target in the All Photos grid
+      setAllGridAnchorIndex(idx);
       // Session viewer state removed - URL is source of truth
       allDeepLinkRef.current = null;
       allLocateTriedRef.current = false;
@@ -309,6 +380,8 @@ function App() {
             
             setViewerList(items.slice());
             setViewerState({ isOpen: true, startIndex, fromAll: true });
+            // Center located item in All Photos grid
+            setAllGridAnchorIndex(startIndex);
             // Session viewer state removed - URL is source of truth
             allDeepLinkRef.current = null;
             
@@ -477,6 +550,14 @@ function App() {
         if (filename) {
           // Open in viewer after project/photos load
           pendingOpenRef.current = { folder, filename };
+          // Reset filters to ensure deep-linked target is included (drop conflicting filters)
+          setActiveFilters(prev => ({
+            ...prev,
+            dateRange: { start: '', end: '' },
+            fileType: 'any',
+            keepType: 'any',
+            orientation: 'any',
+          }));
           // Session viewer state removed - URL is source of truth
         }
         return;
@@ -502,15 +583,42 @@ function App() {
     if (!folder) return;
     const { apiSort, apiDir } = resolveApiSort();
     try {
-      const res = await listProjectPhotos(folder, { sort: apiSort, dir: apiDir });
-      setPagedPhotos(res.items || []);
-      setPagedTotal(res.total || 0);
-      setNextCursor(res.nextCursor ?? null);
+      if (!projectWindowRef.current) {
+        projectWindowRef.current = new PagedWindowManager({
+          limit: 100,
+          maxPages: 4, // Increased from 2 to prevent eviction issues with small final pages
+          keyOf: (it) => `${it.project_folder || folder}::${it.filename}`,
+          fetchPage: async ({ cursor, before_cursor, limit, extra }) => {
+            const params = { limit, sort: apiSort, dir: apiDir };
+            if (cursor) params.cursor = cursor;
+            if (before_cursor) params.before_cursor = before_cursor;
+            // Add filter parameters (same as All Photos) - only send non-"any" values
+            if (activeFilters?.dateRange?.from) params.date_from = activeFilters.dateRange.from;
+            if (activeFilters?.dateRange?.to) params.date_to = activeFilters.dateRange.to;
+            if (activeFilters?.fileType && activeFilters.fileType !== 'any') params.file_type = activeFilters.fileType;
+            if (activeFilters?.keepType && activeFilters.keepType !== 'any') params.keep_type = activeFilters.keepType;
+            if (activeFilters?.orientation && activeFilters.orientation !== 'any') params.orientation = activeFilters.orientation;
+            const res = await listProjectPhotos(extra.folder, params);
+            // support both camelCase and snake_case returns
+            return { items: res.items || [], nextCursor: res.nextCursor ?? res.next_cursor ?? null, prevCursor: res.prevCursor ?? res.prev_cursor ?? null, total: res.total, unfiltered_total: res.unfiltered_total };
+          },
+        });
+      }
+      const mgr = projectWindowRef.current;
+      // Store folder in extra to use in fetcher
+      const page = await mgr.loadInitial({ folder });
+      const snap = mgr.snapshot();
+      setPagedPhotos(snap.pages.flatMap(p => p.items));
+      setPagedTotal(Number.isFinite(page?.total) ? Number(page.total) : snap.pages.flatMap(p => p.items).length);
+      setPagedUnfilteredTotal(Number.isFinite(page?.unfiltered_total) ? Number(page.unfiltered_total) : Number(page?.total) || snap.pages.flatMap(p => p.items).length);
+      setNextCursor(snap.tailNextCursor);
+      setProjectHasPrev(!!snap.headPrevCursor);
     } catch (e) {
       // Failed to load first page
       setPagedPhotos([]);
       setPagedTotal(0);
       setNextCursor(null);
+      setProjectHasPrev(false);
     }
   }, [resolveApiSort]);
 
@@ -518,31 +626,56 @@ function App() {
     if (!selectedProject || !nextCursor || loadingMore) return;
     setLoadingMore(true);
     try {
-      const { apiSort, apiDir } = resolveApiSort();
-      const res = await listProjectPhotos(selectedProject.folder, { cursor: nextCursor, sort: apiSort, dir: apiDir });
-      setPagedPhotos(prev => prev.concat(res.items || []));
-      setPagedTotal(res.total || pagedTotal);
-      setNextCursor(res.nextCursor ?? null);
-    } catch (e) {
-      // Failed to load more photos
+      const mgr = projectWindowRef.current;
+      if (!mgr) return;
+      const page = await mgr.loadNext({ folder: selectedProject.folder });
+      const snap = mgr.snapshot();
+      setPagedPhotos(snap.pages.flatMap(p => p.items));
+      setPagedTotal(Number.isFinite(page?.total) ? Number(page.total) : pagedTotal);
+      setPagedUnfilteredTotal(Number.isFinite(page?.unfiltered_total) ? Number(page.unfiltered_total) : pagedUnfilteredTotal);
+      setNextCursor(snap.tailNextCursor);
+      setProjectHasPrev(!!snap.headPrevCursor);
     } finally {
       setLoadingMore(false);
     }
-  }, [selectedProject, nextCursor, loadingMore, resolveApiSort, pagedTotal]);
+  }, [selectedProject, nextCursor, loadingMore, pagedTotal]);
+
+  const loadPrev = useCallback(async () => {
+    if (!selectedProject || loadingMore) return;
+    const mgr = projectWindowRef.current;
+    if (!mgr) return;
+    const snapBefore = mgr.snapshot();
+    if (!snapBefore.headPrevCursor) return;
+    setLoadingMore(true);
+    try {
+      const page = await mgr.loadPrev({ folder: selectedProject.folder });
+      const snap = mgr.snapshot();
+      setPagedPhotos(snap.pages.flatMap(p => p.items));
+      setPagedTotal(Number.isFinite(page?.total) ? Number(page.total) : pagedTotal);
+      setPagedUnfilteredTotal(Number.isFinite(page?.unfiltered_total) ? Number(page.unfiltered_total) : pagedUnfilteredTotal);
+      setNextCursor(snap.tailNextCursor);
+      setProjectHasPrev(!!snap.headPrevCursor);
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [selectedProject, loadingMore, pagedTotal, pagedUnfilteredTotal]);
 
   // Reset and reload first page when project or sort changes
   useEffect(() => {
     if (!selectedProject) return;
     setPagedPhotos([]);
     setPagedTotal(0);
+    setPagedUnfilteredTotal(0);
     setNextCursor(null);
+    setProjectHasPrev(false);
+    projectWindowRef.current = null; // drop window to free memory when project/sort changes
     // Debounce slightly to allow projectData to settle
     const id = setTimeout(() => { loadFirstPage(selectedProject.folder); }, 0);
     return () => clearTimeout(id);
-  }, [selectedProject, sortKey, sortDir, loadFirstPage]);
+  }, [selectedProject, sortKey, sortDir, loadFirstPage, activeFilters?.dateRange, activeFilters?.fileType, activeFilters?.keepType, activeFilters?.orientation]);
 
-  // When target project is loaded, open the viewer at the desired photo (match by filename or basename),
-  // and ensure the paginated grid loads pages until that photo is present.
+  // When target project is loaded, open the viewer at the desired photo.
+  // First attempt project-scoped locate-page for precise paging + index; fall back to sequential pagination.
   useEffect(() => {
     const pending = pendingOpenRef.current;
     if (!pending) return;
@@ -560,6 +693,51 @@ function App() {
       return base === targetLower;
     };
 
+    // Prefer efficient locate-page once per deep link
+    if (!projectLocateTriedRef.current) {
+      projectLocateTriedRef.current = true;
+      (async () => {
+        try {
+          const range = activeFilters?.dateRange || {};
+          const hasDot = /\.[A-Za-z0-9]+$/.test(String(targetNameRaw));
+          const maybeName = (targetNameRaw || '').replace(/\.[^/.]+$/, '');
+          const res = await locateProjectPhotosPage(selectedProject.folder, {
+            filename: hasDot ? targetNameRaw : undefined,
+            name: !hasDot ? maybeName : undefined,
+            limit: 100,
+            date_from: range.start || undefined,
+            date_to: range.end || undefined,
+            file_type: activeFilters?.fileType,
+            keep_type: activeFilters?.keepType,
+            orientation: activeFilters?.orientation,
+          });
+          const items = Array.isArray(res.items) ? res.items : [];
+          setPagedPhotos(items);
+          setNextCursor(res.next_cursor ?? null);
+
+          const startIndex = Number.isFinite(res.idx_in_items) && res.idx_in_items >= 0 ? res.idx_in_items : -1;
+          if (startIndex >= 0 && items[startIndex]) {
+            setViewerList(items.slice());
+            setViewerState({ isOpen: true, startIndex });
+            // Ask grid to center the located item row
+            setGridAnchorIndex(startIndex);
+            // Push canonical project deep-link URL with current filters
+            try {
+              const nameForUrl = (items[startIndex]?.basename) || (items[startIndex]?.filename || '').replace(/\.[^/.]+$/, '');
+              if (selectedProject?.folder && nameForUrl) {
+                // Canonical URL without filters (basename only)
+                window.history.pushState({}, '', `/${encodeURIComponent(selectedProject.folder)}/${encodeURIComponent(nameForUrl)}`);
+              }
+            } catch {}
+            pendingOpenRef.current = null;
+            return; // handled via locate
+          }
+        } catch (e) {
+          // locate failed; fall back to existing sequential logic
+        }
+      })();
+    }
+
     const fullList = Array.isArray(projectData?.photos) ? projectData.photos : null;
     const idxFull = Array.isArray(fullList) ? fullList.findIndex(isTarget) : -1;
     const idxPaged = Array.isArray(pagedPhotos) ? pagedPhotos.findIndex(isTarget) : -1;
@@ -568,20 +746,13 @@ function App() {
     if (!viewerState?.isOpen && idxFull >= 0) {
       setViewerList(fullList);
       setViewerState({ isOpen: true, startIndex: idxFull });
+      setGridAnchorIndex(idxFull);
       // Session viewer state removed - URL is source of truth
       try {
         const nameForUrl = (fullList[idxFull]?.basename) || (fullList[idxFull]?.filename || '').replace(/\.[^/.]+$/, '');
         if (selectedProject?.folder && nameForUrl) {
-          // Include current filters in URL
-          const range = (activeFilters?.dateRange) || {};
-          const qp = new URLSearchParams();
-          if (range.start) qp.set('date_from', range.start);
-          if (range.end) qp.set('date_to', range.end);
-          if (activeFilters?.fileType && activeFilters.fileType !== 'any') qp.set('file_type', activeFilters.fileType);
-          if (activeFilters?.keepType && activeFilters.keepType !== 'any') qp.set('keep_type', activeFilters.keepType);
-          if (activeFilters?.orientation && activeFilters.orientation !== 'any') qp.set('orientation', activeFilters.orientation);
-          const search = qp.toString();
-          window.history.pushState({}, '', `/${encodeURIComponent(selectedProject.folder)}/${encodeURIComponent(nameForUrl)}${search ? `?${search}` : ''}`);
+          // Canonical URL without filters
+          window.history.pushState({}, '', `/${encodeURIComponent(selectedProject.folder)}/${encodeURIComponent(nameForUrl)}`);
         }
       } catch {}
     }
@@ -1675,6 +1846,9 @@ function App() {
 
   // Get filtered photos for display
   const filteredPhotos = getFilteredPhotos();
+  
+  // All Photos filtering is handled server-side, so we don't need client-side filtering
+  // The loaded photos (allPhotos) are already filtered by the backend based on active filters
 
   // Sort filtered photos (stable) with useMemo for performance
   const compareBySort = useCallback((a, b) => {
@@ -2005,20 +2179,26 @@ function App() {
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
                     </svg>
                   </button>
-                  {/* Count next to Filters: in All mode show loaded items; in Project mode show filtered/of total */}
+                  {/* Count next to Filters: consistent format for both All Photos and Project modes */}
                   <span className="text-sm text-gray-600 whitespace-nowrap">
                     {isAllMode ? (
-                      <>
-                        {allPhotos.length} images
-                      </>
-                    ) : (
                       hasActiveFilters ? (
                         <>
-                          <span className="font-medium">{filteredPhotos.length}</span> of {projectData?.photos?.length || 0}
+                          <span className="font-medium">{allTotal}</span> of {allUnfilteredTotal} images
                         </>
                       ) : (
                         <>
-                          {projectData?.photos?.length || 0} images
+                          {allUnfilteredTotal} images
+                        </>
+                      )
+                    ) : (
+                      hasActiveFilters ? (
+                        <>
+                          <span className="font-medium">{pagedTotal}</span> of {pagedUnfilteredTotal} images
+                        </>
+                      ) : (
+                        <>
+                          {pagedUnfilteredTotal} images
                         </>
                       )
                     )}
@@ -2425,7 +2605,11 @@ function App() {
                   photos={allPhotos}
                   hasMore={!!allNextCursor}
                   onLoadMore={loadAllMore}
+                  hasPrev={allHasPrev}
+                  onLoadPrev={loadAllPrev}
                   simplifiedMode={true}
+                  anchorIndex={allGridAnchorIndex}
+                  onAnchored={() => setAllGridAnchorIndex(null)}
                 />
               ) : (
                 <PhotoDisplay 
@@ -2444,6 +2628,10 @@ function App() {
                   photos={sortedPagedPhotos}
                   hasMore={!!nextCursor}
                   onLoadMore={loadMore}
+                  hasPrev={projectHasPrev}
+                  onLoadPrev={loadPrev}
+                  anchorIndex={gridAnchorIndex}
+                  onAnchored={() => setGridAnchorIndex(null)}
                 />
               )}
               </>

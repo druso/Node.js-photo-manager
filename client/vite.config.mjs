@@ -11,6 +11,12 @@ export default defineConfig({
   server: {
     port: 3000,
     open: false,
+    host: true, // Allow external connections
+    allowedHosts: [
+      'localhost',
+      '127.0.0.1',
+      'photomanager-poc.dru.so'
+    ],
     proxy: {
       // Proxy API calls to the Node backend on 5000
       '/api': {
