@@ -26,10 +26,12 @@ This application helps photographers manage their photo collections by:
   - `GET /api/projects` — list
   - `POST /api/projects` — create
   - `PATCH /api/projects/:id` — rename (display name only)
-  - `DELETE /api/projects/:id` — archive and queue deletion task
+  - `DELETE /api/projects/:folder` — archive and queue deletion task (folder is canonical `p<id>`)
 - **Project details**
   - `GET /api/projects/:folder` — metadata
-  - `GET /api/projects/:folder/photos` — paginated photos (`?limit&cursor&sort&dir`)
+  - `GET /api/projects/:folder/photos` — paginated photos
+    - Query: `?limit&cursor&before_cursor&sort=filename|date_time_original|created_at|updated_at&dir=ASC|DESC&date_from&date_to&file_type&keep_type&orientation`
+    - Returns: `{ items, total, unfiltered_total, nextCursor, prevCursor, limit, sort, dir }`
 - **Uploads & Processing**
   - `POST /api/projects/:folder/analyze-files` — analyze files for conflicts before upload
     - Returns: `{ imageGroups, conflicts, completion_conflicts, summary }`
@@ -56,7 +58,7 @@ This application helps photographers manage their photo collections by:
       - `file_type`: `any|jpg_only|raw_only|both`
       - `keep_type`: `any|any_kept|jpg_only|raw_jpg|none`
       - `orientation`: `any|vertical|horizontal`
-    - Returns: `{ items, next_cursor, limit, date_from, date_to }`
+    - Returns: `{ items, total, unfiltered_total, next_cursor, prev_cursor, limit, date_from, date_to }`
     - Headers: `Cache-Control: no-store`
   - `GET /api/photos/locate-page` — locate and return the page that contains a specific photo
     - Required: `project_folder`, and one of `filename` (with extension) or `name` (basename)
@@ -138,6 +140,18 @@ Tip: In development, the Vite dev server runs on `5173`; the backend runs on `50
   - The photo grid uses a single `IntersectionObserver` with a small positive root margin and a short dwell to avoid flicker.
   - It rebinds observation when DOM nodes change across re-renders and uses a ref-backed visibility set to avoid stale-closure misses.
   - Diagnostics: enable `localStorage.setItem('debugThumbs','1')` to log thumbnail load/retry/fail events from `client/src/components/Thumbnail.jsx`.
+  - Developer note: the UI employs a windowed pager (`client/src/utils/pagedWindowManager.js`) with bidirectional keyset pagination (`cursor`/`before_cursor`) and head/tail eviction. Server responses include `total` and `unfiltered_total` so the UI can render "filtered of total" consistently across All Photos and Project views.
+
+### Deep-linking and Viewer Anchoring
+
+- URLs are the source of truth for the open viewer target. Supported formats:
+  - All Photos: `/all/:projectFolder/:name` where `:name` is basename without extension.
+  - Project view: `/:projectFolder/:name` (basename without extension).
+- The client resolves deep links efficiently using `GET /api/photos/locate-page` which returns the page containing the target and `idx_in_items`.
+- The viewer opens at the exact `idx_in_items` and the virtualized grid centers that row using an anchor index.
+- If locate-page fails (404/409 or filtered out), the client falls back to sequential pagination until the target photo is present in the window.
+- Basename resolution is tolerant: the backend deterministically handles extension/case differences and filter inclusion.
+- During deep-link resolution, URL updates are temporarily suppressed to avoid premature route changes; normal URL updates resume after the viewer stabilizes.
 - **Drag & Drop Upload**: Intuitive file upload interface
 - **Keyboard Shortcuts**: Fast navigation and actions
 - **Secure Asset Serving**: Signed URLs for photo access; destructive endpoints are rate-limited
@@ -146,10 +160,10 @@ Tip: In development, the Vite dev server runs on `5173`; the backend runs on `50
 ### Session-only UI State
 
 - The client persists UI state only for the duration of a browser tab session using a single `sessionStorage` key `session_ui_state`.
-- Persisted within session: window scroll (`windowY`), main list scroll (`mainY`), and viewer state (`open`, `index`, `filename`, `showInfo`).
-- Restore uses a resilient retry loop; viewer restore waits for photos to load to avoid race conditions.
+- Persisted within session: window scroll (`windowY`) and main list scroll (`mainY`). Viewer state is no longer persisted; the URL is the single source of truth for deep links and current photo.
+- Restore uses a resilient retry loop.
 - State is cleared only when switching to a different project during the same session. Initial project selection after a reload does not clear it.
-- Legacy per-project `localStorage` APIs and migrations were removed. Use `client/src/utils/storage.js → getSessionState()/setSessionState()/clearSessionState()` and helpers `setSessionWindowY()`, `setSessionMainY()`, `setSessionViewer()`.
+- Legacy per-project `localStorage` APIs and migrations were removed. Use `client/src/utils/storage.js → getSessionState()/setSessionState()/clearSessionState()` and helpers `setSessionWindowY()`, `setSessionMainY()`.
 
 ## Maintenance
 

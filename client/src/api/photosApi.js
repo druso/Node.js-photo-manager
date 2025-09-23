@@ -10,7 +10,7 @@
  * @param {string|null} [opts.before_cursor] - Backward cursor (previous page). Only used for DESC date sorts.
  * @param {('filename'|'date_time_original'|'created_at'|'updated_at')} [opts.sort]
  * @param {('ASC'|'DESC')} [opts.dir]
- * @returns {Promise<{ items: any[], total: number, nextCursor: string|null, prevCursor: string|null, limit: number, sort: string, dir: string }>}
+ * @returns {Promise<{ items: any[], total: number, unfiltered_total: number, nextCursor: string|null, prevCursor: string|null, limit: number, sort: string, dir: string }>}
  */
 export async function listProjectPhotos(folder, opts = {}) {
   const params = new URLSearchParams();

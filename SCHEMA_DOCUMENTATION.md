@@ -254,10 +254,10 @@ SELECT * FROM jobs WHERE status = 'running' AND (strftime('%s','now') - strftime
 ### Session-only UI State (Client)
 
 - The client persists transient UI state for the current browser tab session only, under a single `sessionStorage` key `session_ui_state`.
-- Contents: `windowY`, `mainY`, and `viewer` object (`open`, `index`, `filename`, `showInfo`).
-- Restore strategy: scroll positions restored via retry loop after layout; viewer state restored after photos load to avoid races.
+- Contents: `windowY`, `mainY`. Viewer state is no longer persisted; the URL is the single source of truth for deep links and current photo.
+- Restore strategy: scroll positions restored via retry loop after layout.
 - Reset rule: session UI state is cleared when switching to a different project during the same session; initial project selection after reload does not clear it.
-- Removed: legacy per-project `localStorage` APIs and migration code. Use `client/src/utils/storage.js → getSessionState()`, `setSessionState()`, `clearSessionState()`, plus helpers `setSessionWindowY()`, `setSessionMainY()`, `setSessionViewer()`.
+- Removed: legacy per-project `localStorage` APIs and migration code. Use `client/src/utils/storage.js → getSessionState()`, `setSessionState()`, `clearSessionState()`, plus helpers `setSessionWindowY()`, `setSessionMainY()`.
 
 ---
 

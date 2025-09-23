@@ -432,7 +432,9 @@ The backend exposes a comprehensive REST API for all frontend operations:
 ### Core Endpoints
 *   **Projects**: `GET/POST/DELETE /api/projects` - Project management
 *   **Projects (Rename)**: `PATCH /api/projects/:id` - Update project display name only (folder remains `p<id>`)
-*   **Photos (Paginated)**: `GET /api/projects/:folder/photos` - Paginated photos for a project. Query: `?limit=250&cursor=0&sort=filename|date_time_original|created_at|updated_at&dir=ASC|DESC`. Returns: `{ items, total, nextCursor, limit, sort, dir }`.
+*   **Photos (Paginated)**: `GET /api/projects/:folder/photos` - Paginated photos for a project.
+     - Query: `?limit&cursor&before_cursor&sort=filename|date_time_original|created_at|updated_at&dir=ASC|DESC&date_from&date_to&file_type&keep_type&orientation`
+     - Returns: `{ items, total, unfiltered_total, nextCursor, prevCursor, limit, sort, dir }`
 *   **Uploads**: `POST /api/projects/:folder/upload` - File upload with progress
 *   **Processing**: `POST /api/projects/:folder/process` - Queue thumbnail/preview generation
 *   **Analysis**: `POST /api/projects/:folder/analyze-files` - Pre-upload file analysis
@@ -448,7 +450,7 @@ The backend exposes a comprehensive REST API for all frontend operations:
 Example:
 
 ```bash
-curl -s "http://localhost:3000/api/projects/p123/photos?limit=100&cursor=0&sort=filename&dir=ASC" | jq .
+curl -s "http://localhost:5000/api/projects/p123/photos?limit=100&cursor=0&sort=filename&dir=ASC" | jq .
 ```
 
 Response shape:
@@ -457,7 +459,9 @@ Response shape:
 {
   "items": [ { "filename": "IMG_0001.JPG", "jpg_available": true, ... } ],
   "total": 1245,
-  "nextCursor": 100,
+  "unfiltered_total": 2650,
+  "nextCursor": "eyJ0YWtlbl9hdCI6ICIyMDI1LTA5LTIzVDEyOjAwOjAwWiIsICJpZCI6IDEyMzQ1fQ==",
+  "prevCursor": "eyJ0YWtlbl9hdCI6ICIyMDI1LTA5LTIzVDEzOjAwOjAwWiIsICJpZCI6IDEyMzQwfQ==",
   "limit": 100,
   "sort": "filename",
   "dir": "ASC"
@@ -501,7 +505,7 @@ Response shape:
       - `file_type`: `any|jpg_only|raw_only|both`
       - `keep_type`: `any|any_kept|jpg_only|raw_jpg|none`
       - `orientation`: `any|vertical|horizontal`
-    - Returns: `{ items, next_cursor, limit, date_from, date_to }`
+    - Returns: `{ items, total, unfiltered_total, next_cursor, prev_cursor, limit, date_from, date_to }`
     - Headers: `Cache-Control: no-store`
 
 *   `GET /api/photos/locate-page` — Locate and return the page that contains a specific photo
@@ -526,6 +530,17 @@ Response shape:
 *   **Session storage conflicts resolved**: Removed viewer state persistence that was overriding deep link targets
 *   **Deterministic backend resolution**: The `locate-page` API resolves basename collisions predictably
 *   **Client URL suppression**: Brief URL update blocking during deep link resolution prevents premature redirects
+
+### Virtualized Grid & Pagination Model
+
+The grid is built for very large datasets with stable scroll and bidirectional pagination.
+
+- **Virtualized rows**: `client/src/components/PhotoGridView.jsx` computes justified rows based on measured container width and per-item aspect ratios derived from EXIF metadata. This eliminates layout shifts and minimizes overdraw. Cells are lazily hydrated using a single `IntersectionObserver` with a short dwell to avoid flicker.
+- **Pagination strategy**: The client uses a windowed pager (`client/src/utils/pagedWindowManager.js`) that keeps a small number of pages in memory and evicts from head/tail as you scroll. It supports both forward (`cursor`) and backward (`before_cursor`) keyset pagination and automatically updates outer cursors when pages are added or evicted.
+- **Cursors**: The server returns base64 cursors encoding `{ taken_at, id }` in DESC order by `taken_at := coalesce(date_time_original, created_at), id`. Responses include both `nextCursor`/`prevCursor` (project) and `next_cursor`/`prev_cursor` (all-photos) depending on endpoint.
+- **Server-side filtering**: Both All Photos and Project views accept identical filters: `date_from`, `date_to`, `file_type`, `keep_type`, `orientation`. The backend returns both `total` (filtered) and `unfiltered_total` so the UI can render "X of Y" consistently.
+- **Deep links**: The All Photos locate API (`GET /api/photos/locate-page`) returns the exact page containing a target along with `idx_in_items`. The client opens the viewer at that index and centers the target row in the grid. When locate fails, the client falls back to sequential paging until the target enters the window.
+- **State preservation**: Scroll positions and open viewer are preserved across background updates and refetches. See “Session‑only UI State Persistence” for details.
 
 ### Endpoint Notes (validation & CORS)
 

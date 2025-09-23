@@ -70,7 +70,7 @@ export async function locateAllPhotosPage(opts = {}) {
  * @param {('any'|'any_kept'|'jpg_only'|'raw_jpg'|'none')} [opts.keep_type]
  * @param {('any'|'vertical'|'horizontal')} [opts.orientation]
  * @param {string|null} [opts.before_cursor]
- * @returns {Promise<{ items: any[], next_cursor: string|null, prev_cursor: string|null, limit: number }>}
+ * @returns {Promise<{ items: any[], total: number, unfiltered_total: number, next_cursor: string|null, prev_cursor: string|null, limit: number }>}
  */
 export async function listAllPhotos(opts = {}) {
   const params = new URLSearchParams();
