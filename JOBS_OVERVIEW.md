@@ -183,8 +183,8 @@ Note: Any other `type` will be failed by `workerLoop` as Unknown.
   - Endpoint: `GET /api/photos/pending-deletes`
   - Behavior: returns aggregated pending deletion counts across all projects.
   - Response: `{ jpg: number, raw: number, total: number, byProject: string[] }`
-  - Supports filtering by date range, file type, and orientation (ignores keep_type filter).
-  - Used by All Photos mode to show commit/revert toolbar even when viewing filtered results.
+  - Supports filtering by date range, file type, and orientation (ignores `keep_type` so counts are independent of preview mode filters).
+  - The All Photos UI fetches this endpoint directly (see `listAllPendingDeletes()`), ensuring the commit/revert toolbar reflects cross-project totals even when the paginated list is filtered.
 
 ### Image Move
 

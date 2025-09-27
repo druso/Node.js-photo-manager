@@ -15,10 +15,17 @@ This application helps photographers manage their photo collections by:
 ## Technology
 
 - **Frontend**: React with Vite and Tailwind CSS
+  - **Highly Optimized Architecture**: Main App.jsx reduced from ~2,350 to 1,021 lines (57% reduction) through systematic extraction
+  - **Modular Hook System**: 20+ specialized React hooks for separation of concerns and reusability
+  - **Component Extraction**: Modular UI components (MainContentRenderer, CommitRevertBar, SortControls, etc.)
+  - **Layout Stability**: Fixed header positioning and horizontal scroll prevention for optimal UX
 - Tailwind CSS v4 note: deprecated `bg-opacity-*` utilities have been migrated to the new alpha color syntax (e.g., `bg-black/40`). If you add new styles, prefer `color/opacity` notation over legacy opacity utilities.
 - **Backend**: Node.js with Express and SQLite
 - **Image Processing**: Sharp library for high-performance processing
 - **Project folders**: canonical format `p<id>` (immutable). See `server/utils/projects.js` for `makeProjectFolderName()`, `isCanonicalProjectFolder()`, and `parseProjectIdFromFolder()`.
+- **Modular Architecture**: Both frontend and backend use modular architecture:
+  - **Frontend**: Specialized hooks, services, and components for maintainability
+  - **Backend**: Repository layer optimized into focused modules (photosRepo.js delegates to specialized photoCrud, photoFiltering, photoPagination, photoPendingOps, and photoQueryBuilders modules)
 
 ## API Quick Reference
 
@@ -53,7 +60,7 @@ This application helps photographers manage their photo collections by:
 
 - **All Photos (cross-project)**
   - `GET /api/photos` — paginated list across all non-archived projects
-    - Query: `?limit&cursor&date_from&date_to&file_type&keep_type&orientation&tags&include=tags`
+    - Query: `?limit&cursor&before_cursor&date_from&date_to&file_type&keep_type&orientation&tags&include=tags`
       - `limit`: default 200, max 300
       - `file_type`: `any|jpg_only|raw_only|both`
       - `keep_type`: `any|any_kept|jpg_only|raw_jpg|none`
@@ -162,7 +169,7 @@ Tip: In development, the Vite dev server runs on `5173`; the backend runs on `50
   - The photo grid uses a single `IntersectionObserver` with a small positive root margin and a short dwell to avoid flicker.
   - It rebinds observation when DOM nodes change across re-renders and uses a ref-backed visibility set to avoid stale-closure misses.
   - Diagnostics: enable `localStorage.setItem('debugThumbs','1')` to log thumbnail load/retry/fail events from `client/src/components/Thumbnail.jsx`.
-  - Developer note: the UI employs a windowed pager (`client/src/utils/pagedWindowManager.js`) with bidirectional keyset pagination (`cursor`/`before_cursor`) and head/tail eviction. Server responses include `total` and `unfiltered_total` so the UI can render "filtered of total" consistently across All Photos and Project views.
+  - Developer note: the UI employs a windowed pager (`client/src/utils/pagedWindowManager.js`) with bidirectional keyset pagination (`cursor`/`before_cursor`) and head/tail eviction. Server responses include `total` and `unfiltered_total` so the UI can render "filtered of total" consistently across All Photos and Project views. `useProjectPagination()` / `useAllPhotosPagination()` strip `"any"` sentinel filter values before calling the APIs and expose `mutatePagedPhotos()` / `mutateAllPhotos()` to keep optimistic updates in sync.
 
 ### Deep-linking and Viewer Anchoring
 
@@ -172,6 +179,7 @@ Tip: In development, the Vite dev server runs on `5173`; the backend runs on `50
 - The client resolves deep links efficiently using `GET /api/photos/locate-page` which returns the page containing the target and `idx_in_items`.
 - The viewer opens at the exact `idx_in_items` and the virtualized grid centers that row using an anchor index.
 - If locate-page fails (404/409 or filtered out), the client falls back to sequential pagination until the target photo is present in the window.
+- Pending delete totals in All Photos mode come from `listAllPendingDeletes()` so the commit/revert toolbar reflects the true cross-project totals even when the grid is filtered.
 - Basename resolution is tolerant: the backend deterministically handles extension/case differences and filter inclusion.
 - During deep-link resolution, URL updates are temporarily suppressed to avoid premature route changes; normal URL updates resume after the viewer stabilizes.
 - **Drag & Drop Upload**: Intuitive file upload interface

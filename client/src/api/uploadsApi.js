@@ -15,26 +15,8 @@ export async function analyzeFiles(folder, files) {
   return res.json();
 }
 
-// Note: Upload with progress is handled in the UploadContext via XMLHttpRequest.
-// This function is provided for future use if progress is not required.
-export async function uploadFiles(folder, fileList) {
-  const formData = new FormData();
-  fileList.forEach(file => formData.append('photos', file));
-  const res = await fetch(`/api/projects/${encodeURIComponent(folder)}/upload`, {
-    method: 'POST',
-    body: formData
-  });
-  if (!res.ok) throw new Error(await res.text());
-  return res.json();
-}
-
 // Removed deprecated generateThumbnails/generatePreviews. Use processPerImage() instead.
-
-export async function getProgress(folder) {
-  const res = await fetch(`/api/projects/${encodeURIComponent(folder)}/progress`);
-  if (!res.ok) throw new Error(`getProgress failed: ${res.status}`);
-  return res.json();
-}
+// Removed unused uploadFiles() and getProgress() functions - no longer used by the application.
 
 export async function processPerImage(folder, { force, filenames } = {}) {
   const q = force ? '?force=true' : '';

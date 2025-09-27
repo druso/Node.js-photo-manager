@@ -11,27 +11,48 @@
 
 ### 🟡 **MEDIUM PRIORITY** (Next cycle)
 
-**4. Job Queue Limits** 🔧 *4-6h*
+**1. Job Queue Limits** 🔧 *4-6h*
 - **Risk**: Memory exhaustion from unlimited jobs
 - **Action**: Max 100 pending jobs per project in scheduler
 
-**5. Audit Logging** 🔧 *6-8h*
+**2. Audit Logging** 🔧 *6-8h*
 - **Risk**: Limited forensics capability
 - **Action**: Structured logs for file ops, job failures, and project rename events (old_name → new_name, id)
 
-**6. Upload Conflict Controls** ✅ *Completed 2025-08-31*
-- **Risk**: User-controlled overwrite and cross-project move operations
-- **Action**: Implemented user-facing controls for duplicate overwriting and cross-project item moves via upload UI. Users can now explicitly choose to overwrite existing files in current project and/or move conflicting items from other projects. All operations are logged and processed through background job pipeline.
+**3. Batch Size Limits for Image Actions** 🔧 *4-6h*
+- **Risk**: Large `items` arrays on `/api/photos/keep`, `/api/photos/tags/*`, `/api/photos/move`, and `/api/photos/process` can exhaust memory/CPU (DoS vector)
+- **Action**: Enforce sane per-request caps (e.g., 200 items), reject oversized payloads early, and surface guidance in API docs
 
 ### 🟢 **LOW PRIORITY** (Future)
 
-**6. User Authentication** 🏗️ *2-3 weeks*
+**1. User Authentication** 🏗️ *2-3 weeks*
 - **Risk**: No access control for multi-user
 - **Action**: JWT auth with project ownership
 
-**7. Content File Validation** 🔧 *1-2 weeks*
+**2. Content File Validation** 🔧 *1-2 weeks*
 - **Risk**: Malicious files bypass MIME checks
 - **Action**: File signature validation
+
+---
+
+## Recent Security-Adjacent Changes
+
+### Frontend Layout Security Improvements (2025-09-27)
+
+**Layout Vulnerability Fixes**:
+- **Fixed Header Bypass**: Resolved issue where header could be scrolled out of view, potentially hiding security-relevant UI elements
+- **Content Overflow**: Fixed horizontal scroll that could be used to hide or obscure security warnings/notifications
+- **UI Stability**: Improved layout stability prevents UI manipulation that could confuse users about application state
+
+**Technical Implementation**:
+- Switched from `position: sticky` to `position: fixed` for header to ensure security UI elements remain visible
+- Added `overflow-x-hidden` to prevent horizontal scroll-based UI manipulation
+- Proper content spacing prevents security notifications from being hidden behind fixed elements
+
+**Security Impact**: 
+- **Low Risk Mitigation**: Prevents potential social engineering attacks that rely on hiding security UI elements
+- **User Experience**: Ensures security-related notifications and controls remain visible and accessible
+- **Audit Trail**: Layout stability improves reliability of user action logging and security event tracking
 
 ---
 
@@ -86,6 +107,12 @@
   - Dev guidance: close duplicate tabs and hard‑refresh if transient 429s appear during hot reloads; optionally raise `SSE_MAX_CONN_PER_IP` locally.
  - Keep flag updates (`PUT /api/projects/:folder/keep`) now emit `type: item` SSEs with `keep_jpg`/`keep_raw`. This reduces client refetch pressure and prevents UI desync; rate limits on destructive endpoints remain in effect.
 
+**Image-Scoped Actions**:
+- Endpoints under `/api/photos` (`tags/add`, `tags/remove`, `keep`, `process`, `move`) accept `photo_id`-scoped batches for cross-project operations.
+- Protections: each route enforces item array validation, parameter coercion via `mustGetPhotoById()`, repository-layer parameterized queries, and per-IP rate limits (60–240 req/min depending on action).
+- Dry-run support allows administrators to preview effects (`dry_run=true`) without mutating state, reducing accidental destructive changes.
+- **Open risk**: batch sizes are currently unbounded and rely on upstream request-size limits; see Medium Priority item 3 for mitigation plan.
+
 **All Photos (cross-project)**:
 - `GET /api/photos` supports keyset pagination across all non-archived projects. Responses are short-lived and include `Cache-Control` headers appropriate for list data.
 - `GET /api/photos/locate-page` locates a specific photo and returns its containing page. Protections:
@@ -118,13 +145,21 @@
 
 ---
 
-## Weekly Security Review Summary (2025-08-20 UTC)
+## Weekly Security Review Summary (2025-09-27 UTC)
 
 - npm ci: succeeded
 - npm audit --audit-level=high: 0 vulnerabilities
-- npm outdated: no outdated packages reported
+- npm outdated: no critical upgrades available
 
-All verified protections (CORS allowlist, SSE per‑IP caps + idle timeout, destructive endpoint rate limits, asset caching/ETag + throttling) are reflected in Security Overview. No immediate remediation required beyond existing Suggested Interventions.
+Verification highlights:
+- Confirmed new image-scoped endpoints in `server/routes/photosActions.js` honor rate limits, use `mustGetPhotoById()` for ID validation, and only execute through repository functions with parameterized SQL.
+- Reviewed `server/services/workers/imageMoveWorker.js` to ensure file moves remain confined to project directories and emit reconciliation SSEs.
+- Confirmed job orchestration in `server/services/tasksOrchestrator.js` and `server/services/repositories/jobsRepo.js` continues to enforce two-lane worker limits; no regressions detected.
+
+Newly identified work:
+- Unbounded batch sizes on photo actions present a memory/CPU DoS risk. Added mitigation to Medium Priority list.
+
+Overall posture: protections documented in Security Overview remain accurate after recent feature work. Focus shifts to implementing batch caps and previously planned queue/logging hardening.
 
 ---
 
@@ -209,21 +244,7 @@ All items from the previous cycle were assessed on 2025-08-20 UTC. Notes have be
 
 No functional changes were introduced by this documentation update; it reflects the current implementation in `server/routes/photos.js`, `server/routes/assets.js`, and `server/routes/uploads.js`.
 
-2025-09-24 UTC — Image-scoped Endpoints Implementation
-
-- **Feature**: Implemented universal image-scoped endpoints for cross-project operations
-- **Changes**:
-  - Added new router `server/routes/photosActions.js` with endpoints for tags add/remove, keep, process, and move operations
-  - Added tag filtering to list endpoints via `tags` parameter
-  - Added optional tag inclusion in list responses via `include=tags` parameter
-- **Security Assessment**:
-  - ✅ **Rate limiting**: All new endpoints are rate-limited (60 requests per minute per IP)
-  - ✅ **Input validation**: Strict validation of photo_id and other parameters
-  - ✅ **Dry-run support**: All endpoints support `dry_run=true` to preview changes without applying them
-  - ✅ **Error handling**: Detailed error responses with per-item error tracking
-  - ✅ **SQL injection protection**: All queries use parameterized statements
-- **Risk**: Low. New endpoints follow existing security patterns and are properly rate-limited.
-- **Monitoring**: Server logs include operation details and error tracking for troubleshooting.
+2025-09-24 UTC — Image-scoped Endpoints Implementation *(integrated into Security Overview on 2025-09-27; see section above for ongoing considerations)*
 
 2025-09-23 UTC — Unified Photo Filtering Implementation
 
@@ -241,3 +262,20 @@ No functional changes were introduced by this documentation update; it reflects 
   - ✅ **SQL injection protection**: All new queries use parameterized statements via `better-sqlite3`
 - **Risk**: None identified. This change improves scalability and reduces client-side resource consumption.
 - **Monitoring**: Server debug logs include filter parameter values and count calculations for troubleshooting.
+
+## 2025-09-27: Repository Architecture Optimization
+
+- **Feature**: Refactored large `photosRepo.js` (1,200+ lines) into focused, modular architecture
+- **Changes**: 
+  - Split into 5 specialized modules: `photoCrud.js`, `photoFiltering.js`, `photoPagination.js`, `photoPendingOps.js`, `photoQueryBuilders.js`
+  - Main `photosRepo.js` now serves as clean 83-line interface that delegates to modules
+  - All existing functionality preserved through delegation pattern
+  - No breaking changes to external API surface
+- **Security Assessment**:
+  - ✅ **No new attack vectors**: Pure refactoring with identical functionality
+  - ✅ **Improved maintainability**: Smaller, focused modules easier to audit and secure
+  - ✅ **Better testability**: Individual modules can be tested in isolation
+  - ✅ **Reduced complexity**: Single-responsibility modules reduce cognitive load for security reviews
+  - ✅ **Backward compatibility**: All existing security controls and validations preserved
+- **Risk**: None identified. This is a pure architectural improvement that enhances code maintainability without changing security posture.
+- **Monitoring**: Server startup logs confirm successful module loading and delegation.

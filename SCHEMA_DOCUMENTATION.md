@@ -7,6 +7,18 @@ Order of truth and reconciliation:
 - Folder (disk) → SQL (DB) → Frontend (UI)
 - Implication: during destructive operations we always modify the folder first (move/delete files), then reconcile the DB, and finally update the UI incrementally.
 
+## Frontend Architecture (2025-09-27 Update)
+
+The frontend has been extensively refactored for optimal maintainability and performance:
+
+- **App.jsx Optimization**: Reduced from ~2,350 lines to 1,021 lines (57% reduction) through systematic extraction
+- **Modular Hook System**: 20+ specialized React hooks handle state management, business logic, effects, and UI concerns
+- **Component Extraction**: Modular UI components eliminate code duplication and improve reusability
+- **Layout Stability**: Fixed header positioning and scroll behavior for consistent user experience
+- **API Integration**: Enhanced `projectsApi.js` includes `getConfig()` function for configuration management
+
+This architecture maintains full backward compatibility while significantly improving code organization and developer experience.
+
 ## SQLite Schema Overview
 
 Tables and relationships:
@@ -72,7 +84,12 @@ Tables and relationships:
 Data access is through repository modules:
 
 - `server/services/repositories/projectsRepo.js`
-- `server/services/repositories/photosRepo.js`
+- `server/services/repositories/photosRepo.js` (modular interface delegating to specialized modules)
+  - `photoCrud.js` - Basic CRUD operations (get, upsert, update, delete)
+  - `photoFiltering.js` - Filtering and listing operations (listAll, listProjectFiltered)
+  - `photoPagination.js` - Pagination logic (locateProjectPage, locateAllPage, listPaged)
+  - `photoPendingOps.js` - Pending operations (deletes, mismatches)
+  - `photoQueryBuilders.js` - SQL WHERE clause construction utilities
 - `server/services/repositories/tagsRepo.js`
 - `server/services/repositories/photoTagsRepo.js`
 
@@ -291,15 +308,15 @@ Deletions:
 - POST `/api/projects/:folder/process` — queue thumbnail/preview generation (supports optional `{ force, filenames[] }` payload)
 - GET `/api/projects/:folder/thumbnail/:filename` → serves generated thumbnail JPG
 - GET `/api/projects/:folder/preview/:filename` → serves generated preview JPG
-- GET `/api/photos` — keyset‑paginated list across all non‑archived projects (supports `limit`, `cursor`, `date_from`, `date_to`, `file_type`, `keep_type`, `orientation`)
-- GET `/api/photos/locate-page` — locate a specific photo and return its containing page (requires `project_folder` and `filename` or `name`; returns `{ items, position, page_index, idx_in_items, next_cursor, prev_cursor, target }`)
-- GET `/api/photos/pending-deletes` — aggregated pending deletion counts across all projects (supports date/file/orientation filters; returns `{ jpg, raw, total, byProject }`)
+- `GET /api/photos` — keyset‑paginated list across all non‑archived projects (supports `limit`, `cursor`, `before_cursor`, `date_from`, `date_to`, `file_type`, `keep_type`, `orientation`, `tags`, `include=tags`)
+- `GET /api/photos/locate-page` — locate a specific photo and return its containing page (requires `project_folder` and `filename` or `name`; accepts the same optional filters as `/api/photos`, including `tags` and `include=tags`; returns `{ items, position, page_index, idx_in_items, next_cursor, prev_cursor, target }` and guarantees the target is within the filtered result set)
+- `GET /api/photos/pending-deletes` — aggregated pending deletion counts across all projects (supports date/file/orientation filters; returns `{ jpg, raw, total, byProject }`; ignores `keep_type` and always reports counts independent of the paginated grid filters)
 - POST `/api/photos/commit-changes` — global commit across multiple projects (accepts optional `{ projects }` body)
 - POST `/api/photos/revert-changes` — global revert across multiple projects (accepts optional `{ projects }` body)
 
 See implementations in `server/routes/uploads.js` and `server/routes/assets.js`.
 
-## Database File Location
+{{ ... }}
 
 The SQLite database is located at `.projects/db/user_0.sqlite` and is automatically created on first run.
 

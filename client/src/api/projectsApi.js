@@ -37,3 +37,9 @@ export async function renameProjectById(id, name) {
   if (!res.ok) throw new Error(await res.text());
   return res.json();
 }
+
+export async function getConfig() {
+  const res = await fetch('/api/config');
+  if (!res.ok) throw new Error(`getConfig failed: ${res.status}`);
+  return res.json();
+}
