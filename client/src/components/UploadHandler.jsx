@@ -2,19 +2,18 @@ import React, { useEffect } from 'react';
 import { useUpload } from '../upload/UploadContext';
 
 // Component that bridges between App state and upload context
-const UploadHandler = ({ selectedProject, pendingUploadFiles, onUploadStarted }) => {
+const UploadHandler = ({ selectedProject, pendingUpload, onUploadStarted }) => {
   const { actions } = useUpload();
 
   // Handle pending upload files when project context is ready
   useEffect(() => {
-    if (pendingUploadFiles?.files && pendingUploadFiles?.targetProject && selectedProject?.folder === pendingUploadFiles.targetProject.folder) {
-      console.log('Starting upload analysis for selected project:', selectedProject.folder);
+    if (pendingUpload?.files && pendingUpload?.targetProject && selectedProject?.folder === pendingUpload.targetProject.folder) {
       if (typeof actions.startAnalyze === 'function') {
-        actions.startAnalyze(pendingUploadFiles.files);
+        actions.startAnalyze(pendingUpload.files);
         onUploadStarted(); // Clear pending files
       }
     }
-  }, [actions, selectedProject, pendingUploadFiles, onUploadStarted]);
+  }, [actions, selectedProject, pendingUpload, onUploadStarted]);
 
   return null; // This component doesn't render anything
 };

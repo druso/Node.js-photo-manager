@@ -39,9 +39,13 @@ Tables and relationships:
 ### All Photos API (Cross-Project)
 
 - All photos (paginated): `GET /api/photos`
-  - Query params: `limit`, `cursor`, `before_cursor`, `date_from`, `date_to`, `file_type`, `keep_type`, `orientation`
+  - Query params: `limit`, `cursor`, `before_cursor`, `date_from`, `date_to`, `file_type`, `keep_type`, `orientation`, `tags`, `include=tags`
   - Returns: `{ items: [...], total: number, unfiltered_total: number, next_cursor: string|null, prev_cursor: string|null }`
   - Filter params: same as project photos API
+  - Tag filtering: `tags=portrait,-rejected` includes photos with 'portrait' tag and excludes those with 'rejected' tag
+    - Positive tags (no prefix): photo must have ALL specified tags (AND logic)
+    - Negative tags (with `-` prefix): photo must have NONE of the specified tags (NOT ANY logic)
+  - Optional tag inclusion: `include=tags` adds a `tags: string[]` property to each item
   - `total`: count of photos matching current filters across all projects, `unfiltered_total`: total photos across all non-canceled projects
   - Default sort: `taken_at DESC, id DESC` for consistent pagination
 
@@ -52,9 +56,18 @@ Tables and relationships:
 
 - `tags`
   - Columns: `id`, `project_id` (FK), `name`, `UNIQUE(project_id, name)`
+  - Semantics: Tags are scoped to projects. The same tag name can exist in multiple projects.
+  - Access: `tagsRepo.getOrCreateTag(project_id, name)` ensures a tag exists and returns its ID.
 
 - `photo_tags` (many-to-many)
   - Columns: `photo_id` (FK), `tag_id` (FK), PK(photo_id, tag_id)
+  - Relationships: Each photo can have multiple tags, and each tag can be applied to multiple photos.
+  - Access: 
+    - `photoTagsRepo.addTagToPhoto(photo_id, tag_id)` adds a tag to a photo
+    - `photoTagsRepo.removeTagFromPhoto(photo_id, tag_id)` removes a tag from a photo
+    - `photoTagsRepo.listTagsForPhoto(photo_id)` gets all tags for a single photo
+    - `photoTagsRepo.listTagsForPhotos(photo_ids)` efficiently fetches tags for multiple photos in a batch
+    - `photoTagsRepo.listPhotosForTag(tag_id)` gets all photos with a specific tag
 
 Data access is through repository modules:
 
@@ -81,9 +94,11 @@ Project-related endpoints return consistent shapes including the immutable numer
   - The `photos` array contains the full photo objects as documented in this file.
 
 - Project photos (paginated): `GET /api/projects/:folder/photos`
-  - Query params: `limit`, `cursor`, `before_cursor`, `sort`, `dir`, `date_from`, `date_to`, `file_type`, `keep_type`, `orientation`
+  - Query params: `limit`, `cursor`, `before_cursor`, `sort`, `dir`, `date_from`, `date_to`, `file_type`, `keep_type`, `orientation`, `tags`, `include=tags`
   - Returns: `{ items: [...], total: number, unfiltered_total: number, nextCursor: string|null, prevCursor: string|null }`
   - Filter params: `file_type` (jpg_only|raw_only|both|any), `keep_type` (any_kept|jpg_only|raw_jpg|none|any), `orientation` (vertical|horizontal|any)
+  - Tag filtering: `tags=portrait,-rejected` includes photos with 'portrait' tag and excludes those with 'rejected' tag (same semantics as All Photos)
+  - Optional tag inclusion: `include=tags` adds a `tags: string[]` property to each item
   - `total`: count of photos matching current filters, `unfiltered_total`: total photos in project
 
 - Rename project: `PATCH /api/projects/:id`
@@ -278,6 +293,9 @@ Deletions:
 - GET `/api/projects/:folder/preview/:filename` → serves generated preview JPG
 - GET `/api/photos` — keyset‑paginated list across all non‑archived projects (supports `limit`, `cursor`, `date_from`, `date_to`, `file_type`, `keep_type`, `orientation`)
 - GET `/api/photos/locate-page` — locate a specific photo and return its containing page (requires `project_folder` and `filename` or `name`; returns `{ items, position, page_index, idx_in_items, next_cursor, prev_cursor, target }`)
+- GET `/api/photos/pending-deletes` — aggregated pending deletion counts across all projects (supports date/file/orientation filters; returns `{ jpg, raw, total, byProject }`)
+- POST `/api/photos/commit-changes` — global commit across multiple projects (accepts optional `{ projects }` body)
+- POST `/api/photos/revert-changes` — global revert across multiple projects (accepts optional `{ projects }` body)
 
 See implementations in `server/routes/uploads.js` and `server/routes/assets.js`.
 

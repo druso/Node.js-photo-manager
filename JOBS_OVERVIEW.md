@@ -139,31 +139,57 @@ Note: Any other `type` will be failed by `workerLoop` as Unknown.
   - `trash_maintenance` (priority 100)
   - `manifest_check` (priority 95)
   - `folder_check` (priority 95)
-  - `manifest_cleaning` (priority 80)
 - Manual triggering: maintenance flows can be initiated via `server/routes/maintenance.js` where applicable.
 - Lane behavior: high priorities (>= threshold, default 90) run in the priority lane to keep reconciliation snappy even if normal jobs are long-running.
 
 ### Change Commit (Commit/Revert Toolbar)
 
-- Commit Changes
+- Commit Changes (Project-scoped)
   - Endpoint: `POST /api/projects/:folder/commit-changes`
   - Behavior:
-    - For each photo: moves non-kept JPG/RAW files to `.trash` (derivatives removed immediately for JPGs).
+    - For each photo in the specified project: moves non-kept JPG/RAW files to `.trash` (derivatives removed immediately for JPGs).
     - Updates DB availability/keep flags accordingly.
-    - Enqueues reconciliation jobs (high priority) to bring system fully consistent:
-      - `manifest_check` (95), `folder_check` (95), `manifest_cleaning` (80).
-  - Effect: downstream SSE/refreshes reflect file moves and cleaned state; maintenance runs quickly in priority lane.
+    - Enqueues reconciliation jobs: `manifest_check` (95), `folder_check` (95), `manifest_cleaning` (80).
+    - Emits SSE: `item_removed` for each deleted photo, `manifest_changed` with `removed_filenames`.
+  - Rate limit: 10 req/5 min/IP.
 
-- Revert Changes
+- Commit Changes (Global)
+  - Endpoint: `POST /api/photos/commit-changes`
+  - Behavior:
+    - Operates across multiple projects with pending deletions.
+    - Accepts optional `{ projects: ["p1", "p2"] }` body to target specific projects.
+    - If no projects specified, automatically detects all projects with pending deletions.
+    - For each affected project: moves non-kept JPG/RAW files to `.trash`, updates DB, enqueues reconciliation jobs.
+    - Emits SSE events per project: `item_removed`, `manifest_changed`.
+  - Rate limit: 10 req/5 min/IP.
+
+- Revert Changes (Project-scoped)
   - Endpoint: `POST /api/projects/:folder/revert-changes`
-  - Behavior: resets intent (`keep_jpg`/`keep_raw`) to current availability for all photos (non-destructive, no jobs needed).
-  - UI: client updates state optimistically; no heavy background processing triggered.
+  - Behavior: resets `keep_jpg := jpg_available` and `keep_raw := raw_available` for all photos in the specified project.
+  - Non-destructive (no files moved).
+  - Rate limit: 10 req/5 min/IP.
+
+- Revert Changes (Global)
+  - Endpoint: `POST /api/photos/revert-changes`
+  - Behavior:
+    - Operates across multiple projects with keep mismatches.
+    - Accepts optional `{ projects: ["p1", "p2"] }` body to target specific projects.
+    - If no projects specified, automatically detects all projects with keep mismatches.
+    - Resets `keep_jpg := jpg_available` and `keep_raw := raw_available` for affected photos.
+  - Non-destructive (no files moved).
+  - Rate limit: 10 req/5 min/IP.
+
+- Pending Deletes Summary
+  - Endpoint: `GET /api/photos/pending-deletes`
+  - Behavior: returns aggregated pending deletion counts across all projects.
+  - Response: `{ jpg: number, raw: number, total: number, byProject: string[] }`
+  - Supports filtering by date range, file type, and orientation (ignores keep_type filter).
+  - Used by All Photos mode to show commit/revert toolbar even when viewing filtered results.
 
 ### Image Move
 
 - Endpoint (tasks-only): `POST /api/projects/:folder/jobs` with `{"task_type":"image_move","items":["<base1>","<base2>"]}`
   - `:folder` is the destination project folder (e.g., `p3`).
-  - The task composes steps from `server/services/task_definitions.json`:
     1) `image_move_files` (95) — moves originals and any existing derivatives; updates DB and derivative statuses; emits SSE.
     2) `manifest_check` (95) — on the destination, to reconcile availability if needed; a separate `manifest_check` is also enqueued for the source by the worker.
     3) `generate_derivatives` (90) — runs if any derivative was missing and marked `pending` by the move.

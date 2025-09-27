@@ -1,37 +1,3 @@
-// API client for paginated photo fetching per project
-
-/**
- * Fetch a page of photos for a project.
- *
- * @param {string} folder - Canonical project folder (e.g., "p1").
- * @param {Object} opts
- * @param {number} [opts.limit] - Page size. If omitted, server uses config photo_grid.page_size.
- * @param {string|null} [opts.cursor] - Forward cursor (next page). For DESC date sorts, this is a base64 keyset cursor; for others, it's an offset.
- * @param {string|null} [opts.before_cursor] - Backward cursor (previous page). Only used for DESC date sorts.
- * @param {('filename'|'date_time_original'|'created_at'|'updated_at')} [opts.sort]
- * @param {('ASC'|'DESC')} [opts.dir]
- * @returns {Promise<{ items: any[], total: number, unfiltered_total: number, nextCursor: string|null, prevCursor: string|null, limit: number, sort: string, dir: string }>}
- */
-export async function listProjectPhotos(folder, opts = {}) {
-  const params = new URLSearchParams();
-  if (opts.limit != null) params.set('limit', String(opts.limit));
-  if (opts.cursor != null) params.set('cursor', String(opts.cursor));
-  if (opts.before_cursor != null) params.set('before_cursor', String(opts.before_cursor));
-  if (opts.sort) params.set('sort', String(opts.sort));
-  if (opts.dir) params.set('dir', String(opts.dir));
-  // Add filter parameters (same as All Photos)
-  if (opts.date_from) params.set('date_from', String(opts.date_from));
-  if (opts.date_to) params.set('date_to', String(opts.date_to));
-  if (opts.file_type) params.set('file_type', String(opts.file_type));
-  if (opts.keep_type) params.set('keep_type', String(opts.keep_type));
-  if (opts.orientation) params.set('orientation', String(opts.orientation));
-
-  const url = `/api/projects/${encodeURIComponent(folder)}/photos${params.toString() ? `?${params.toString()}` : ''}`;
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`listProjectPhotos failed: ${res.status}`);
-  return res.json();
-}
-
 /**
  * Locate a specific photo within a project and return its page with surrounding items.
  * Mirrors the All Photos locate endpoint shape.

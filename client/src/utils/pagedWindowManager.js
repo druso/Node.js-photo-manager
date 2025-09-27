@@ -155,12 +155,10 @@ export default class PagedWindowManager {
         // Update total regardless (if provided)
         this.totalItems = Number.isFinite(res?.total) ? Number(res.total) : this.items().length;
         
-        page._pageNumber = this.nextPageNumber++;
-        this.pages.push(page);
-        
         if (page.items.length) {
           // Only advance cursor when we have actual items to avoid skipping valid pages
           this.tailNextCursor = page.nextCursor || null;
+          page._pageNumber = this.nextPageNumber++;
           this.pages.push(page);
           console.log(`[PagedWindow] Loaded page ${page._pageNumber}. Current window: [${this.#getCurrentWindowNumbers().join(', ')}]`);
           this.#evictIfNeeded('head');

@@ -53,18 +53,40 @@ This application helps photographers manage their photo collections by:
 
 - **All Photos (cross-project)**
   - `GET /api/photos` — paginated list across all non-archived projects
-    - Query: `?limit&cursor&date_from&date_to&file_type&keep_type&orientation`
+    - Query: `?limit&cursor&date_from&date_to&file_type&keep_type&orientation&tags&include=tags`
       - `limit`: default 200, max 300
       - `file_type`: `any|jpg_only|raw_only|both`
       - `keep_type`: `any|any_kept|jpg_only|raw_jpg|none`
       - `orientation`: `any|vertical|horizontal`
+      - `tags`: comma-separated list of tags to filter by (e.g., `portrait,-rejected`)
+      - `include=tags`: optionally include tag names for each photo
     - Returns: `{ items, total, unfiltered_total, next_cursor, prev_cursor, limit, date_from, date_to }`
     - Headers: `Cache-Control: no-store`
   - `GET /api/photos/locate-page` — locate and return the page that contains a specific photo
     - Required: `project_folder`, and one of `filename` (with extension) or `name` (basename)
-    - Optional: `limit(1-300)`, `date_from`, `date_to`, `file_type`, `keep_type`, `orientation`
+    - Optional: `limit(1-300)`, `date_from`, `date_to`, `file_type`, `keep_type`, `orientation`, `tags`, `include=tags`
     - Returns: `{ items, position, page_index, idx_in_items, next_cursor, prev_cursor, target, limit, date_from?, date_to? }`
     - Notes: 404 if not found/filtered out; 409 if basename is ambiguous; Cache-Control: `no-store`; rate limit: 60 req/min per IP
+
+- **Image-scoped Endpoints (Universal)**
+  - `POST /api/photos/tags/add` — add tags to photos by photo_id
+    - Body: `{ items: [{ photo_id: number, tags: string[] }], dry_run?: boolean }`
+    - Returns: `{ updated: number, errors?: [...], dry_run?: {...} }`
+  - `POST /api/photos/tags/remove` — remove tags from photos by photo_id
+    - Body: Same shape as add endpoint
+    - Returns: Same shape as add endpoint
+  - `POST /api/photos/keep` — update keep flags for photos by photo_id
+    - Body: `{ items: [{ photo_id: number, keep_jpg?: boolean, keep_raw?: boolean }], dry_run?: boolean }`
+    - Returns: `{ updated: number, errors?: [...], dry_run?: {...} }`
+    - Behavior: Updates keep flags and emits SSE events
+  - `POST /api/photos/process` — process derivatives for photos by photo_id
+    - Body: `{ items: [{ photo_id: number }], dry_run?: boolean, force?: boolean }`
+    - Returns: `{ message: 'Processing queued', job_count: number, job_ids: [...], errors?: [...] }`
+    - Status: 202 Accepted
+  - `POST /api/photos/move` — move photos to a different project by photo_id
+    - Body: `{ items: [{ photo_id: number }], dest_folder: string, dry_run?: boolean }`
+    - Returns: `{ message: 'Move queued', job_count: number, job_ids: [...], destination_project: {...}, errors?: [...] }`
+    - Status: 202 Accepted
 
 ## Quick Start
 

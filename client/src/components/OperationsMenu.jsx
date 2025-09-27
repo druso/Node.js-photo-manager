@@ -5,11 +5,12 @@ import { updateTags } from '../api/tagsApi';
 import { updateKeep } from '../api/keepApi';
 import { useUpload } from '../upload/UploadContext';
 import { useToast } from '../ui/toast/ToastContext';
+import { processPerImage } from '../api/uploadsApi';
 
 export default function OperationsMenu({
   projectFolder,
   projectData,
-  selectedPhotos,
+  selectedPhotos = new Set(),
   setSelectedPhotos,
   onTagsUpdated,
   onKeepBulkUpdated,
@@ -17,6 +18,10 @@ export default function OperationsMenu({
   config,
   trigger = 'label', // 'label' | 'hamburger'
   onRequestMove,
+  // All Photos mode props
+  allMode = false,
+  allSelectedKeys, // Set of 'project_folder::filename'
+  setAllSelectedKeys,
 }) {
   const [open, setOpen] = useState(false);
   const [tagInput, setTagInput] = useState('');
@@ -24,6 +29,10 @@ export default function OperationsMenu({
   const { actions: uploadActions } = useUpload();
   const rootRef = useRef(null);
   const toast = useToast();
+
+  const projectSelected = selectedPhotos instanceof Set ? selectedPhotos : new Set();
+  const selectionCount = allMode ? (allSelectedKeys?.size || 0) : projectSelected.size;
+  const selectionIsEmpty = selectionCount === 0;
 
   // Close when clicking outside the menu
   useEffect(() => {
@@ -39,12 +48,14 @@ export default function OperationsMenu({
 
   const applyTags = async (mode) => {
     const input = tagInput.trim();
-    if (!input || selectedPhotos.size === 0) return;
+    if (!input || projectSelected.size === 0) return;
+    if (!projectFolder) return;
     const tagsArray = input.split(',').map(t => t.trim()).filter(Boolean);
     if (tagsArray.length === 0) return;
 
-    const updates = Array.from(selectedPhotos).map(filename => {
-      const entry = projectData.photos.find(e => e.filename === filename);
+    const photos = Array.isArray(projectData?.photos) ? projectData.photos : [];
+    const updates = Array.from(projectSelected).map(filename => {
+      const entry = photos.find(e => e.filename === filename);
       const currentTags = entry ? entry.tags || [] : [];
       const next = mode === 'add'
         ? Array.from(new Set([...currentTags, ...tagsArray]))
@@ -56,7 +67,9 @@ export default function OperationsMenu({
     try {
       await updateTags(projectFolder, updates);
       setTagInput('');
-      setSelectedPhotos(new Set());
+      if (typeof setSelectedPhotos === 'function') {
+        setSelectedPhotos(new Set());
+      }
       if (onTagsBulkUpdated) {
         onTagsBulkUpdated(updates);
       } else if (onTagsUpdated) {
@@ -72,34 +85,66 @@ export default function OperationsMenu({
   };
 
   const applyKeep = async (mode) => {
-    if (selectedPhotos.size === 0) return;
+    const isAll = !!allMode;
+    const selCount = selectionCount;
+    if (selCount === 0) return;
     let target;
     if (mode === 'none') target = { keep_jpg: false, keep_raw: false };
     else if (mode === 'jpg_only') target = { keep_jpg: true, keep_raw: false };
     else if (mode === 'raw_jpg') target = { keep_jpg: true, keep_raw: true };
     else return;
-
-    const updates = Array.from(selectedPhotos).map(filename => ({ filename, ...target }));
     setBusy(true);
     try {
-      await updateKeep(projectFolder, updates);
-      setSelectedPhotos(new Set());
-      if (onKeepBulkUpdated) {
-        onKeepBulkUpdated(updates);
-      } else if (onTagsUpdated) {
-        // backward-compat fallback: triggers refetch in parent
-        onTagsUpdated();
-      }
-      const total = projectData?.photos?.length || 0;
-      let msg;
-      if (!target.keep_jpg && !target.keep_raw) {
-        msg = `${updates.length} planned for delete`;
-      } else if (target.keep_jpg && !target.keep_raw) {
-        msg = `Planned to keep only JPG for ${updates.length}`;
+      if (!isAll) {
+        const updates = Array.from(projectSelected).map(filename => ({ filename, ...target }));
+        if (!projectFolder) return;
+        await updateKeep(projectFolder, updates);
+        if (typeof setSelectedPhotos === 'function') {
+          setSelectedPhotos(new Set());
+        }
+        if (onKeepBulkUpdated) {
+          onKeepBulkUpdated(updates);
+        } else if (onTagsUpdated) {
+          // backward-compat fallback: triggers refetch in parent
+          onTagsUpdated();
+        }
+        let msg;
+        if (!target.keep_jpg && !target.keep_raw) {
+          msg = `${updates.length} planned for delete`;
+        } else if (target.keep_jpg && !target.keep_raw) {
+          msg = `Planned to keep only JPG for ${updates.length}`;
+        } else {
+          msg = `Planned to keep JPG + RAW for ${updates.length}`;
+        }
+        toast.show({ emoji: '📝', message: msg, variant: 'notification' });
       } else {
-        msg = `Planned to keep JPG + RAW for ${updates.length}`;
+        // Group by project_folder for All Photos mode
+        const byFolder = new Map();
+        for (const key of Array.from(allSelectedKeys || [])) {
+          const idx = key.indexOf('::');
+          if (idx <= 0) continue;
+          const folder = key.slice(0, idx);
+          const filename = key.slice(idx + 2);
+          if (!byFolder.has(folder)) byFolder.set(folder, []);
+          byFolder.get(folder).push(filename);
+        }
+        let totalCount = 0;
+        for (const [folder, filenames] of byFolder.entries()) {
+          const updates = filenames.map(fn => ({ filename: fn, ...target }));
+          await updateKeep(folder, updates);
+          totalCount += updates.length;
+        }
+        if (typeof setAllSelectedKeys === 'function') setAllSelectedKeys(new Set());
+        let msg;
+        if (!target.keep_jpg && !target.keep_raw) {
+          msg = `${totalCount} planned for delete across ${byFolder.size} project(s)`;
+        } else if (target.keep_jpg && !target.keep_raw) {
+          msg = `Planned to keep only JPG for ${totalCount} across ${byFolder.size} project(s)`;
+        } else {
+          msg = `Planned to keep JPG + RAW for ${totalCount} across ${byFolder.size} project(s)`;
+        }
+        toast.show({ emoji: '📝', message: msg, variant: 'notification' });
       }
-      toast.show({ emoji: '📝', message: msg, variant: 'notification' });
     } catch (e) {
       console.error('OperationsMenu keep error:', e);
       alert(e.message || 'Failed to update keep flags');
@@ -151,19 +196,19 @@ export default function OperationsMenu({
             <div className="grid grid-cols-3 gap-2">
               <button
                 onClick={() => applyKeep('none')}
-                disabled={busy || selectedPhotos.size === 0}
+                disabled={busy || selectionIsEmpty}
                 className="px-2 py-1.5 text-sm rounded-md bg-red-100 hover:bg-red-200 disabled:bg-gray-200 border border-red-200"
                 title="Plan: Delete"
               >Delete</button>
               <button
                 onClick={() => applyKeep('jpg_only')}
-                disabled={busy || selectedPhotos.size === 0}
+                disabled={busy || selectionIsEmpty}
                 className="px-2 py-1.5 text-sm rounded-md bg-gray-100 hover:bg-gray-200 disabled:bg-gray-200 border border-gray-200"
                 title="Plan: Keep JPG only"
               >JPG</button>
               <button
                 onClick={() => applyKeep('raw_jpg')}
-                disabled={busy || selectedPhotos.size === 0}
+                disabled={busy || selectionIsEmpty}
                 className="px-2 py-1.5 text-sm rounded-md bg-gray-100 hover:bg-gray-200 disabled:bg-gray-200 border border-gray-200"
                 title="Plan: Keep JPG + RAW"
               >JPG+RAW</button>
@@ -174,17 +219,37 @@ export default function OperationsMenu({
           <div className="mt-3 pt-3 border-t-0">
             <div className="text-xs text-gray-500 mb-2">Maintenance</div>
             <button
-              onClick={() => uploadActions.startProcess({ thumbnails: true, previews: true, force: false, filenames: Array.from(selectedPhotos) })}
-              disabled={selectedPhotos.size === 0}
-              className={`w-full px-3 py-2 text-sm rounded-md border ${selectedPhotos.size === 0 ? 'bg-gray-200 text-gray-500 cursor-not-allowed border-gray-300' : 'bg-gray-100 hover:bg-gray-200 border-gray-300 text-gray-800'}`}
+              onClick={async () => {
+                if (allMode) {
+                  const byFolder = new Map();
+                  for (const key of Array.from(allSelectedKeys || [])) {
+                    const idx = key.indexOf('::');
+                    if (idx <= 0) continue;
+                    const folder = key.slice(0, idx);
+                    const filename = key.slice(idx + 2);
+                    if (!byFolder.has(folder)) byFolder.set(folder, []);
+                    byFolder.get(folder).push(filename);
+                  }
+                  let total = 0;
+                  for (const [folder, filenames] of byFolder.entries()) {
+                    await processPerImage(folder, { force: false, filenames });
+                    total += filenames.length;
+                  }
+                  toast.show({ emoji: '🔄', message: `Process queued for ${total} item(s) across ${byFolder.size} project(s)`, variant: 'notification' });
+                } else {
+                  await uploadActions.startProcess({ thumbnails: true, previews: true, force: false, filenames: Array.from(projectSelected) });
+                }
+              }}
+              disabled={selectionIsEmpty}
+              className={`w-full px-3 py-2 text-sm rounded-md border ${selectionIsEmpty ? 'bg-gray-200 text-gray-500 cursor-not-allowed border-gray-300' : 'bg-gray-100 hover:bg-gray-200 border-gray-300 text-gray-800'}`}
               title="Regenerate thumbnails and previews for selected"
             >
               Regenerate thumbnails & previews (selected)
             </button>
             <button
               onClick={() => { if (onRequestMove) onRequestMove(); }}
-              disabled={selectedPhotos.size === 0}
-              className={`w-full mt-2 px-3 py-2 text-sm rounded-md border ${selectedPhotos.size === 0 ? 'bg-gray-200 text-gray-500 cursor-not-allowed border-gray-300' : 'bg-gray-100 hover:bg-gray-200 border-gray-300 text-gray-800'}`}
+              disabled={selectionIsEmpty}
+              className={`w-full mt-2 px-3 py-2 text-sm rounded-md border ${selectionIsEmpty ? 'bg-gray-200 text-gray-500 cursor-not-allowed border-gray-300' : 'bg-gray-100 hover:bg-gray-200 border-gray-300 text-gray-800'}`}
               title="Move selected photos to another project"
             >
               Move to…
@@ -198,23 +263,24 @@ export default function OperationsMenu({
                 type="text"
                 value={tagInput}
                 onChange={(e) => setTagInput(e.target.value)}
-                placeholder={selectedPhotos.size === 0 ? 'Select images first' : 'Comma-separated tags'}
+                placeholder={selectionIsEmpty ? 'Select images first' : 'Comma-separated tags'}
                 className="flex-grow p-2 border rounded-l-md"
-                disabled={busy}
+                disabled={busy || allMode}
+                title={allMode ? 'Tagging from All Photos requires backend tag deltas or tags in listings (coming soon)' : undefined}
               />
               <button
                 onClick={() => applyTags('add')}
-                disabled={busy || selectedPhotos.size === 0 || !tagInput.trim()}
-                className="px-3 py-2 bg-blue-500 text-white hover:bg-blue-600 disabled:bg-gray-400"
-                title="Add tags"
+                disabled={busy || (allMode ? true : (selectionIsEmpty || !tagInput.trim()))}
+                className={`px-3 py-2 ${allMode ? 'bg-gray-300 text-gray-500 cursor-not-allowed' : 'bg-blue-500 text-white hover:bg-blue-600'} disabled:bg-gray-400`}
+                title={allMode ? 'Disabled in All Photos for now' : 'Add tags'}
               >
                 +
               </button>
               <button
                 onClick={() => applyTags('remove')}
-                disabled={busy || selectedPhotos.size === 0 || !tagInput.trim()}
-                className="px-3 py-2 bg-red-500 text-white hover:bg-red-600 disabled:bg-gray-400 rounded-r-md"
-                title="Remove tags"
+                disabled={busy || (allMode ? true : (selectionIsEmpty || !tagInput.trim()))}
+                className={`px-3 py-2 ${allMode ? 'bg-gray-300 text-gray-500 cursor-not-allowed' : 'bg-red-500 text-white hover:bg-red-600'} disabled:bg-gray-400 rounded-r-md`}
+                title={allMode ? 'Disabled in All Photos for now' : 'Remove tags'}
               >
                 -
               </button>

@@ -247,7 +247,7 @@ function getByProjectAndFilename(project_id, filename) {
 }
 
 // Helper function to build WHERE clause for project photo filtering (similar to buildAllPhotosWhere)
-function buildProjectPhotosWhere({ project_id, date_from = null, date_to = null, file_type = null, keep_type = null, orientation = null } = {}) {
+function buildProjectPhotosWhere({ project_id, date_from = null, date_to = null, file_type = null, keep_type = null, orientation = null, tags = null } = {}) {
   const params = [project_id];
   const where = ['ph.project_id = ?'];
   
@@ -294,16 +294,50 @@ function buildProjectPhotosWhere({ project_id, date_from = null, date_to = null,
     }
   }
   
+  // Handle tags filter: comma-separated list where names without prefix are required, and names with leading '-' are exclusions
+  if (tags && typeof tags === 'string') {
+    const tagsList = tags.split(',').map(t => t.trim()).filter(Boolean);
+    if (tagsList.length > 0) {
+      const includeTags = tagsList.filter(t => !t.startsWith('-')).map(t => t.trim());
+      const excludeTags = tagsList.filter(t => t.startsWith('-')).map(t => t.substring(1).trim());
+      
+      // For include tags: photo must have ALL specified tags (AND logic)
+      if (includeTags.length > 0) {
+        // For each include tag, add a subquery that checks if the photo has this tag
+        includeTags.forEach(tag => {
+          where.push(`EXISTS (
+            SELECT 1 FROM photo_tags pt
+            JOIN tags t ON t.id = pt.tag_id
+            WHERE pt.photo_id = ph.id AND t.name = ?
+          )`);
+          params.push(tag);
+        });
+      }
+      
+      // For exclude tags: photo must have NONE of the specified tags (NOT ANY logic)
+      if (excludeTags.length > 0) {
+        // Add a single NOT EXISTS subquery that checks if the photo has ANY of these tags
+        const excludePlaceholders = excludeTags.map(() => '?').join(',');
+        where.push(`NOT EXISTS (
+          SELECT 1 FROM photo_tags pt
+          JOIN tags t ON t.id = pt.tag_id
+          WHERE pt.photo_id = ph.id AND t.name IN (${excludePlaceholders})
+        )`);
+        params.push(...excludeTags);
+      }
+    }
+  }
+  
   const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
   return { whereSql, params };
 }
 
 // New function for filtered project photos (similar to listAll but for a specific project)
-function listProjectFiltered({ project_id, limit = 100, cursor = null, before_cursor = null, date_from = null, date_to = null, file_type = null, keep_type = null, orientation = null }) {
+function listProjectFiltered({ project_id, limit = 100, cursor = null, before_cursor = null, date_from = null, date_to = null, file_type = null, keep_type = null, orientation = null, tags = null }) {
   const db = getDb();
   
   // Build WHERE clause with filters
-  const { whereSql, params } = buildProjectPhotosWhere({ project_id, date_from, date_to, file_type, keep_type, orientation });
+  const { whereSql, params } = buildProjectPhotosWhere({ project_id, date_from, date_to, file_type, keep_type, orientation, tags });
   
   // Main query to get photos
   const sql = `
@@ -376,6 +410,136 @@ function listProjectFiltered({ project_id, limit = 100, cursor = null, before_cu
   }
   
   return { items, nextCursor, prevCursor, total: filteredTotal, unfiltered_total: unfilteredTotal };
+}
+
+function listPendingDeletesForProject(project_id) {
+  if (!project_id) return [];
+  const db = getDb();
+  return db.prepare(`
+    SELECT *
+    FROM photos
+    WHERE project_id = ?
+      AND (
+        (jpg_available = 1 AND keep_jpg = 0)
+        OR (raw_available = 1 AND keep_raw = 0)
+      )
+  `).all(project_id);
+}
+
+function listPendingDeletesByProject({ project_id = null, project_folder = null, date_from = null, date_to = null, file_type = null, orientation = null } = {}) {
+  const db = getDb();
+  const params = [];
+  const filters = [];
+  
+  if (project_id != null) {
+    filters.push('p.id = ?');
+    params.push(project_id);
+  }
+  if (project_folder) {
+    filters.push('p.project_folder = ?');
+    params.push(project_folder);
+  }
+  
+  // Add date range filter
+  if (date_from) {
+    filters.push('ph.date_time_original >= ?');
+    params.push(date_from);
+  }
+  if (date_to) {
+    filters.push('ph.date_time_original <= ?');
+    params.push(date_to + ' 23:59:59');
+  }
+  
+  // Add file type filter
+  if (file_type && file_type !== 'any') {
+    if (file_type === 'jpg_only') {
+      filters.push('ph.jpg_available = 1 AND ph.raw_available = 0');
+    } else if (file_type === 'raw_only') {
+      filters.push('ph.raw_available = 1 AND ph.jpg_available = 0');
+    } else if (file_type === 'both') {
+      filters.push('ph.jpg_available = 1 AND ph.raw_available = 1');
+    }
+  }
+  
+  // Add orientation filter
+  if (orientation && orientation !== 'any') {
+    if (orientation === 'vertical') {
+      filters.push('ph.height > ph.width');
+    } else if (orientation === 'horizontal') {
+      filters.push('ph.width > ph.height');
+    }
+  }
+  
+  const where = filters.length ? `AND ${filters.join(' AND ')}` : '';
+  const rows = db.prepare(`
+    SELECT
+      p.id AS project_id,
+      p.project_folder,
+      p.project_name,
+      SUM(CASE WHEN ph.jpg_available = 1 AND ph.keep_jpg = 0 THEN 1 ELSE 0 END) AS pending_jpg,
+      SUM(CASE WHEN ph.raw_available = 1 AND ph.keep_raw = 0 THEN 1 ELSE 0 END) AS pending_raw
+    FROM photos ph
+    JOIN projects p ON p.id = ph.project_id
+    WHERE (p.status IS NULL OR p.status != 'canceled')
+      AND (
+        (ph.jpg_available = 1 AND ph.keep_jpg = 0)
+        OR (ph.raw_available = 1 AND ph.keep_raw = 0)
+      )
+      ${where}
+    GROUP BY p.id
+    HAVING pending_jpg > 0 OR pending_raw > 0
+    ORDER BY p.updated_at DESC
+  `).all(...params);
+  return rows;
+}
+
+function listKeepMismatchesForProject(project_id) {
+  if (!project_id) return [];
+  const db = getDb();
+  return db.prepare(`
+    SELECT *
+    FROM photos
+    WHERE project_id = ?
+      AND (
+        COALESCE(keep_jpg, 0) != COALESCE(jpg_available, 0)
+        OR COALESCE(keep_raw, 0) != COALESCE(raw_available, 0)
+      )
+  `).all(project_id);
+}
+
+function listKeepMismatchesByProject({ project_id = null, project_folder = null } = {}) {
+  const db = getDb();
+  const params = [];
+  const filters = [];
+  if (project_id != null) {
+    filters.push('p.id = ?');
+    params.push(project_id);
+  }
+  if (project_folder) {
+    filters.push('p.project_folder = ?');
+    params.push(project_folder);
+  }
+  const where = filters.length ? `AND ${filters.join(' AND ')}` : '';
+  const rows = db.prepare(`
+    SELECT
+      p.id AS project_id,
+      p.project_folder,
+      p.project_name,
+      SUM(CASE WHEN COALESCE(ph.keep_jpg, 0) != COALESCE(ph.jpg_available, 0) THEN 1 ELSE 0 END) AS mismatch_jpg,
+      SUM(CASE WHEN COALESCE(ph.keep_raw, 0) != COALESCE(ph.raw_available, 0) THEN 1 ELSE 0 END) AS mismatch_raw
+    FROM photos ph
+    JOIN projects p ON p.id = ph.project_id
+    WHERE (p.status IS NULL OR p.status != 'canceled')
+      AND (
+        COALESCE(ph.keep_jpg, 0) != COALESCE(ph.jpg_available, 0)
+        OR COALESCE(ph.keep_raw, 0) != COALESCE(ph.raw_available, 0)
+      )
+      ${where}
+    GROUP BY p.id
+    HAVING mismatch_jpg > 0 OR mismatch_raw > 0
+    ORDER BY p.updated_at DESC
+  `).all(...params);
+  return rows;
 }
 
 function listPaged({ project_id, sort = 'filename', dir = 'ASC', limit = 100, cursor = null, before_cursor = null, date_from = null, date_to = null, file_type = null, keep_type = null, orientation = null }) {
@@ -516,6 +680,10 @@ module.exports = {
   getByProjectAndFilename,
   getGlobalByFilename,
   moveToProject,
+  listPendingDeletesForProject,
+  listPendingDeletesByProject,
+  listKeepMismatchesForProject,
+  listKeepMismatchesByProject,
   listPaged,
   listProjectFiltered,
   removeById,
@@ -528,11 +696,15 @@ module.exports = {
 // ---- Cross-project listing (All Photos) ----
 // Keyset pagination over taken_at := COALESCE(date_time_original, created_at) DESC, id DESC
 // Options: { limit, cursor?, before_cursor?, date_from?, date_to?, file_type?, keep_type?, orientation? }
-function buildAllPhotosWhere({ date_from = null, date_to = null, file_type = null, keep_type = null, orientation = null, cursor = null, before_cursor = null } = {}) {
+function buildAllPhotosWhere({ date_from = null, date_to = null, file_type = null, keep_type = null, orientation = null, cursor = null, before_cursor = null, tags = null, project_id = null } = {}){
   const params = [];
   const where = [];
   // Exclude archived projects (wrap OR to preserve AND precedence with other filters)
   where.push(`(p.status IS NULL OR p.status != 'canceled')`);
+  if (project_id != null) {
+    where.push(`p.id = ?`);
+    params.push(project_id);
+  }
   // Date filters operate on taken_at
   if (date_from) {
     where.push(`COALESCE(ph.date_time_original, ph.created_at) >= ?`);
@@ -597,14 +769,48 @@ function buildAllPhotosWhere({ date_from = null, date_to = null, file_type = nul
       log.warn('build_where_cursor_parse_failed', { cursor_sample: String(cursor).slice(0, 16), message: e && e.message });
     }
   }
+  // Handle tags filter: comma-separated list where names without prefix are required, and names with leading '-' are exclusions
+  if (tags && typeof tags === 'string') {
+    const tagsList = tags.split(',').map(t => t.trim()).filter(Boolean);
+    if (tagsList.length > 0) {
+      const includeTags = tagsList.filter(t => !t.startsWith('-')).map(t => t.trim());
+      const excludeTags = tagsList.filter(t => t.startsWith('-')).map(t => t.substring(1).trim());
+      
+      // For include tags: photo must have ALL specified tags (AND logic)
+      if (includeTags.length > 0) {
+        // For each include tag, add a subquery that checks if the photo has this tag
+        includeTags.forEach(tag => {
+          where.push(`EXISTS (
+            SELECT 1 FROM photo_tags pt
+            JOIN tags t ON t.id = pt.tag_id
+            WHERE pt.photo_id = ph.id AND t.name = ?
+          )`);
+          params.push(tag);
+        });
+      }
+      
+      // For exclude tags: photo must have NONE of the specified tags (NOT ANY logic)
+      if (excludeTags.length > 0) {
+        // Add a single NOT EXISTS subquery that checks if the photo has ANY of these tags
+        const excludePlaceholders = excludeTags.map(() => '?').join(',');
+        where.push(`NOT EXISTS (
+          SELECT 1 FROM photo_tags pt
+          JOIN tags t ON t.id = pt.tag_id
+          WHERE pt.photo_id = ph.id AND t.name IN (${excludePlaceholders})
+        )`);
+        params.push(...excludeTags);
+      }
+    }
+  }
+  
   // Note: before_cursor is now handled separately in listAll() with flipped query approach
   const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
   return { whereSql, params };
 }
-function listAll({ limit = 200, cursor = null, before_cursor = null, date_from = null, date_to = null, file_type = null, keep_type = null, orientation = null } = {}) {
+function listAll({ limit = 200, cursor = null, before_cursor = null, date_from = null, date_to = null, file_type = null, keep_type = null, orientation = null, tags = null, project_id = null } = {}) {
   const db = getDb();
   
-  log.debug('listAll_called', { limit, cursor, before_cursor, date_from, date_to, file_type, keep_type, orientation });
+  log.debug('listAll_called', { limit, cursor, before_cursor, date_from, date_to, file_type, keep_type, orientation, tags_provided: !!tags });
   
   // SIMPLE FIX: Handle before_cursor with straightforward approach
   if (before_cursor) {
@@ -627,7 +833,7 @@ function listAll({ limit = 200, cursor = null, before_cursor = null, date_from =
     
     if (cTaken && cId != null) {
       // Get base filters without cursor
-      const { whereSql: baseWhereSql, params: baseParams } = buildAllPhotosWhere({ date_from, date_to, file_type, keep_type, orientation });
+      const { whereSql: baseWhereSql, params: baseParams } = buildAllPhotosWhere({ date_from, date_to, file_type, keep_type, orientation, project_id });
       
       // Build WHERE clause for before_cursor: items older than cursor
       const whereConditions = [];
@@ -719,7 +925,7 @@ function listAll({ limit = 200, cursor = null, before_cursor = null, date_from =
   }
   
   // NORMAL CASE: forward pagination or initial page
-  const { whereSql, params } = buildAllPhotosWhere({ date_from, date_to, file_type, keep_type, orientation, cursor, before_cursor });
+  const { whereSql, params } = buildAllPhotosWhere({ date_from, date_to, file_type, keep_type, orientation, cursor, before_cursor, tags, project_id });
 
   const sql = `
     SELECT
@@ -805,14 +1011,19 @@ function listAll({ limit = 200, cursor = null, before_cursor = null, date_from =
     const filteredResult = db.prepare(filteredCountSql).get(...params);
     filteredTotal = filteredResult ? filteredResult.c : 0;
     
-    // Count without filters (total photos across all non-archived projects)
-    const unfilteredCountSql = `
+    // Count without filters (total photos across all non-archived projects, optionally constrained to project)
+    let unfilteredQuery = `
       SELECT COUNT(*) as c 
       FROM photos ph
       JOIN projects p ON p.id = ph.project_id
       WHERE (p.status IS NULL OR p.status != 'canceled')
     `;
-    const unfilteredResult = db.prepare(unfilteredCountSql).get();
+    const unfilteredParams = [];
+    if (project_id != null) {
+      unfilteredQuery += ` AND p.id = ?`;
+      unfilteredParams.push(project_id);
+    }
+    const unfilteredResult = db.prepare(unfilteredQuery).get(...unfilteredParams);
     unfilteredTotal = unfilteredResult ? unfilteredResult.c : 0;
     
     console.log('DEBUG: Total count calculation:', { filteredTotal, unfilteredTotal });
@@ -877,7 +1088,7 @@ function locateAllPage({ project_folder, filename = null, name = null, limit = 1
       };
       // Prefer candidates that are included by current filters
       try {
-        const { whereSql, params } = buildAllPhotosWhere({ date_from, date_to, file_type, keep_type, orientation });
+        const { whereSql, params } = buildAllPhotosWhere({ date_from, date_to, file_type, keep_type, orientation, project_id: project.id });
         const checkSql = `
           SELECT 1
           FROM photos ph
@@ -913,7 +1124,7 @@ function locateAllPage({ project_folder, filename = null, name = null, limit = 1
   if (!target) { const err = new Error('Target not found'); err.code = 'NOT_FOUND'; throw err; }
 
   // Build filtered universe WHERE (without cursor)
-  const { whereSql, params } = buildAllPhotosWhere({ date_from, date_to, file_type, keep_type, orientation });
+  const { whereSql, params } = buildAllPhotosWhere({ date_from, date_to, file_type, keep_type, orientation, project_id: project.id });
 
   // Ensure target is included in filtered set by checking it matches filters and non-archived project constraint
   const checkSql = `

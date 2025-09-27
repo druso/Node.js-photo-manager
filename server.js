@@ -71,6 +71,9 @@ app.use('/api', jobsRouter);
 // All Photos (cross-project) route
 const photosRouter = require('./server/routes/photos');
 app.use('/api', photosRouter);
+// Image-scoped actions (tags/keep, future process/move)
+const photosActionsRouter = require('./server/routes/photosActions');
+app.use('/api', photosActionsRouter);
 
 // Centralized error handler (must be after routes)
 app.use(errorHandler);

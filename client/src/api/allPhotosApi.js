@@ -70,6 +70,7 @@ export async function locateAllPhotosPage(opts = {}) {
  * @param {('any'|'any_kept'|'jpg_only'|'raw_jpg'|'none')} [opts.keep_type]
  * @param {('any'|'vertical'|'horizontal')} [opts.orientation]
  * @param {string|null} [opts.before_cursor]
+ * @param {string} [opts.project_folder]
  * @returns {Promise<{ items: any[], total: number, unfiltered_total: number, next_cursor: string|null, prev_cursor: string|null, limit: number }>}
  */
 export async function listAllPhotos(opts = {}) {
@@ -82,8 +83,31 @@ export async function listAllPhotos(opts = {}) {
   if (opts.file_type && opts.file_type !== 'any') params.set('file_type', String(opts.file_type));
   if (opts.keep_type && opts.keep_type !== 'any') params.set('keep_type', String(opts.keep_type));
   if (opts.orientation && opts.orientation !== 'any') params.set('orientation', String(opts.orientation));
+  if (opts.project_folder) params.set('project_folder', String(opts.project_folder));
   const url = `/api/photos${params.toString() ? `?${params.toString()}` : ''}`;
   const res = await fetch(url, { cache: 'no-store' });
   if (!res.ok) throw new Error(`listAllPhotos failed: ${res.status}`);
+  return res.json();
+}
+
+/**
+ * Fetch pending deletions across all projects (ignores keep_type filter).
+ * @param {Object} opts
+ * @param {string} [opts.date_from] - YYYY-MM-DD
+ * @param {string} [opts.date_to] - YYYY-MM-DD
+ * @param {('any'|'jpg_only'|'raw_only'|'both')} [opts.file_type]
+ * @param {('any'|'vertical'|'horizontal')} [opts.orientation]
+ * @returns {Promise<{ jpg: number, raw: number, total: number, byProject: string[] }>}
+ */
+export async function listAllPendingDeletes(opts = {}) {
+  const params = new URLSearchParams();
+  params.set('keep_type', 'pending_deletes'); // Special value to get only pending deletions
+  if (opts.date_from) params.set('date_from', String(opts.date_from));
+  if (opts.date_to) params.set('date_to', String(opts.date_to));
+  if (opts.file_type && opts.file_type !== 'any') params.set('file_type', String(opts.file_type));
+  if (opts.orientation && opts.orientation !== 'any') params.set('orientation', String(opts.orientation));
+  const url = `/api/photos/pending-deletes${params.toString() ? `?${params.toString()}` : ''}`;
+  const res = await fetch(url, { cache: 'no-store' });
+  if (!res.ok) throw new Error(`listAllPendingDeletes failed: ${res.status}`);
   return res.json();
 }

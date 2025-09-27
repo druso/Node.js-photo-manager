@@ -8,12 +8,12 @@ export default function MovePhotosModal({
   onClose,
   sourceFolder,
   selectedFilenames,
+  selectedProjectSummaries = [],
 }) {
   const [projects, setProjects] = useState([]);
-  const [destFolder, setDestFolder] = useState('');
+  const [query, setQuery] = useState('');
+  const [selection, setSelection] = useState(null);
   const [loading, setLoading] = useState(false);
-  const [creatingNew, setCreatingNew] = useState(false);
-  const [newProjectName, setNewProjectName] = useState('');
   const [creating, setCreating] = useState(false);
   const toast = useToast();
 
@@ -25,57 +25,137 @@ export default function MovePhotosModal({
         const list = await listProjects();
         if (!alive) return;
         setProjects(list || []);
-        const firstOther = (list || []).find(p => p.folder !== sourceFolder);
-        setDestFolder(firstOther ? firstOther.folder : '');
       } catch (_) {}
     })();
     return () => { alive = false; };
-  }, [open, sourceFolder]);
+  }, [open]);
 
-  const otherProjects = useMemo(
-    () => (projects || []).filter(p => p.folder !== sourceFolder),
-    [projects, sourceFolder]
-  );
+  useEffect(() => {
+    if (!open) {
+      setQuery('');
+      setSelection(null);
+      setCreating(false);
+      setLoading(false);
+      return;
+    }
+    setSelection(null);
+    setQuery('');
+  }, [open]);
 
-  const canConfirm = open && !loading && !creating && destFolder && selectedFilenames && selectedFilenames.length > 0;
+  const exclusionSet = useMemo(() => {
+    const set = new Set();
+    if (sourceFolder) set.add(sourceFolder);
+    (selectedProjectSummaries || []).forEach(info => {
+      if (info?.folder) set.add(info.folder);
+    });
+    return set;
+  }, [sourceFolder, selectedProjectSummaries]);
 
-  const canCreate = creatingNew && !creating && (newProjectName?.trim().length > 0);
+  const normalizedQuery = query.trim().toLowerCase();
 
-  const doCreateProject = async () => {
-    if (!canCreate) return;
+  const availableProjects = useMemo(() => {
+    const pool = Array.isArray(projects) ? projects.filter(p => !exclusionSet.has(p.folder)) : [];
+    if (!normalizedQuery) {
+      return pool.slice(0, 20);
+    }
+    return pool
+      .filter(project => {
+        const name = (project.name || '').toLowerCase();
+        const folder = (project.folder || '').toLowerCase();
+        return name.includes(normalizedQuery) || folder.includes(normalizedQuery);
+      })
+      .slice(0, 20);
+  }, [projects, exclusionSet, normalizedQuery]);
+
+  const exactMatch = useMemo(() => {
+    if (!normalizedQuery) return null;
+    return (Array.isArray(projects) ? projects : []).find(project => {
+      if (exclusionSet.has(project.folder)) return false;
+      const name = (project.name || '').toLowerCase();
+      const folder = (project.folder || '').toLowerCase();
+      return normalizedQuery === name || normalizedQuery === folder;
+    }) || null;
+  }, [projects, normalizedQuery, exclusionSet]);
+
+  const projectNameMap = useMemo(() => {
+    const map = new Map();
+    (projects || []).forEach(project => {
+      map.set(project.folder, project.name || project.folder);
+    });
+    return map;
+  }, [projects]);
+
+  const selectedProjectsLabel = useMemo(() => {
+    if (!Array.isArray(selectedProjectSummaries) || selectedProjectSummaries.length === 0) return '';
+    return selectedProjectSummaries
+      .map(({ folder, count }) => {
+        if (!folder) return null;
+        const displayName = projectNameMap.get(folder) || folder;
+        const countValue = typeof count === 'number' ? count : 0;
+        return `${displayName} (${countValue})`;
+      })
+      .filter(Boolean)
+      .join(', ');
+  }, [selectedProjectSummaries, projectNameMap]);
+
+  const hasSelection = selection != null;
+  const confirmLabel = hasSelection || exactMatch ? (loading ? 'Moving…' : 'Confirm') : (creating ? 'Creating…' : 'Create project');
+  const confirmDisabled = loading || creating || (!hasSelection && !exactMatch && !query.trim()) || ((selectedFilenames?.length || 0) === 0);
+
+  const handleSuggestionClick = (project) => {
+    setSelection(project);
+    setQuery(project.name || project.folder || '');
+  };
+
+  const handleClearSelection = () => {
+    setSelection(null);
+    setQuery('');
+  };
+
+  const performMove = async (folder) => {
+    if (!folder) return;
+    setLoading(true);
+    try {
+      await startTask(folder, { task_type: 'image_move', items: selectedFilenames });
+      toast.show({ emoji: '📦', message: `Moving ${selectedFilenames.length} photo(s) → ${folder}`, variant: 'notification' });
+      onClose && onClose({ moved: true, destFolder: folder });
+    } catch (e) {
+      toast.show({ emoji: '⚠️', message: 'Failed to start move', variant: 'error' });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleConfirm = async () => {
+    if ((selectedFilenames?.length || 0) === 0 || confirmDisabled) return;
+    if (selection) {
+      await performMove(selection.folder);
+      return;
+    }
+    if (exactMatch) {
+      setSelection(exactMatch);
+      await performMove(exactMatch.folder);
+      return;
+    }
+    const trimmed = query.trim();
+    if (!trimmed) return;
     setCreating(true);
     try {
-      const res = await createProject(newProjectName.trim());
+      const res = await createProject(trimmed);
       const proj = res && res.project;
       if (!proj || !proj.folder) throw new Error('Invalid create response');
-      // update local list and select it
       setProjects(prev => {
         const next = Array.isArray(prev) ? [...prev] : [];
         next.push({ name: proj.name, folder: proj.folder, created_at: proj.created_at, updated_at: proj.updated_at, photo_count: proj.photo_count ?? 0 });
         return next;
       });
-      setDestFolder(proj.folder);
-      setCreatingNew(false);
-      setNewProjectName('');
-      toast.show({ emoji: '🆕', message: `Project created: ${proj.name || proj.folder}`, variant: 'success' });
+      setSelection(proj);
+      setQuery(proj.name || proj.folder || '');
+      await performMove(proj.folder);
     } catch (e) {
-      toast.show({ emoji: '⚠️', message: `Failed to create project${e?.message ? `: ${e.message}` : ''}` , variant: 'error' });
+      toast.show({ emoji: '⚠️', message: `Failed to create project${e?.message ? `: ${e.message}` : ''}`, variant: 'error' });
     } finally {
       setCreating(false);
-    }
-  };
-
-  const doMove = async () => {
-    if (!canConfirm) return;
-    setLoading(true);
-    try {
-      await startTask(destFolder, { task_type: 'image_move', items: selectedFilenames });
-      toast.show({ emoji: '📦', message: `Moving ${selectedFilenames.length} photo(s) → ${destFolder}`, variant: 'notification' });
-      onClose && onClose({ moved: true, destFolder });
-    } catch (e) {
-      toast.show({ emoji: '⚠️', message: 'Failed to start move', variant: 'error' });
-    } finally {
-      setLoading(false);
     }
   };
 
@@ -85,60 +165,72 @@ export default function MovePhotosModal({
     <div className="fixed inset-0 z-[1000] flex items-center justify-center">
       <div className="absolute inset-0 bg-black/40" onClick={() => onClose && onClose({ canceled: true })} />
       <div className="relative bg-white rounded-lg shadow-xl w-full max-w-md mx-4">
-        <div className="p-5">
-          <h3 className="text-lg font-semibold text-gray-900 mb-3">Move photos</h3>
-          <p className="text-sm text-gray-700 mb-4">Select a destination project. {selectedFilenames?.length || 0} selected.</p>
-          <label className="block text-sm text-gray-700 mb-4">
-            Destination project
-            {otherProjects.length > 0 && !creatingNew && (
-              <select
-                className="mt-1 block w-full border rounded-md p-2"
-                value={destFolder}
-                onChange={(e) => setDestFolder(e.target.value)}
-              >
-                {otherProjects.map(p => (
-                  <option key={p.folder} value={p.folder}>{p.name || p.folder}</option>
-                ))}
-              </select>
-            )}
-            {(otherProjects.length === 0 || creatingNew) && (
-              <div className="mt-1">
-                <input
-                  type="text"
-                  className="block w-full border rounded-md p-2"
-                  placeholder="New project name"
-                  value={newProjectName}
-                  onChange={(e) => setNewProjectName(e.target.value)}
-                />
-                <p className="text-xs text-gray-500 mt-1">We'll create a new project and move your photos there.</p>
-              </div>
-            )}
-          </label>
+        <div className="p-5 space-y-4">
+          <div>
+            <h3 className="text-lg font-semibold text-gray-900">Move photos</h3>
+            <p className="text-sm text-gray-700">
+              Select a destination project. {selectedFilenames?.length || 0} selected
+              {selectedProjectsLabel ? ` from projects: ${selectedProjectsLabel}` : '.'}
+            </p>
+          </div>
 
-          <div className="flex items-center justify-between mb-2">
-            <button
-              type="button"
-              className="text-sm text-blue-700 hover:underline disabled:text-gray-400"
-              onClick={() => {
-                setCreatingNew(v => !v);
-                setNewProjectName('');
+          <div className="relative">
+            <input
+              type="text"
+              value={query}
+              onChange={(e) => {
+                setQuery(e.target.value);
+                setSelection(null);
               }}
+              placeholder="Type to search or create"
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
               disabled={loading || creating}
-            >
-              {creatingNew || otherProjects.length === 0 ? 'Select existing instead' : 'Create new project…'}
-            </button>
-            {creatingNew || otherProjects.length === 0 ? (
+              autoFocus
+            />
+            {selection && (
               <button
                 type="button"
-                className={`text-sm px-3 py-1 rounded-md ${canCreate ? 'bg-emerald-600 text-white hover:bg-emerald-700' : 'bg-gray-200 text-gray-500 cursor-not-allowed'}`}
-                onClick={doCreateProject}
-                disabled={!canCreate}
+                onClick={handleClearSelection}
+                className="absolute inset-y-0 right-2 flex items-center text-gray-400 hover:text-gray-600"
+                aria-label="Clear selection"
+                disabled={loading || creating}
               >
-                {creating ? 'Creating…' : 'Create'}
+                ×
               </button>
-            ) : null}
+            )}
           </div>
-          <div className="flex justify-end gap-2 mt-6">
+
+          {selection && (
+            <div className="border border-blue-200 bg-blue-50 rounded-md px-3 py-2 text-sm">
+              <div className="font-medium text-blue-800">{selection.name || selection.folder}</div>
+              <div className="text-xs text-blue-700">{selection.folder}</div>
+            </div>
+          )}
+
+          {!selection && (
+            <div className="border border-gray-200 rounded-md max-h-48 overflow-y-auto divide-y">
+              {availableProjects.length > 0 ? (
+                availableProjects.map(project => (
+                  <button
+                    type="button"
+                    key={project.folder}
+                    onClick={() => handleSuggestionClick(project)}
+                    className="w-full px-3 py-2 text-left hover:bg-gray-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+                    disabled={loading || creating}
+                  >
+                    <div className="text-sm font-medium text-gray-900">{project.name || project.folder}</div>
+                    <div className="text-xs text-gray-500">{project.folder}</div>
+                  </button>
+                ))
+              ) : (
+                <div className="px-3 py-2 text-sm text-gray-500">
+                  {query.trim().length === 0 ? 'Start typing to see suggestions.' : `No projects found. Press Confirm to create “${query.trim()}”.`}
+                </div>
+              )}
+            </div>
+          )}
+
+          <div className="flex justify-end gap-2 pt-2">
             <button
               onClick={() => onClose && onClose({ canceled: true })}
               className="px-4 py-2 rounded-md bg-gray-100 text-gray-700 hover:bg-gray-200"
@@ -147,11 +239,11 @@ export default function MovePhotosModal({
               Cancel
             </button>
             <button
-              onClick={doMove}
-              disabled={!canConfirm}
-              className={`px-4 py-2 rounded-md ${canConfirm ? 'bg-blue-600 text-white hover:bg-blue-700' : 'bg-gray-200 text-gray-500 cursor-not-allowed'}`}
+              onClick={handleConfirm}
+              disabled={confirmDisabled}
+              className={`px-4 py-2 rounded-md ${confirmDisabled ? 'bg-blue-300 text-white cursor-not-allowed' : 'bg-blue-600 text-white hover:bg-blue-700'}`}
             >
-              Move
+              {confirmLabel}
             </button>
           </div>
         </div>

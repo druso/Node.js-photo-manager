@@ -9,6 +9,11 @@ function getOrCreateTag(project_id, name) {
   return db.prepare(`SELECT * FROM tags WHERE id = ?`).get(info.lastInsertRowid);
 }
 
+function getByName(project_id, name) {
+  const db = getDb();
+  return db.prepare(`SELECT * FROM tags WHERE project_id = ? AND name = ?`).get(project_id, name);
+}
+
 function listTags(project_id) {
   const db = getDb();
   return db.prepare(`SELECT * FROM tags WHERE project_id = ? ORDER BY name ASC`).all(project_id);
@@ -25,6 +30,7 @@ function removeTag(project_id, name) {
 
 module.exports = {
   getOrCreateTag,
+  getByName,
   listTags,
   removeTag,
 };

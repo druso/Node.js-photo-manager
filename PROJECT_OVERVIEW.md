@@ -69,7 +69,8 @@ The frontend is a modern single-page application (SPA) responsible for all user 
 *   **Entry Point**: The main HTML file is `client/index.html`.
 *   **Static Assets**: Public assets like fonts or icons are stored in `client/public/`.
 *   **Key Components**: 
-    *   `App.jsx`: Main application component with routing and state management
+    *   `App.jsx`: Top-level orchestrator that wires modular hooks and layout
+    *   `hooks/`: Reusable client hooks (`useAllPhotosPagination.js`, `useProjectSse.js`, `useViewerSync.js`, `useAllPhotosUploads.js`) encapsulating pagination, SSE, viewer state, and upload routing
     *   `components/`: Reusable UI components (PhotoGrid, PhotoViewer, etc.)
     *   `api/`: API client modules for backend communication
 
@@ -144,11 +145,11 @@ Refer to `SCHEMA_DOCUMENTATION.md` for detailed table structures and relationshi
 ### User Interface
 *   **Drag & Drop Upload**: Intuitive file upload with progress tracking
 *   **Grid and Table Views**: Multiple viewing modes for photo browsing
-*   **Full-screen Viewer**: Detailed photo viewing with zoom and navigation
+*   **Full-screen Viewer**: Detailed photo viewing with zoom and navigation. Backed by `useViewerSync()` so URLs remain the source of truth for deep links in All Photos and Project contexts.
 *   **Keyboard Shortcuts**: Comprehensive keyboard navigation (see configuration)
     - Viewer behavior: planning a delete (keep none) no longer auto-advances; the viewer stays on the current image and shows a toast. When filters change the visible list, the current index is clamped to a valid photo instead of closing.
- *   **Real-time Updates**: Live job progress via Server-Sent Events
-*   **Incremental Thumbnails (SSE)**: Pending thumbnails update via item-level SSE events; no client-side probing of asset URLs
+*   **Real-time Updates**: Live job progress via Server-Sent Events
+*   **Incremental Thumbnails (SSE)**: Pending thumbnails update via item-level SSE events managed by `useProjectSse()`; no client-side probing of asset URLs
   - Client requests encode both `:folder` and `:filename` to avoid failures with spaces/special characters (see `client/src/components/Thumbnail.jsx`).
   - Resilience: the thumbnail image performs one retry with a short cache-busting param when a load error occurs. If debug is enabled, it logs load/retry/fail events to the console.
   - Dev toggle for diagnostics: `localStorage.setItem('debugThumbs','1')` (or set `window.__DEBUG_THUMBS = true`) and reload to see `[thumb]` logs in DevTools.
@@ -159,6 +160,9 @@ Refer to `SCHEMA_DOCUMENTATION.md` for detailed table structures and relationshi
 *   **Layout Stability**: Thumbnail cells use constant border thickness; selection changes only color/ring, avoiding micro layout shifts that can nudge scroll.
  *   **Grid Lazy-Load Reset Policy**: The grid’s visible window only resets when changing projects (or lazy threshold), not on incremental data updates.
  *   **Scroll/Viewer Preservation**: Window/main scroll and open viewer are preserved across background refreshes and fallback refetches.
+ *   **Active Project Sentinel**: `client/src/App.jsx` keeps an `ALL_PROJECT_SENTINEL` entry representing “All Photos.” Entering this mode clears `projectData`, resets local selection, and pauses per-project pagination while `previousProjectRef` remembers the prior folder so the UI restores it when exiting All mode.
+ *   **Upload Routing**: `useAllPhotosUploads()` tracks the active project via `registerActiveProject()` and opens `ProjectSelectionModal` whenever uploads start without a concrete target. The header `UploadButton` defers to this hook—All Photos mode always prompts for a destination, while project mode preselects the current folder but still allows quick re-targeting.
+ *   **Typeahead Project Picker**: `ProjectSelectionModal.jsx` and `MovePhotosModal.jsx` share the typeahead UX. The move modal receives `selectedProjectSummaries` from `client/src/App.jsx` so it can exclude origin folders and display per-project selection counts (e.g., “Project A (5), Project B (2)”) before launching the move task.
 *   **Filter Panel UX**: The filters panel includes bottom actions: a gray "Close" button to collapse the panel, and a blue "Reset" button that becomes enabled only when at least one filter is active. Buttons share the full width (50% each) for clear mobile ergonomics.
 *   **Filters Layout**: Within the panel, filters are organized for quicker scanning:
     - Row 0 (full width): Text search with suggestions
@@ -276,17 +280,29 @@ Scheduler (`server/services/scheduler.js`) cadence:
 
 Manual reconciliation endpoints:
 
-- `POST /api/projects/:folder/commit-changes`
-  - Moves non‑kept files to `.trash` based on `keep_jpg`/`keep_raw` flags
+- `POST /api/projects/:folder/commit-changes` (project-scoped)
+  - Moves non‑kept files to `.trash` based on `keep_jpg`/`keep_raw` flags for the specified project
+  - See implementation in `server/routes/maintenance.js`
+- `POST /api/projects/:folder/revert-changes` (project-scoped)
+  - Non‑destructive. Resets `keep_jpg := jpg_available` and `keep_raw := raw_available` for all photos in the specified project
+  - See implementation in `server/routes/maintenance.js`
+- `POST /api/photos/commit-changes` (global)
+  - Moves non‑kept files to `.trash` across multiple projects based on `keep_jpg`/`keep_raw` flags
+  - Accepts optional `{ projects: ["p1", "p2"] }` body to target specific projects; if omitted, operates on all projects with pending deletions
   - Deletes generated derivatives for JPGs moved to `.trash` (removes `.thumb/<base>.jpg` and `.preview/<base>.jpg` immediately)
-  - Updates DB availability flags accordingly
-  - Enqueues reconciliation jobs (`manifest_check`, `folder_check`, `manifest_cleaning`) as defined in the canonical jobs catalog (`JOBS_OVERVIEW.md`)
+  - Updates DB availability flags accordingly and enqueues reconciliation jobs per project
   - Emits incremental SSE (`item_removed`, `manifest_changed` with `removed_filenames`) for UI reconciliation
-  - See implementation in `server/routes/maintenance.js`
-- `POST /api/projects/:folder/revert-changes`
-  - Non‑destructive. Resets `keep_jpg := jpg_available` and `keep_raw := raw_available` for all photos in the project.
-  - Clears any pending destructive actions without moving files.
-  - See implementation in `server/routes/maintenance.js`
+  - See implementation in `server/routes/photosActions.js`
+- `POST /api/photos/revert-changes` (global)
+  - Non‑destructive. Resets `keep_jpg := jpg_available` and `keep_raw := raw_available` across multiple projects
+  - Accepts optional `{ projects: ["p1", "p2"] }` body to target specific projects; if omitted, operates on all projects with keep mismatches
+  - Clears any pending destructive actions without moving files
+  - See implementation in `server/routes/photosActions.js`
+- `GET /api/photos/pending-deletes` (global summary)
+  - Returns aggregated pending deletion counts across all projects: `{ jpg, raw, total, byProject: ["p1", "p2"] }`
+  - Supports same filtering as `/api/photos` (date range, file type, orientation) but ignores `keep_type` filter
+  - Used by All Photos mode to show commit/revert toolbar even when viewing filtered results
+  - See implementation in `server/routes/photosActions.js`
 
 Client behavior after reconciliation endpoints:
 
@@ -476,8 +492,11 @@ Response shape:
 *   **Tags**: `PUT /api/projects/:folder/tags` - Batch tag updates
 *   **Keep**: `PUT /api/projects/:folder/keep` - RAW/JPG keep decisions (intent)
 *   **Reconcile**:
-    * `POST /api/projects/:folder/commit-changes` - Apply current intent by moving non‑kept files to `.trash`
-    * `POST /api/projects/:folder/revert-changes` - Reset intent to current availability (non‑destructive)
+    * `POST /api/projects/:folder/commit-changes` - Apply current intent by moving non‑kept files to `.trash` (project-scoped)
+    * `POST /api/projects/:folder/revert-changes` - Reset intent to current availability (project-scoped, non‑destructive)
+    * `POST /api/photos/commit-changes` - Apply current intent across multiple projects (global)
+    * `POST /api/photos/revert-changes` - Reset intent to current availability across multiple projects (global, non‑destructive)
+    * `GET /api/photos/pending-deletes` - Get aggregated pending deletion counts across all projects
 *   **Config**: `GET/POST /api/config`, `POST /api/config/restore` - Configuration management
 
 #### Configuration lifecycle (merge behavior)
@@ -500,17 +519,19 @@ Response shape:
 ### All Photos (cross-project)
 
 *   `GET /api/photos` — Keyset-paginated list across all non-archived projects
-    - Query: `?limit&cursor&date_from&date_to&file_type&keep_type&orientation`
+    - Query: `?limit&cursor&date_from&date_to&file_type&keep_type&orientation&tags&include=tags`
       - `limit`: default 200, max 300
       - `file_type`: `any|jpg_only|raw_only|both`
       - `keep_type`: `any|any_kept|jpg_only|raw_jpg|none`
       - `orientation`: `any|vertical|horizontal`
+      - `tags`: comma-separated list of tags to filter by (e.g., `portrait,-rejected` includes photos with 'portrait' tag and excludes those with 'rejected' tag)
+      - `include=tags`: optionally include tag names for each photo
     - Returns: `{ items, total, unfiltered_total, next_cursor, prev_cursor, limit, date_from, date_to }`
     - Headers: `Cache-Control: no-store`
 
 *   `GET /api/photos/locate-page` — Locate and return the page that contains a specific photo
     - Required: `project_folder` and one of `filename` (full, with extension) or `name` (basename without extension)
-    - Optional: `limit` (1–300, default 100), `date_from`, `date_to`, `file_type`, `keep_type`, `orientation`
+    - Optional: `limit` (1–300, default 100), `date_from`, `date_to`, `file_type`, `keep_type`, `orientation`, `tags`, `include=tags`
     - Returns: `{ items, position, page_index, idx_in_items, next_cursor, prev_cursor, target, limit, date_from?, date_to? }`
     - Behavior:
       - Resolves the target within the filtered global set, ordered by `taken_at DESC, id DESC`
@@ -523,6 +544,37 @@ Response shape:
       - `409` ambiguous basename when `name` matches multiple files (use `filename` to disambiguate)
       - `500` server error
     - Headers: `Cache-Control: no-store`; rate-limited at 60 req/min per IP
+
+### Image-scoped Endpoints (Universal)
+
+These endpoints operate on photos by their unique `photo_id` regardless of which project they belong to, enabling cross-project operations:
+
+*   `POST /api/photos/tags/add` — Add tags to photos
+    - Body: `{ items: [{ photo_id: number, tags: string[] }], dry_run?: boolean }`
+    - Returns: `{ updated: number, errors?: Array<{ photo_id, error }>, dry_run?: { updated: number, per_item?: any[] } }`
+    - Behavior: Creates missing tags in each photo's project context and associates them with the photo
+
+*   `POST /api/photos/tags/remove` — Remove tags from photos
+    - Body: Same shape as add endpoint
+    - Returns: Same shape as add endpoint
+    - Behavior: Removes tag associations without deleting the tags themselves
+
+*   `POST /api/photos/keep` — Update keep flags for photos
+    - Body: `{ items: [{ photo_id: number, keep_jpg?: boolean, keep_raw?: boolean }], dry_run?: boolean }`
+    - Returns: `{ updated: number, errors?: [...], dry_run?: {...} }`
+    - Behavior: Updates keep flags and emits SSE `type: "item"` events with updated values
+
+*   `POST /api/photos/process` — Process derivatives for photos
+    - Body: `{ items: [{ photo_id: number }], dry_run?: boolean, force?: boolean }`
+    - Returns: `{ message: 'Processing queued', job_count: number, job_ids: string[], errors?: [...] }`
+    - Behavior: Groups photos by project and enqueues `generate_derivatives` jobs
+    - Status: 202 Accepted
+
+*   `POST /api/photos/move` — Move photos to a different project
+    - Body: `{ items: [{ photo_id: number }], dest_folder: string, dry_run?: boolean }`
+    - Returns: `{ message: 'Move queued', job_count: number, job_ids: string[], destination_project: {...}, errors?: [...] }`
+    - Behavior: Groups photos by source project and enqueues `image_move` jobs
+    - Status: 202 Accepted
 
 #### Deep Link Stability
 

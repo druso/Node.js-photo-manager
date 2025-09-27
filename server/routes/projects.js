@@ -8,6 +8,7 @@ const router = express.Router();
 // DB repositories
 const projectsRepo = require('../services/repositories/projectsRepo');
 const photosRepo = require('../services/repositories/photosRepo');
+const photoTagsRepo = require('../services/repositories/photoTagsRepo');
 const jobsRepo = require('../services/repositories/jobsRepo');
 const tasksOrchestrator = require('../services/tasksOrchestrator');
 const { isCanonicalProjectFolder } = require('../utils/projects');
@@ -187,6 +188,7 @@ router.get('/:folder/photos/locate-page', apiRateLimit, async (req, res) => {
 
     const q = req.query || {};
     const { filename, name, limit, date_from, date_to, file_type, keep_type, orientation } = q;
+    const tags = typeof q.tags === 'string' && q.tags.length ? q.tags : null; // comma-separated list of tags, with optional - prefix for exclusion
 
     if (!filename && !name) {
       return res.status(400).json({ error: 'filename or name is required' });
@@ -202,6 +204,7 @@ router.get('/:folder/photos/locate-page', apiRateLimit, async (req, res) => {
       file_type: file_type || undefined,
       keep_type: keep_type || undefined,
       orientation: orientation || undefined,
+      tags: tags || undefined,
     });
 
     const items = (result.items || []).map(r => ({
@@ -282,6 +285,8 @@ router.get('/:folder/photos', async (req, res) => {
     const file_type = q.file_type || null;
     const keep_type = q.keep_type || null;
     const orientation = q.orientation || null;
+    const includeTags = q.include === 'tags';
+    const tags = typeof q.tags === 'string' && q.tags.length ? q.tags : null; // comma-separated list of tags, with optional - prefix for exclusion
 
     const page = photosRepo.listProjectFiltered({ 
       project_id: project.id, 
@@ -292,7 +297,8 @@ router.get('/:folder/photos', async (req, res) => {
       date_to,
       file_type,
       keep_type,
-      orientation
+      orientation,
+      tags
     });
 
     const items = (page.items || []).map(r => ({
@@ -314,6 +320,25 @@ router.get('/:folder/photos', async (req, res) => {
       orientation: r.orientation ?? undefined,
       metadata: r.meta_json ? JSON.parse(r.meta_json) : undefined,
     }));
+    
+    // Optionally include tags when requested
+    if (includeTags && items.length > 0) {
+      try {
+        // Fetch tags for all photos in the page in a single efficient query
+        const photoIds = items.map(item => item.id);
+        const tagsMap = photoTagsRepo.listTagsForPhotos(photoIds);
+        
+        // Add tags to each item
+        items.forEach(item => {
+          item.tags = tagsMap[item.id] || [];
+        });
+        
+        log.debug('project_photos_tags_included', { count: photoIds.length, project_id: project.id });
+      } catch (tagErr) {
+        log.warn('project_photos_tags_fetch_failed', { error: tagErr?.message, project_id: project.id });
+        // Continue without tags rather than failing the whole request
+      }
+    }
 
     res.json({ 
       items, 

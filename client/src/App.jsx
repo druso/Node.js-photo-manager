@@ -1,18 +1,26 @@
 import React, { useEffect, useMemo, useRef, useState, useCallback, useLayoutEffect } from 'react';
 import { listProjects, getProject, createProject } from './api/projectsApi';
-import { listProjectPhotos, locateProjectPhotosPage } from './api/photosApi';
-import { listAllPhotos, locateAllPhotosPage } from './api/allPhotosApi';
-import PagedWindowManager from './utils/pagedWindowManager';
+import { locateProjectPhotosPage } from './api/photosApi';
+import { listAllPendingDeletes } from './api/allPhotosApi';
 import ProjectSelector from './components/ProjectSelector';
 import PhotoDisplay from './components/PhotoDisplay';
 import OperationsMenu from './components/OperationsMenu';
 // OptionsMenu removed: hamburger opens unified panel directly
 import SettingsProcessesModal from './components/SettingsProcessesModal';
-import { openJobStream, fetchTaskDefinitions, listJobs } from './api/jobsApi';
+import { fetchTaskDefinitions } from './api/jobsApi';
 import PhotoViewer from './components/PhotoViewer';
 import ErrorBoundary from './components/ErrorBoundary';
 // Settings rendered via SettingsProcessesModal
 import UniversalFilter from './components/UniversalFilter';
+import SelectionToolbar from './components/SelectionToolbar';
+import AllPhotosControls from './components/AllPhotosControls';
+import ProjectViewControls from './components/ProjectViewControls';
+import AllPhotosPane from './components/AllPhotosPane';
+import useAllPhotosViewer from './hooks/useAllPhotosViewer';
+import useAllPhotosSelection from './hooks/useAllPhotosSelection';
+import useAllPhotosUploads from './hooks/useAllPhotosUploads';
+import useProjectSse from './hooks/useProjectSse';
+import useViewerSync from './hooks/useViewerSync';
 import { UploadProvider } from './upload/UploadContext';
 import { useUpload } from './upload/UploadContext';
 import UploadConfirmModal from './components/UploadConfirmModal';
@@ -24,20 +32,9 @@ import MovePhotosModal from './components/MovePhotosModal';
 import ProjectSelectionModal from './components/ProjectSelectionModal';
 import UploadHandler from './components/UploadHandler';
 import { getSessionState, setSessionWindowY, setSessionMainY, getLastProject, setLastProject } from './utils/storage';
+import useAllPhotosPagination, { stripKnownExt, useProjectPagination } from './hooks/useAllPhotosPagination';
 
-// Normalize filenames: strip known photo extensions for tolerant comparisons
-function stripKnownExt(name) {
-  try {
-    const s = String(name || '');
-    const m = s.match(/\.[A-Za-z0-9]+$/);
-    if (!m) return s;
-    const ext = m[0].toLowerCase();
-    const known = new Set(['.jpg', '.jpeg', '.raw', '.arw', '.cr2', '.nef', '.dng']);
-    return known.has(ext) ? s.slice(0, -ext.length) : s;
-  } catch {
-    return String(name || '');
-  }
-}
+const ALL_PROJECT_SENTINEL = Object.freeze({ folder: '__all__', name: 'All Photos' });
 
 function App() {
   const [projects, setProjects] = useState([]);
@@ -72,43 +69,71 @@ function App() {
   const [taskDefs, setTaskDefs] = useState(null);
   const notifiedTasksRef = useRef(new Set());
 
-  // Backend pagination state for grid view
-  const [pagedPhotos, setPagedPhotos] = useState([]);
-  const [pagedTotal, setPagedTotal] = useState(0); // Filtered total count from backend
-  const [pagedUnfilteredTotal, setPagedUnfilteredTotal] = useState(0); // Unfiltered total count from backend
-  const [nextCursor, setNextCursor] = useState(null);
-  const [loadingMore, setLoadingMore] = useState(false);
-  const [projectHasPrev, setProjectHasPrev] = useState(false);
-  const projectWindowRef = useRef(null);
-  // Anchor index for VirtualizedPhotoGrid to center a target row (deep-link/open)
-  const [gridAnchorIndex, setGridAnchorIndex] = useState(null);
-
-  // All Photos mode state
   const [isAllMode, setIsAllMode] = useState(false);
-  const [allPhotos, setAllPhotos] = useState([]);
-  const [allTotal, setAllTotal] = useState(0); // Filtered total count from backend
-  const [allUnfilteredTotal, setAllUnfilteredTotal] = useState(0); // Unfiltered total count from backend
-  const [allNextCursor, setAllNextCursor] = useState(null);
-  const [allHasPrev, setAllHasPrev] = useState(false);
-  const [allLoadingMore, setAllLoadingMore] = useState(false);
-  // Anchor index for All Photos Virtualized grid
-  const [allGridAnchorIndex, setAllGridAnchorIndex] = useState(null);
-  // Paged window manager for All Photos (evicts old pages automatically)
-  const allWindowRef = useRef(null);
-  // Guards for All Photos pagination
-  const allSeenKeysRef = useRef(new Set()); // track project_folder::filename across pages
-  const allLastCursorRef = useRef(null); // last cursor we requested
-  const allSeenCursorsRef = useRef(new Set()); // guard against repeating the same cursor
-  const allLoadingLockRef = useRef(false); // synchronous reentrancy guard
-  const allDeepLinkRef = useRef(null); // { folder, filename, attempted: false }
-  const pendingOpenRef = useRef(null); // { folder, filename } when navigating from All mode
-  // Guard to ensure we only attempt the locate-page API once per deep-link navigation
-  const allLocateTriedRef = useRef(false);
+  const previousProjectRef = useRef(null);
+
+  const {
+    photos: pagedPhotos,
+    total: pagedTotal,
+    unfilteredTotal: pagedUnfilteredTotal,
+    nextCursor,
+    hasPrev: projectHasPrev,
+    loadingMore,
+    gridAnchorIndex,
+    setGridAnchorIndex,
+    loadInitial: loadProjectInitial,
+    loadMore,
+    loadPrev,
+    mutatePhotos: mutatePagedPhotos,
+    applyExternalPage: applyProjectPage,
+    resetState: resetProjectPagination,
+  } = useProjectPagination({
+    activeFilters,
+    projectFolder: selectedProject?.folder,
+    sortKey,
+    sortDir,
+    isEnabled: !isAllMode && !!selectedProject?.folder,
+  });
+  const {
+    selectedKeys: allSelectedKeys,
+    replaceSelection: replaceAllSelection,
+    clearSelection: clearAllSelection,
+    toggleSelection: toggleAllSelection,
+    selectAllFromPhotos: selectAllAllPhotos,
+  } = useAllPhotosSelection();
+  const suppressUrlRef = useRef(null);
+  const pendingOpenRef = useRef(null);
   const projectLocateTriedRef = useRef(false);
-  // Suppress URL updates until viewer stabilizes on the deep-linked target
-  const suppressUrlRef = useRef(null); // { expectName: lowercased filename/basename }
-  // Selection specific to All Photos mode (use composite key project_folder::filename)
-  const [allSelectedPhotos, setAllSelectedPhotos] = useState(new Set());
+  const pendingSelectProjectRef = useRef(null);
+
+  const {
+    photos: allPhotos,
+    total: allTotal,
+    unfilteredTotal: allUnfilteredTotal,
+    nextCursor: allNextCursor,
+    hasPrev: allHasPrev,
+    loadingMore: allLoadingMore,
+    gridAnchorIndex: allGridAnchorIndex,
+    loadInitial: loadAllInitial,
+    loadMore: loadAllMore,
+    loadPrev: loadAllPrev,
+    setGridAnchorIndex: setAllGridAnchorIndex,
+    setDeepLinkTarget: setAllDeepLink,
+    mutatePhotos: mutateAllPhotos,
+    deepLinkRef: allDeepLinkRef,
+  } = useAllPhotosPagination({
+    activeFilters,
+    isEnabled: isAllMode,
+    onResolveDeepLink: ({ index, items }) => {
+      setViewerList(items);
+      setViewerState({ isOpen: true, startIndex: index, fromAll: true });
+      setAllGridAnchorIndex(index);
+      suppressUrlRef.current = { disabled: true };
+      setTimeout(() => {
+        suppressUrlRef.current = null;
+      }, 100);
+    },
+  });
 
   // Commit and revert flows
   const [showCommitModal, setShowCommitModal] = useState(false);
@@ -130,365 +155,83 @@ function App() {
   const [showMoveModal, setShowMoveModal] = useState(false);
   // All Photos mode: Move modal state
   const [showAllMoveModal, setShowAllMoveModal] = useState(false);
-  // Project selection for uploads from All view
-  const [showProjectSelection, setShowProjectSelection] = useState(false);
-  const [pendingUploadFiles, setPendingUploadFiles] = useState(null);
+
+  const {
+    pendingUpload,
+    showProjectSelection,
+    initialProject,
+    handleFilesDroppedInAllView,
+    handleProjectSelection: handleUploadProjectSelection,
+    handleProjectSelectionCancel,
+    clearPendingUpload,
+    openProjectSelection,
+    registerActiveProject,
+  } = useAllPhotosUploads({
+    onProjectChosen: (project, files) => {
+      if (!project?.folder) return null;
+      handleProjectSelect(project);
+      setIsAllMode(false);
+      return { files, targetProject: project };
+    },
+  });
+
+  useEffect(() => {
+    if (isAllMode) {
+      if (selectedProject && selectedProject.folder !== ALL_PROJECT_SENTINEL.folder) {
+        previousProjectRef.current = selectedProject;
+      }
+      setSelectedProject(prev => (prev && prev.folder === ALL_PROJECT_SENTINEL.folder) ? prev : ALL_PROJECT_SENTINEL);
+      setProjectData(null);
+      setSelectedPhotos(new Set());
+      registerActiveProject(null);
+      clearAllSelection();
+      pendingSelectProjectRef.current = null;
+    } else {
+      if (!selectedProject || selectedProject.folder === ALL_PROJECT_SENTINEL.folder) {
+        const fallback = previousProjectRef.current
+          || projects.find(p => p.folder === getLastProject())
+          || projects[0]
+          || null;
+        if (fallback && fallback.folder !== ALL_PROJECT_SENTINEL.folder) {
+          handleProjectSelect(fallback);
+        } else {
+          setSelectedProject(null);
+          setProjectData(null);
+        }
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAllMode, projects]);
 
   const handleCommitChanges = () => {
-    if (!selectedProject) return;
+    // In All Photos mode we still allow commit using the selected project context, but the modal is scoped to the active dataset.
+    if (!isAllMode && !selectedProject) return;
     // Save current focus to restore later
     try { commitOpenerElRef.current = document.activeElement; } catch {}
     setShowCommitModal(true);
   };
 
   // All Photos pagination
-  const loadAllFirstPage = useCallback(async () => {
-    if (!isAllMode) return;
-    try {
-      // Initialize manager (or reset) with current filters
-      const range = activeFilters?.dateRange || {};
-      const extra = {
-        date_from: range.start || undefined,
-        date_to: range.end || undefined,
-        file_type: activeFilters?.fileType && activeFilters.fileType !== 'any' ? activeFilters.fileType : undefined,
-        keep_type: activeFilters?.keepType && activeFilters.keepType !== 'any' ? activeFilters.keepType : undefined,
-        orientation: activeFilters?.orientation && activeFilters.orientation !== 'any' ? activeFilters.orientation : undefined,
-      };
-      if (!allWindowRef.current) {
-        allWindowRef.current = new PagedWindowManager({
-          limit: 100,
-          maxPages: 4, // Increased from 2 to prevent eviction issues with small final pages
-          keyOf: (it) => `${it.project_folder}::${it.filename}`,
-          fetchPage: async ({ cursor, before_cursor, limit, extra }) => {
-            const params = { limit, ...extra };
-            if (cursor) params.cursor = cursor;
-            if (before_cursor) params.before_cursor = before_cursor;
-            const res = await listAllPhotos(params);
-            return { items: res.items || [], nextCursor: res.next_cursor ?? null, prevCursor: res.prev_cursor ?? null, total: res.total, unfiltered_total: res.unfiltered_total };
-          },
-        });
-      }
-      const page = await allWindowRef.current.loadInitial(extra);
-      const snap = allWindowRef.current.snapshot();
-      // Reset guards based on manager contents
-      allSeenKeysRef.current = new Set();
-      allLastCursorRef.current = null;
-      allSeenCursorsRef.current = new Set();
-      for (const it of page.items) allSeenKeysRef.current.add(`${it.project_folder}::${it.filename}`);
-      setAllPhotos(snap.pages.flatMap(p => p.items));
-      setAllTotal(Number.isFinite(page?.total) ? Number(page.total) : snap.pages.flatMap(p => p.items).length);
-      setAllUnfilteredTotal(Number.isFinite(page?.unfiltered_total) ? Number(page.unfiltered_total) : Number(page?.total) || snap.pages.flatMap(p => p.items).length);
-      setAllNextCursor(snap.tailNextCursor);
-      setAllHasPrev(!!snap.headPrevCursor);
-    } catch (e) {
-      // Failed to load all photos first page
-      setAllPhotos([]);
-      setAllNextCursor(null);
-      setAllHasPrev(false);
-    }
-  }, [isAllMode, activeFilters?.dateRange, activeFilters?.fileType, activeFilters?.keepType, activeFilters?.orientation]);
 
-  const loadAllMore = useCallback(async () => {
-    if (!isAllMode || !allNextCursor || allLoadingMore) return;
-    if (allLoadingLockRef.current) return; // prevent concurrent calls within same tick
-    allLoadingLockRef.current = true;
-    setAllLoadingMore(true);
-    try {
-      const range = activeFilters?.dateRange || {};
-      const extra = {
-        date_from: range.start || undefined,
-        date_to: range.end || undefined,
-        file_type: activeFilters?.fileType,
-        keep_type: activeFilters?.keepType,
-        orientation: activeFilters?.orientation,
-      };
-      const mgr = allWindowRef.current;
-      if (!mgr) return;
-      const currentCursor = allNextCursor;
-      allLastCursorRef.current = currentCursor;
-      if (allSeenCursorsRef.current.has(currentCursor)) return; // avoid loops
-      allSeenCursorsRef.current.add(currentCursor);
-      const page = await mgr.loadNext(extra);
-      const snap = mgr.snapshot();
-      // Update seen keys only for the newly added page
-      if (page && Array.isArray(page.items)) {
-        for (const it of page.items) allSeenKeysRef.current.add(`${it.project_folder}::${it.filename}`);
-      }
-      setAllPhotos(snap.pages.flatMap(p => p.items));
-      setAllTotal(Number.isFinite(page?.total) ? Number(page.total) : allTotal);
-      setAllUnfilteredTotal(Number.isFinite(page?.unfiltered_total) ? Number(page.unfiltered_total) : allUnfilteredTotal);
-      setAllNextCursor(snap.tailNextCursor);
-      setAllHasPrev(!!snap.headPrevCursor);
-    } catch (err) {
-      // All Photos loadAllMore error
-      setAllPhotos([]);
-      setAllNextCursor(null);
-    } finally {
-      setAllLoadingMore(false);
-      allLoadingLockRef.current = false;
-    }
-  }, [isAllMode, allNextCursor, allLoadingMore, activeFilters?.dateRange, activeFilters?.fileType, activeFilters?.keepType, activeFilters?.orientation]);
-
-  // Reload All Photos when toggled on or when filters change (date range, file/keep/orientation)
-  useEffect(() => {
-    if (!isAllMode) {
-      // Clear state when leaving All mode
-      setAllPhotos([]);
-      setAllTotal(0);
-      setAllUnfilteredTotal(0);
-      setAllNextCursor(null);
-      setAllHasPrev(false);
-      allWindowRef.current = null; // drop window manager to release memory
-      allSeenKeysRef.current = new Set();
-      allSeenCursorsRef.current = new Set();
-      allLastCursorRef.current = null;
-      return;
-    }
-    try { console.debug('[all-photos] filters changed, reloading:', { dateRange: activeFilters?.dateRange, fileType: activeFilters?.fileType, keepType: activeFilters?.keepType, orientation: activeFilters?.orientation }); } catch {}
-    const id = setTimeout(() => { loadAllFirstPage(); }, 0);
-    return () => clearTimeout(id);
-  }, [isAllMode, activeFilters?.dateRange?.start, activeFilters?.dateRange?.end, activeFilters?.fileType, activeFilters?.keepType, activeFilters?.orientation, loadAllFirstPage]);
-
-  // Upward pagination for All Photos (to be hooked into grid when user scrolls near top)
-  const loadAllPrev = useCallback(async () => {
-    if (!isAllMode || allLoadingMore) return;
-    const mgr = allWindowRef.current;
-    if (!mgr) return;
-    const snapBefore = mgr.snapshot();
-    if (!snapBefore.headPrevCursor) return; // nothing to load upward
-    setAllLoadingMore(true);
-    try {
-      const range = activeFilters?.dateRange || {};
-      const extra = {
-        date_from: range.start || undefined,
-        date_to: range.end || undefined,
-        file_type: activeFilters?.fileType,
-        keep_type: activeFilters?.keepType,
-        orientation: activeFilters?.orientation,
-      };
-      const page = await mgr.loadPrev(extra);
-      const snap = mgr.snapshot();
-      if (page && Array.isArray(page.items)) {
-        for (const it of page.items) allSeenKeysRef.current.add(`${it.project_folder}::${it.filename}`);
-      }
-      setAllPhotos(snap.pages.flatMap(p => p.items));
-      setAllTotal(Number.isFinite(page?.total) ? Number(page.total) : allTotal);
-      setAllUnfilteredTotal(Number.isFinite(page?.unfiltered_total) ? Number(page.unfiltered_total) : allUnfilteredTotal);
-      setAllNextCursor(snap.tailNextCursor);
-      setAllHasPrev(!!snap.headPrevCursor);
-      
-      // CRITICAL FIX: Clear seen cursors after backward navigation
-      // This allows forward navigation to work with previously seen cursors
-      allSeenCursorsRef.current.clear();
-    } finally {
-      setAllLoadingMore(false);
-    }
-  }, [isAllMode, allLoadingMore, activeFilters?.dateRange, activeFilters?.fileType, activeFilters?.keepType, activeFilters?.orientation]);
-
-  // When All Photos load or paginate, resolve deep-link target if present.
-  // First, try the efficient locate-page endpoint once; on failure, fall back to sequential paging.
-  useEffect(() => {
-    if (!isAllMode) return;
-    if (!allPhotos.length) return;
-    const target = allDeepLinkRef.current;
-    if (!target) return;
-
-    const targetLower = String(target.filename || '').toLowerCase();
-    try {
-      console.debug('[deep-link] detected', { folder: target.folder, raw: target.filename, targetLower });
-    } catch {}
-    const isTarget = (p) => {
-      if (!p || p.project_folder !== target.folder) return false;
-      const fn = (p.filename || '').toLowerCase();
-      if (fn === targetLower) return true;
-      const base = (p.basename ? String(p.basename) : String(p.filename || ''))
-        .toLowerCase()
-        .replace(/\.[^/.]+$/, '');
-      return base === targetLower;
-    };
-
-    // If the current list already contains the target, open the viewer immediately.
-    const idx = allPhotos.findIndex(isTarget);
-    if (idx >= 0) {
-      const targetPhoto = allPhotos[idx];
-      try { console.debug('[deep-link] target found in current list', { idx, targetPhoto: targetPhoto.filename }); } catch {}
-      
-      // Disable URL updates during deep link resolution
-      suppressUrlRef.current = { disabled: true };
-      
-      setViewerList(allPhotos.slice());
-      setViewerState({ isOpen: true, startIndex: idx, fromAll: true });
-      // Center the target in the All Photos grid
-      setAllGridAnchorIndex(idx);
-      // Session viewer state removed - URL is source of truth
-      allDeepLinkRef.current = null;
-      allLocateTriedRef.current = false;
-      
-      // Mark viewer as restored to prevent session interference
-      viewerRestoredRef.current = true;
-      
-      // Re-enable URL updates after viewer stabilizes
-      setTimeout(() => {
-        suppressUrlRef.current = null;
-      }, 100);
-      return;
-    }
-
-    // If we haven't tried locate-page yet, do so now with current filters.
-    if (!allLocateTriedRef.current) {
-      allLocateTriedRef.current = true;
-      (async () => {
-        try {
-          const range = activeFilters?.dateRange || {};
-          const maybeName = stripKnownExt(target.filename || '');
-          const hasDot = /\.[A-Za-z0-9]+$/.test(String(target.filename || ''));
-          try { console.debug('[deep-link] locate request', { folder: target.folder, use: hasDot ? 'filename' : 'name', filename: hasDot ? String(target.filename) : undefined, name: !hasDot ? String(maybeName) : undefined, filters: { date_from: range.start || undefined, date_to: range.end || undefined, file_type: activeFilters?.fileType, keep_type: activeFilters?.keepType, orientation: activeFilters?.orientation } }); } catch {}
-          const res = await locateAllPhotosPage({
-            project_folder: target.folder,
-            // Prefer filename if it appears to include an extension; otherwise use basename via `name`
-            filename: hasDot ? String(target.filename) : undefined,
-            name: !hasDot ? String(maybeName) : undefined,
-            limit: 100,
-            date_from: range.start || undefined,
-            date_to: range.end || undefined,
-            file_type: activeFilters?.fileType,
-            keep_type: activeFilters?.keepType,
-            orientation: activeFilters?.orientation,
-          });
-
-          const items = Array.isArray(res.items) ? res.items : [];
-          try { console.debug('[deep-link] locate response', { count: items.length, idx_in_items: res.idx_in_items, target: res.target, first: items[0]?.filename, last: items[items.length-1]?.filename }); } catch {}
-          // Reset guards and state to align with a fresh page
-          allSeenKeysRef.current = new Set();
-          allSeenCursorsRef.current = new Set();
-          allLastCursorRef.current = null;
-          for (const it of items) {
-            const key = `${it.project_folder}::${it.filename}`;
-            allSeenKeysRef.current.add(key);
-          }
-          setAllPhotos(items);
-          setAllNextCursor(res.next_cursor ?? null);
-
-          // CRITICAL: Use the exact index returned by locate-page API
-          const startIndex = Number.isFinite(res.idx_in_items) && res.idx_in_items >= 0 ? res.idx_in_items : -1;
-          if (startIndex >= 0 && items[startIndex]) {
-            const targetPhoto = items[startIndex];
-            try { console.debug('[deep-link] open viewer at API index', { startIndex, targetPhoto: targetPhoto.filename, expected: target.filename }); } catch {}
-            
-            // Disable URL updates completely during deep link resolution
-            suppressUrlRef.current = { disabled: true };
-            
-            setViewerList(items.slice());
-            setViewerState({ isOpen: true, startIndex, fromAll: true });
-            // Center located item in All Photos grid
-            setAllGridAnchorIndex(startIndex);
-            // Session viewer state removed - URL is source of truth
-            allDeepLinkRef.current = null;
-            
-            // Mark viewer as restored to prevent session interference
-            viewerRestoredRef.current = true;
-            
-            // Re-enable URL updates after a brief delay to let viewer stabilize
-            setTimeout(() => {
-              suppressUrlRef.current = null;
-            }, 100);
-          } else {
-            // Invalid index from locate-page
-          }
-        } catch (e) {
-          // Deep-link locate failed, falling back to first page
-          // On 404/409 or any failure, seed sequential fallback by loading the first page.
-          // This ensures allNextCursor is initialized so the fallback can paginate.
-          try { await loadAllFirstPage(); } catch {}
-        }
-      })();
-      return; // wait for locate attempt before sequential paging
-    }
-
-    // Sequential fallback: keep loading more until found or exhausted
-    if (allNextCursor && !allLoadingMore) {
-      loadAllMore();
-    }
-  }, [isAllMode, allPhotos, allNextCursor, allLoadingMore, loadAllMore, loadAllFirstPage, activeFilters?.dateRange, activeFilters?.fileType, activeFilters?.keepType, activeFilters?.orientation, stripKnownExt]);
-
-  // Handle selection of a photo in All Photos mode → open viewer without switching project
-  const handleAllPhotoSelect = useCallback((photo) => {
-    if (!photo) return;
-    const idx = allPhotos.findIndex(p => p.project_folder === photo.project_folder && p.filename === photo.filename);
-    const start = idx >= 0 ? idx : 0;
-    // Snapshot current list to avoid index drifting while pagination appends
-    setViewerList(allPhotos.slice());
-    setViewerState({ isOpen: true, startIndex: start, fromAll: true });
-    // Session viewer state removed - URL is source of truth
-    // push deep link: /all/:projectFolder/:filename
-    try {
-      const range = (activeFilters?.dateRange) || {};
-      const qp = new URLSearchParams();
-      if (range.start) qp.set('date_from', range.start);
-      if (range.end) qp.set('date_to', range.end);
-      if (activeFilters?.fileType && activeFilters.fileType !== 'any') qp.set('file_type', activeFilters.fileType);
-      if (activeFilters?.keepType && activeFilters.keepType !== 'any') qp.set('keep_type', activeFilters.keepType);
-      if (activeFilters?.orientation && activeFilters.orientation !== 'any') qp.set('orientation', activeFilters.orientation);
-      const search = qp.toString();
-      const nameForUrl = (photo.basename) || (photo.filename || '').replace(/\.[^/.]+$/, '');
-      window.history.pushState({}, '', `/all/${encodeURIComponent(photo.project_folder)}/${encodeURIComponent(nameForUrl)}${search ? `?${search}` : ''}`);
-    } catch {}
-  }, [allPhotos, activeFilters?.dateRange?.start, activeFilters?.dateRange?.end]);
-
-  // From viewer in All mode: switch to the photo's project and reopen there
-  const handleOpenInProjectFromViewer = useCallback((photo) => {
-    if (!photo || !photo.project_folder) return;
-    // Set pending open, close viewer, leave All mode and select project
-    pendingOpenRef.current = { folder: photo.project_folder, filename: photo.filename };
-    setViewerState(prev => ({ ...(prev || {}), isOpen: false }));
-    setIsAllMode(false);
-    // Push hard deep link so boot/route parser will ensure opening the exact photo
-    try {
-      const range = (activeFilters?.dateRange) || {};
-      const qp = new URLSearchParams();
-      if (range.start) qp.set('date_from', range.start);
-      if (range.end) qp.set('date_to', range.end);
-      if (activeFilters?.fileType && activeFilters.fileType !== 'any') qp.set('file_type', activeFilters.fileType);
-      if (activeFilters?.keepType && activeFilters.keepType !== 'any') qp.set('keep_type', activeFilters.keepType);
-      if (activeFilters?.orientation && activeFilters.orientation !== 'any') qp.set('orientation', activeFilters.orientation);
-      const search = qp.toString();
-      const nameForUrl = (photo.basename) || (photo.filename || '').replace(/\.[^/.]+$/, '');
-      window.history.pushState({}, '', `/${encodeURIComponent(photo.project_folder)}/${encodeURIComponent(nameForUrl)}${search ? `?${search}` : ''}`);
-    } catch {}
-    const proj = projects.find(p => p.folder === photo.project_folder);
-    if (proj) handleProjectSelect(proj);
-  }, [projects, activeFilters?.dateRange, activeFilters?.fileType, activeFilters?.keepType, activeFilters?.orientation]);
+  const {
+    handleAllPhotoSelect,
+  } = useAllPhotosViewer({
+    allPhotos,
+    activeFilters,
+    setViewerList,
+    setViewerState,
+    setIsAllMode,
+    projects,
+    handleProjectSelect,
+    pendingOpenRef,
+  });
 
   // Toggle selection for All Photos mode (composite key to avoid collisions across projects)
   const handleToggleSelectionAll = useCallback((photo) => {
-    if (!photo) return;
-    const key = `${photo.project_folder}::${photo.filename}`;
-    setAllSelectedPhotos(prev => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key); else next.add(key);
-      return next;
-    });
-  }, []);
+    toggleAllSelection(photo);
+  }, [toggleAllSelection]);
 
 
-
-  // Smooth-scroll the All Photos grid to the specified photo cell by its data-key
-  const scrollAllToTarget = useCallback((folder, filename, tries = 0) => {
-    try {
-      if (!folder || !filename) return;
-      const key = `${folder}::${filename}`;
-      const sel = `[data-key="${key}"]`;
-      const el = document.querySelector(sel);
-      if (el) {
-        el.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
-        return;
-      }
-      // Retry a few times in case DOM hasn't painted yet
-      if (tries < 5) {
-        setTimeout(() => scrollAllToTarget(folder, filename, tries + 1), 60);
-      }
-    } catch {}
-  }, []);
 
   // Initialize All Photos or Project mode and deep-link viewer from URL (takes precedence over session/last project)
   useEffect(() => {
@@ -536,7 +279,7 @@ function App() {
         const folder = decodeURIComponent(m[1]);
         const filename = decodeURIComponent(m[2]);
         setIsAllMode(true);
-        allDeepLinkRef.current = { folder, filename };
+        setAllDeepLink({ folder, filename });
         return;
       }
       // match /:projectFolder or /:projectFolder/:filename (exclude /all)
@@ -573,107 +316,6 @@ function App() {
   }, [isAllMode]);
 
   // Map UI sort to API sort fields
-  const resolveApiSort = useCallback(() => {
-    const apiSort = (sortKey === 'date') ? 'date_time_original' : (sortKey === 'name' ? 'filename' : 'date_time_original');
-    const apiDir = (sortDir === 'asc') ? 'ASC' : 'DESC';
-    return { apiSort, apiDir };
-  }, [sortKey, sortDir]);
-
-  const loadFirstPage = useCallback(async (folder) => {
-    if (!folder) return;
-    const { apiSort, apiDir } = resolveApiSort();
-    try {
-      if (!projectWindowRef.current) {
-        projectWindowRef.current = new PagedWindowManager({
-          limit: 100,
-          maxPages: 4, // Increased from 2 to prevent eviction issues with small final pages
-          keyOf: (it) => `${it.project_folder || folder}::${it.filename}`,
-          fetchPage: async ({ cursor, before_cursor, limit, extra }) => {
-            const params = { limit, sort: apiSort, dir: apiDir };
-            if (cursor) params.cursor = cursor;
-            if (before_cursor) params.before_cursor = before_cursor;
-            // Add filter parameters (same as All Photos) - only send non-"any" values
-            if (activeFilters?.dateRange?.from) params.date_from = activeFilters.dateRange.from;
-            if (activeFilters?.dateRange?.to) params.date_to = activeFilters.dateRange.to;
-            if (activeFilters?.fileType && activeFilters.fileType !== 'any') params.file_type = activeFilters.fileType;
-            if (activeFilters?.keepType && activeFilters.keepType !== 'any') params.keep_type = activeFilters.keepType;
-            if (activeFilters?.orientation && activeFilters.orientation !== 'any') params.orientation = activeFilters.orientation;
-            const res = await listProjectPhotos(extra.folder, params);
-            // support both camelCase and snake_case returns
-            return { items: res.items || [], nextCursor: res.nextCursor ?? res.next_cursor ?? null, prevCursor: res.prevCursor ?? res.prev_cursor ?? null, total: res.total, unfiltered_total: res.unfiltered_total };
-          },
-        });
-      }
-      const mgr = projectWindowRef.current;
-      // Store folder in extra to use in fetcher
-      const page = await mgr.loadInitial({ folder });
-      const snap = mgr.snapshot();
-      setPagedPhotos(snap.pages.flatMap(p => p.items));
-      setPagedTotal(Number.isFinite(page?.total) ? Number(page.total) : snap.pages.flatMap(p => p.items).length);
-      setPagedUnfilteredTotal(Number.isFinite(page?.unfiltered_total) ? Number(page.unfiltered_total) : Number(page?.total) || snap.pages.flatMap(p => p.items).length);
-      setNextCursor(snap.tailNextCursor);
-      setProjectHasPrev(!!snap.headPrevCursor);
-    } catch (e) {
-      // Failed to load first page
-      setPagedPhotos([]);
-      setPagedTotal(0);
-      setNextCursor(null);
-      setProjectHasPrev(false);
-    }
-  }, [resolveApiSort]);
-
-  const loadMore = useCallback(async () => {
-    if (!selectedProject || !nextCursor || loadingMore) return;
-    setLoadingMore(true);
-    try {
-      const mgr = projectWindowRef.current;
-      if (!mgr) return;
-      const page = await mgr.loadNext({ folder: selectedProject.folder });
-      const snap = mgr.snapshot();
-      setPagedPhotos(snap.pages.flatMap(p => p.items));
-      setPagedTotal(Number.isFinite(page?.total) ? Number(page.total) : pagedTotal);
-      setPagedUnfilteredTotal(Number.isFinite(page?.unfiltered_total) ? Number(page.unfiltered_total) : pagedUnfilteredTotal);
-      setNextCursor(snap.tailNextCursor);
-      setProjectHasPrev(!!snap.headPrevCursor);
-    } finally {
-      setLoadingMore(false);
-    }
-  }, [selectedProject, nextCursor, loadingMore, pagedTotal]);
-
-  const loadPrev = useCallback(async () => {
-    if (!selectedProject || loadingMore) return;
-    const mgr = projectWindowRef.current;
-    if (!mgr) return;
-    const snapBefore = mgr.snapshot();
-    if (!snapBefore.headPrevCursor) return;
-    setLoadingMore(true);
-    try {
-      const page = await mgr.loadPrev({ folder: selectedProject.folder });
-      const snap = mgr.snapshot();
-      setPagedPhotos(snap.pages.flatMap(p => p.items));
-      setPagedTotal(Number.isFinite(page?.total) ? Number(page.total) : pagedTotal);
-      setPagedUnfilteredTotal(Number.isFinite(page?.unfiltered_total) ? Number(page.unfiltered_total) : pagedUnfilteredTotal);
-      setNextCursor(snap.tailNextCursor);
-      setProjectHasPrev(!!snap.headPrevCursor);
-    } finally {
-      setLoadingMore(false);
-    }
-  }, [selectedProject, loadingMore, pagedTotal, pagedUnfilteredTotal]);
-
-  // Reset and reload first page when project or sort changes
-  useEffect(() => {
-    if (!selectedProject) return;
-    setPagedPhotos([]);
-    setPagedTotal(0);
-    setPagedUnfilteredTotal(0);
-    setNextCursor(null);
-    setProjectHasPrev(false);
-    projectWindowRef.current = null; // drop window to free memory when project/sort changes
-    // Debounce slightly to allow projectData to settle
-    const id = setTimeout(() => { loadFirstPage(selectedProject.folder); }, 0);
-    return () => clearTimeout(id);
-  }, [selectedProject, sortKey, sortDir, loadFirstPage, activeFilters?.dateRange, activeFilters?.fileType, activeFilters?.keepType, activeFilters?.orientation]);
-
   // When target project is loaded, open the viewer at the desired photo.
   // First attempt project-scoped locate-page for precise paging + index; fall back to sequential pagination.
   useEffect(() => {
@@ -712,8 +354,14 @@ function App() {
             orientation: activeFilters?.orientation,
           });
           const items = Array.isArray(res.items) ? res.items : [];
-          setPagedPhotos(items);
-          setNextCursor(res.next_cursor ?? null);
+          applyProjectPage({
+            items,
+            nextCursor: res.next_cursor ?? null,
+            prevCursor: res.prev_cursor ?? null,
+            hasPrev: Boolean(res.prev_cursor),
+            total: res.total,
+            unfilteredTotal: res.unfiltered_total,
+          });
 
           const startIndex = Number.isFinite(res.idx_in_items) && res.idx_in_items >= 0 ? res.idx_in_items : -1;
           if (startIndex >= 0 && items[startIndex]) {
@@ -773,39 +421,16 @@ function App() {
     setCommitting(true);
     try {
       // Optimistic hide: mark pending deletions as missing immediately to avoid 404s
-      setProjectData(prev => {
-        if (!prev || !Array.isArray(prev.photos)) return prev;
-        const photos = [];
-        for (const p of prev.photos) {
-          const willRemoveJpg = !!p.jpg_available && p.keep_jpg === false;
-          const willRemoveRaw = !!p.raw_available && p.keep_raw === false;
-          if (!willRemoveJpg && !willRemoveRaw) { photos.push(p); continue; }
-          const next = { ...p };
-          if (willRemoveJpg) {
-            next.jpg_available = false;
-            next.thumbnail_status = 'missing';
-            next.preview_status = 'missing';
-          }
-          if (willRemoveRaw) {
-            next.raw_available = false;
-          }
-          // If both assets will be gone, drop from list immediately
-          if (!next.jpg_available && !next.raw_available) {
-            // skip push → remove from list
-          } else {
-            photos.push(next);
-          }
-        }
-        return { ...prev, photos };
-      });
-      // Keep paginated grid in sync with optimistic commit
-      setPagedPhotos(prev => {
-        if (!Array.isArray(prev)) return prev;
+      const applyOptimisticCommit = (list) => {
+        const base = Array.isArray(list) ? list : [];
         const result = [];
-        for (const p of prev) {
+        for (const p of base) {
           const willRemoveJpg = !!p.jpg_available && p.keep_jpg === false;
           const willRemoveRaw = !!p.raw_available && p.keep_raw === false;
-          if (!willRemoveJpg && !willRemoveRaw) { result.push(p); continue; }
+          if (!willRemoveJpg && !willRemoveRaw) {
+            result.push(p);
+            continue;
+          }
           const next = { ...p };
           if (willRemoveJpg) {
             next.jpg_available = false;
@@ -816,18 +441,40 @@ function App() {
             next.raw_available = false;
           }
           if (!next.jpg_available && !next.raw_available) {
-            // remove entirely
-          } else {
-            result.push(next);
+            continue;
           }
+          result.push(next);
         }
         return result;
+      };
+
+      setProjectData(prev => {
+        if (!prev || !Array.isArray(prev.photos)) return prev;
+        const photos = applyOptimisticCommit(prev.photos);
+        return { ...prev, photos };
       });
+      mutatePagedPhotos(prev => applyOptimisticCommit(prev));
+      mutateAllPhotos(prev => applyOptimisticCommit(prev));
 
       await toast.promise(
         (async () => {
-          const res = await fetch(`/api/projects/${encodeURIComponent(selectedProject.folder)}/commit-changes`, { method: 'POST' });
+          const targetProjects = Array.from(pendingDeleteTotals.byProject || []);
+          const endpoint = isAllMode ? '/api/photos/commit-changes' : `/api/projects/${encodeURIComponent(selectedProject.folder)}/commit-changes`;
+          const body = (isAllMode && targetProjects.length) ? { projects: targetProjects } : undefined;
+          const res = await fetch(endpoint, {
+            method: 'POST',
+            headers: body ? { 'Content-Type': 'application/json' } : undefined,
+            body: body ? JSON.stringify(body) : undefined,
+          });
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          if (isAllMode) {
+            const data = await res.json().catch(() => ({}));
+            const queued = Array.isArray(data.projects) ? data.projects.length : 0;
+            if (!queued) {
+              // If nothing queued, refetch to undo optimistic removal
+              await refreshAllPhotos();
+            }
+          }
           // No full refetch here; rely on optimistic updates + SSE reconciliation
         })(),
         {
@@ -840,8 +487,10 @@ function App() {
     } catch (e) {
       // Commit changes failed
       // Revert optimistic changes by refetching on failure
-      if (selectedProject) {
+      if (selectedProject && !isAllMode) {
         try { await fetchProjectData(selectedProject.folder); } catch {}
+      } else {
+        await refreshAllPhotos();
       }
     } finally {
       setCommitting(false);
@@ -862,13 +511,9 @@ function App() {
   // Track readiness to persist, to avoid saving defaults before load completes
   const uiPrefsReadyRef = useRef(false);
   const [uiPrefsReady, setUiPrefsReady] = useState(false);
-  // When creating a new project, remember which one to auto-select after the projects list refreshes
-  const pendingSelectProjectRef = useRef(null);
   // Toast offset for commit/revert bar
   const toast = useToast();
   const commitBarRef = useRef(null);
-  // Track whether SSE stream is connected (to reduce fallback polling)
-  const sseReadyRef = useRef(false);
 
   // Load task definitions once (client-side metadata)
   useEffect(() => {
@@ -950,19 +595,92 @@ function App() {
   }, [showCommitModal]);
 
   // Pending destructive actions: assets available but marked not to keep
-  const pendingDeletes = useMemo(() => {
+  const pendingDeletesProject = useMemo(() => {
     const photos = projectData?.photos || [];
     let jpg = 0, raw = 0;
     for (const p of photos) {
       if (p.jpg_available && p.keep_jpg === false) jpg++;
       if (p.raw_available && p.keep_raw === false) raw++;
     }
-    return { jpg, raw, total: jpg + raw };
-  }, [projectData]);
+    const total = jpg + raw;
+    const byProject = new Set();
+    if (total > 0 && selectedProject?.folder) {
+      byProject.add(selectedProject.folder);
+    }
+    return { jpg, raw, total, byProject };
+  }, [projectData, selectedProject?.folder]);
+
+  // Separate state for All Photos pending deletions (independent of filtered view)
+  const [allPendingDeletes, setAllPendingDeletes] = useState({ jpg: 0, raw: 0, total: 0, byProject: new Set() });
+
+  // Fetch pending deletions for All Photos mode (ignores keep_type filter)
+  useEffect(() => {
+    if (!isAllMode) return;
+    
+    const fetchPendingDeletes = async () => {
+      try {
+        const range = activeFilters?.dateRange || {};
+        const result = await listAllPendingDeletes({
+          date_from: range.start || undefined,
+          date_to: range.end || undefined,
+          file_type: activeFilters?.fileType,
+          orientation: activeFilters?.orientation,
+        });
+        setAllPendingDeletes({
+          jpg: result.jpg || 0,
+          raw: result.raw || 0,
+          total: result.total || 0,
+          byProject: new Set(result.byProject || []),
+        });
+      } catch (error) {
+        console.debug('Failed to fetch pending deletions:', error);
+        setAllPendingDeletes({ jpg: 0, raw: 0, total: 0, byProject: new Set() });
+      }
+    };
+
+    fetchPendingDeletes();
+  }, [isAllMode, activeFilters?.dateRange, activeFilters?.fileType, activeFilters?.orientation]);
+
+  const pendingDeletesAll = allPendingDeletes;
+
+  const pendingDeleteTotals = isAllMode ? pendingDeletesAll : pendingDeletesProject;
+  const hasPendingDeletes = pendingDeleteTotals.total > 0;
+  const pendingProjectsCount = pendingDeleteTotals.byProject ? pendingDeleteTotals.byProject.size : 0;
+
+  const refreshAllPhotos = useCallback(async () => {
+    if (!isAllMode) return;
+    try {
+      await loadAllInitial();
+      // Also refresh pending deletions count
+      const range = activeFilters?.dateRange || {};
+      const result = await listAllPendingDeletes({
+        date_from: range.start || undefined,
+        date_to: range.end || undefined,
+        file_type: activeFilters?.fileType,
+        orientation: activeFilters?.orientation,
+      });
+      setAllPendingDeletes({
+        jpg: result.jpg || 0,
+        raw: result.raw || 0,
+        total: result.total || 0,
+        byProject: new Set(result.byProject || []),
+      });
+    } catch {
+      // best effort
+    }
+  }, [isAllMode, loadAllInitial, activeFilters?.dateRange, activeFilters?.fileType, activeFilters?.orientation]);
+
+  const commitDescription = isAllMode
+    ? 'This will move files marked not to keep into each affected project\'s .trash folder.'
+    : 'This will move files marked not to keep into the project\'s .trash folder.';
+
+  const revertDescription = isAllMode
+    ? 'This will reset all keep flags to match actual file availability across affected projects.'
+    : 'This will reset all keep flags to match the actual file availability in the project.';
 
   // Reserve space for the commit/revert bottom bar so toasts don't overlap it
   useLayoutEffect(() => {
-    if (!selectedProject || !pendingDeletes || pendingDeletes.total <= 0) {
+    if (!hasPendingDeletes) {
       toast.clearOffset('commit-revert-bar');
       return;
     }
@@ -981,7 +699,7 @@ function App() {
       window.removeEventListener('resize', measure);
       toast.clearOffset('commit-revert-bar');
     };
-  }, [toast, selectedProject, pendingDeletes?.total]);
+  }, [toast, hasPendingDeletes, pendingDeleteTotals.total]);
 
   // Load UI prefs from localStorage on mount
   useEffect(() => {
@@ -1146,6 +864,7 @@ function App() {
 
   // Remember last project (configurable)
   useEffect(() => {
+    if (isAllMode) return;
     if (projects.length > 0 && !selectedProject) {
       // Prefer pending selection set by creation flow
       const pendingFolder = pendingSelectProjectRef.current;
@@ -1171,11 +890,11 @@ function App() {
       // If not remembering or not found, select the first one
       handleProjectSelect(projects[0]);
     }
-  }, [projects, selectedProject, config]);
+  }, [projects, selectedProject, config, isAllMode]);
 
   // Remember selected project (configurable)
   useEffect(() => {
-    if (selectedProject) {
+    if (selectedProject && selectedProject.folder !== ALL_PROJECT_SENTINEL.folder) {
       const remember = config?.ui?.remember_last_project !== false;
       if (remember) {
         setLastProject(selectedProject.folder);
@@ -1219,7 +938,7 @@ function App() {
       const data = await getProject(projectFolder);
       setProjectData(data);
       // Kick off initial paginated load (do not await to keep UI responsive)
-      try { loadFirstPage(projectFolder); } catch {}
+      try { resetProjectPagination(); } catch {}
     } catch (error) {
       // Error fetching project data
     } finally {
@@ -1245,16 +964,19 @@ function App() {
   // Session viewer persistence removed - URL is single source of truth
 
   // Removed premature restore: we restore after photos are available below
-
-  const handleProjectSelect = (project) => {
+  function handleProjectSelect(project) {
     // Handle null/invalid project selection (e.g., dropdown placeholder)
     if (!project || !project.folder) {
       setSelectedProject(null);
+      registerActiveProject(null);
       setProjectData(null);
       setSelectedPhotos(new Set());
       return;
     }
-    
+    if (project.folder === ALL_PROJECT_SENTINEL.folder) {
+      setIsAllMode(true);
+      return;
+    }
     // Clear session state only when switching away from an already selected project
     // Avoid clearing on initial selection after a reload (selectedProject is null then)
     const isSwitchingToDifferent = !!(selectedProject?.folder && selectedProject.folder !== project.folder);
@@ -1264,6 +986,8 @@ function App() {
       initialSavedYRef.current = null;
     }
     setSelectedProject(project);
+    previousProjectRef.current = project;
+    registerActiveProject(project);
     fetchProjectData(project.folder);
     setSelectedPhotos(new Set()); // Clear selection when switching projects
     // Sync URL to project base when not in All Photos mode, unless we are in a pending deep link open
@@ -1276,7 +1000,7 @@ function App() {
         }
       }
     } catch {}
-  };
+  }
 
   // Toggle All Photos mode and sync URL
   const toggleAllMode = useCallback(() => {
@@ -1305,182 +1029,21 @@ function App() {
     });
     // Clear selections when switching modes
     setSelectedPhotos(new Set());
-    setAllSelectedPhotos(new Set());
-  }, [selectedProject, activeFilters?.dateRange]);
+    clearAllSelection();
+  }, [selectedProject, activeFilters?.dateRange, clearAllSelection]);
 
-  // Auto-refresh and fine-grained updates via SSE
-  useEffect(() => {
-    const close = openJobStream((evt) => {
-      // Any message implies SSE is active
-      sseReadyRef.current = true;
-
-      // 0) Manifest changes: prefer incremental updates, no hard refetch
-      if (evt && evt.type === 'manifest_changed' && selectedProject && evt.project_folder === selectedProject.folder) {
-        if (Array.isArray(evt.removed_filenames) && evt.removed_filenames.length) {
-          const toRemove = new Set(evt.removed_filenames);
-          setProjectData(prev => {
-            if (!prev || !Array.isArray(prev.photos)) return prev;
-            const photos = prev.photos.filter(p => !toRemove.has(p.filename));
-            return { ...prev, photos };
-          });
-          setPagedPhotos(prev => Array.isArray(prev) ? prev.filter(p => !toRemove.has(p.filename)) : prev);
-        }
-        return;
-      }
-
-      // 1) Item-level updates without full refetch
-      if (evt && evt.type === 'item' && selectedProject && evt.project_folder === selectedProject.folder) {
-        setProjectData(prev => {
-          if (!prev || !Array.isArray(prev.photos)) return prev;
-          const target = String(evt.filename || '');
-          const targetBase = stripKnownExt(target);
-          const idx = prev.photos.findIndex(p => (p.filename === target) || (stripKnownExt(p.filename) === targetBase));
-          if (idx === -1) return prev;
-          const updated = { ...prev.photos[idx] };
-          if (evt.thumbnail_status) updated.thumbnail_status = evt.thumbnail_status;
-          if (evt.preview_status) updated.preview_status = evt.preview_status;
-          // Also reconcile keep flags if present
-          if (typeof evt.keep_jpg === 'boolean') updated.keep_jpg = evt.keep_jpg;
-          if (typeof evt.keep_raw === 'boolean') updated.keep_raw = evt.keep_raw;
-          if (evt.updated_at) updated.updated_at = evt.updated_at;
-          const photos = prev.photos.slice();
-          photos[idx] = updated;
-          return { ...prev, photos };
-        });
-        // Mirror update into paginated grid
-        setPagedPhotos(prev => {
-          if (!Array.isArray(prev)) return prev;
-          const target = String(evt.filename || '');
-          const targetBase = stripKnownExt(target);
-          const idx = prev.findIndex(p => (p.filename === target) || (stripKnownExt(p.filename) === targetBase));
-          if (idx === -1) return prev;
-          const updated = { ...prev[idx] };
-          if (evt.thumbnail_status) updated.thumbnail_status = evt.thumbnail_status;
-          if (evt.preview_status) updated.preview_status = evt.preview_status;
-          if (typeof evt.keep_jpg === 'boolean') updated.keep_jpg = evt.keep_jpg;
-          if (typeof evt.keep_raw === 'boolean') updated.keep_raw = evt.keep_raw;
-          if (evt.updated_at) updated.updated_at = evt.updated_at;
-          const next = prev.slice();
-          next[idx] = updated;
-          return next;
-        });
-        return; // handled
-      }
-
-      // 1b) Item removed: drop from list in-place (tolerant to extension differences)
-      if (evt && evt.type === 'item_removed' && selectedProject && evt.project_folder === selectedProject.folder) {
-        try { console.debug('[SSE] item_removed received', { evt, selectedFolder: selectedProject.folder }); } catch {}
-        const fname = String(evt.filename || '');
-        const base = stripKnownExt(fname);
-        setProjectData(prev => {
-          if (!prev || !Array.isArray(prev.photos)) return prev;
-          const before = prev.photos.length;
-          const photos = prev.photos.filter(p => p.filename !== fname && stripKnownExt(p.filename) !== base);
-          try { console.debug('[SSE] item_removed projectData updated', { before, after: photos.length, removed: before - photos.length, fname, base }); } catch {}
-          return { ...prev, photos };
-        });
-        setPagedPhotos(prev => {
-          if (!Array.isArray(prev)) return prev;
-          const before = prev.length;
-          const next = prev.filter(p => p.filename !== fname && stripKnownExt(p.filename) !== base);
-          try { console.debug('[SSE] item_removed pagedPhotos updated', { before, after: next.length, removed: before - next.length }); } catch {}
-          return next;
-        });
-        return; // handled
-      }
-
-      // 1c) Item moved into this project: update if exists (tolerant match), else soft refetch
-      if (evt && evt.type === 'item_moved' && selectedProject && evt.project_folder === selectedProject.folder) {
-        try { console.debug('[SSE] item_moved received', { evt, selectedFolder: selectedProject.folder }); } catch {}
-        const fname = String(evt.filename || '');
-        const base = stripKnownExt(fname);
-        // Determine presence before updating state to avoid relying on side-effects inside setState
-        const existsInProjectData = Array.isArray(projectData?.photos)
-          ? projectData.photos.findIndex(p => p.filename === fname || stripKnownExt(p.filename) === base) !== -1
-          : false;
-        const existsInPaged = Array.isArray(pagedPhotos)
-          ? pagedPhotos.findIndex(p => p.filename === fname || stripKnownExt(p.filename) === base) !== -1
-          : false;
-
-        setProjectData(prev => {
-          if (!prev || !Array.isArray(prev.photos)) return prev;
-          const idx = prev.photos.findIndex(p => p.filename === fname || stripKnownExt(p.filename) === base);
-          if (idx === -1) return prev;
-          const updated = { ...prev.photos[idx] };
-          if (evt.thumbnail_status) updated.thumbnail_status = evt.thumbnail_status;
-          if (evt.preview_status) updated.preview_status = evt.preview_status;
-          if (typeof evt.keep_jpg === 'boolean') updated.keep_jpg = evt.keep_jpg;
-          if (typeof evt.keep_raw === 'boolean') updated.keep_raw = evt.keep_raw;
-          if (evt.updated_at) updated.updated_at = evt.updated_at;
-          const photos = prev.photos.slice();
-          photos[idx] = updated;
-          try { console.debug('[SSE] item_moved projectData updatedInPlace', { idx, fname, base }); } catch {}
-          return { ...prev, photos };
-        });
-        setPagedPhotos(prev => {
-          if (!Array.isArray(prev)) return prev;
-          const idx = prev.findIndex(p => p.filename === fname || stripKnownExt(p.filename) === base);
-          if (idx === -1) return prev;
-          const updated = { ...prev[idx] };
-          if (evt.thumbnail_status) updated.thumbnail_status = evt.thumbnail_status;
-          if (evt.preview_status) updated.preview_status = evt.preview_status;
-          const next = prev.toSpliced ? prev.toSpliced(idx, 1, updated) : (() => { const n = prev.slice(); n[idx] = updated; return n; })();
-          try { console.debug('[SSE] item_moved pagedPhotos updatedInPlace', { idx }); } catch {}
-          return next;
-        });
-        // If it wasn't present in either list, it's a new arrival; do a light refetch
-        if (!existsInProjectData && !existsInPaged) {
-          try { console.debug('[SSE] item_moved not found in-place; light refetch'); fetchProjectData(selectedProject.folder); } catch {}
-        }
-        return; // handled
-      }
-
-      // 2) Task completion toasts (user-relevant tasks only)
-      // Server emits task metadata at top-level: { task_id, task_type }
-      if (evt && selectedProject && evt.task_id && evt.task_type && (evt.status === 'completed' || evt.status === 'failed')) {
-        const tid = evt.task_id;
-        const ttype = evt.task_type;
-        const meta = taskDefs?.[ttype];
-        const userRelevant = meta ? (meta.user_relevant !== false) : true;
-        if (userRelevant && !notifiedTasksRef.current.has(tid)) {
-          // Debounce-check: after a short delay, fetch jobs and see if any for this task are still running/queued
-          setTimeout(async () => {
-            try {
-              const { jobs } = await listJobs(selectedProject.folder, { limit: 100 });
-              const sameTask = (jobs || []).filter(j => j?.payload_json?.task_id === tid);
-              const anyActive = sameTask.some(j => j.status === 'running' || j.status === 'queued');
-              if (anyActive) return; // not done yet
-              const anyFailed = sameTask.some(j => j.status === 'failed');
-              const label = meta?.label || ttype;
-              if (anyFailed) {
-                toast.show({ emoji: '⚠️', message: `${label} failed`, variant: 'error' });
-              } else {
-                toast.show({ emoji: '✅', message: `${label} completed`, variant: 'success' });
-              }
-              notifiedTasksRef.current.add(tid);
-            } catch (_) {}
-          }, 400);
-        }
-      }
-
-      // 3) Do not refetch on job completion; rely on item/item_removed + manifest_changed handling
-    });
-    return () => close();
-  }, [selectedProject, taskDefs, stripKnownExt]);
-
-  // Fallback polling: while any thumbnail is pending and SSE not yet delivering, periodically refetch
-  useEffect(() => {
-    if (!selectedProject) return;
-    if (committing) return; // avoid refetch during commit
-    const photos = projectData?.photos || [];
-    const anyPending = photos.some(p => p && (p.thumbnail_status === 'pending' || !p.thumbnail_status));
-    if (!anyPending) return;
-    if (sseReadyRef.current) return; // SSE active; rely on item-level updates instead
-    const id = setInterval(() => {
-      fetchProjectData(selectedProject.folder);
-    }, 3000);
-    return () => clearInterval(id);
-  }, [selectedProject, projectData, committing]);
+  useProjectSse({
+    selectedProject,
+    projectData,
+    pagedPhotos,
+    setProjectData,
+    mutatePagedPhotos,
+    fetchProjectData,
+    toast,
+    taskDefs,
+    notifiedTasksRef,
+    committing,
+  });
 
   const handleProjectCreate = async (projectName) => {
     try {
@@ -1508,8 +1071,18 @@ function App() {
   };
 
   const handlePhotosUploaded = () => {
-    if (selectedProject) {
-      fetchProjectData(selectedProject.folder);
+    const currentFolder = selectedProject?.folder;
+    if (currentFolder && currentFolder !== ALL_PROJECT_SENTINEL.folder) {
+      const reload = fetchProjectData(currentFolder);
+      Promise.resolve(reload)
+        .catch(() => {})
+        .finally(() => {
+          if (typeof loadProjectInitial === 'function') {
+            loadProjectInitial().catch(() => {});
+          }
+        });
+    } else if (typeof loadAllInitial === 'function') {
+      loadAllInitial().catch(() => {});
     }
   };
 
@@ -1531,10 +1104,10 @@ function App() {
       });
       return { ...prev, photos };
     });
-    setPagedPhotos(prev => {
-      if (!Array.isArray(prev)) return prev;
+    mutatePagedPhotos(prev => {
+      const base = Array.isArray(prev) ? prev.slice() : [];
       const byName = new Map(updates.map(u => [u.filename, u]));
-      return prev.map(p => {
+      return base.map(p => {
         const u = byName.get(p.filename);
         return u ? { ...p, keep_jpg: u.keep_jpg, keep_raw: u.keep_raw } : p;
       });
@@ -1602,39 +1175,6 @@ function App() {
     }
   };
 
-  const handleCloseViewer = () => {
-    const wasAll = !!(isAllMode || viewerState.fromAll);
-    setViewerState(prev => ({ ...(prev || {}), isOpen: false }));
-    // pop to base path
-    try {
-      if (wasAll) {
-        const range = (activeFilters?.dateRange) || {};
-        const qp = new URLSearchParams();
-        if (range.start) qp.set('date_from', range.start);
-        if (range.end) qp.set('date_to', range.end);
-        if (activeFilters?.fileType && activeFilters.fileType !== 'any') qp.set('file_type', activeFilters.fileType);
-        if (activeFilters?.keepType && activeFilters.keepType !== 'any') qp.set('keep_type', activeFilters.keepType);
-        if (activeFilters?.orientation && activeFilters.orientation !== 'any') qp.set('orientation', activeFilters.orientation);
-        const search = qp.toString();
-        window.history.pushState({}, '', `/all${search ? `?${search}` : ''}`);
-      } else if (selectedProject?.folder) {
-        const range = (activeFilters?.dateRange) || {};
-        const qp = new URLSearchParams();
-        if (range.start) qp.set('date_from', range.start);
-        if (range.end) qp.set('date_to', range.end);
-        if (activeFilters?.fileType && activeFilters.fileType !== 'any') qp.set('file_type', activeFilters.fileType);
-        if (activeFilters?.keepType && activeFilters.keepType !== 'any') qp.set('keep_type', activeFilters.keepType);
-        if (activeFilters?.orientation && activeFilters.orientation !== 'any') qp.set('orientation', activeFilters.orientation);
-        const search = qp.toString();
-        window.history.pushState({}, '', `/${encodeURIComponent(selectedProject.folder)}${search ? `?${search}` : ''}`);
-      } else {
-        window.history.pushState({}, '', '/');
-      }
-    } catch {}
-    // Clear any snapshot list when closing the viewer
-    setViewerList(null);
-  };
-
   // Update in-memory keep flags when viewer changes them
   const handleKeepUpdated = ({ filename, keep_jpg, keep_raw }) => {
     setProjectData(prev => {
@@ -1646,44 +1186,6 @@ function App() {
       return updated;
     });
   };
-
-  // Stable callback to persist current viewer index/filename during navigation
-  const handleViewerIndexChange = useCallback((idx, photo) => {
-    // Session viewer state removed - URL is source of truth
-    // Update URL to current photo when viewer is open
-    try {
-      if (viewerState?.isOpen && photo?.filename) {
-        // While resolving an All Photos deep link, suppress URL updates to avoid premature rewrites
-        if ((isAllMode || viewerState.fromAll) && allDeepLinkRef.current) {
-          return;
-        }
-        // Block URL updates during deep link resolution
-        if (suppressUrlRef.current) {
-          try { console.debug('[deep-link] URL update blocked during resolution'); } catch {}
-          return;
-        }
-        const range = (activeFilters?.dateRange) || {};
-        const qp = new URLSearchParams();
-        if (range.start) qp.set('date_from', range.start);
-        if (range.end) qp.set('date_to', range.end);
-        if (activeFilters?.fileType && activeFilters.fileType !== 'any') qp.set('file_type', activeFilters.fileType);
-        if (activeFilters?.keepType && activeFilters.keepType !== 'any') qp.set('keep_type', activeFilters.keepType);
-        if (activeFilters?.orientation && activeFilters.orientation !== 'any') qp.set('orientation', activeFilters.orientation);
-        const search = qp.toString();
-        const nameForUrl = (photo.basename) || (photo.filename || '').replace(/\.[^/.]+$/, '');
-        if (isAllMode || viewerState.fromAll) {
-          const pf = photo.project_folder || (selectedProject?.folder || '');
-          if (pf && nameForUrl) {
-            try { console.debug('[viewer] push URL (all)', { pf, nameForUrl, filters: { start: range.start || undefined, end: range.end || undefined } }); } catch {}
-            window.history.pushState({}, '', `/all/${encodeURIComponent(pf)}/${encodeURIComponent(nameForUrl)}${search ? `?${search}` : ''}`);
-          }
-        } else if (selectedProject?.folder && nameForUrl) {
-          try { console.debug('[viewer] push URL (project)', { pf: selectedProject?.folder, nameForUrl }); } catch {}
-          window.history.pushState({}, '', `/${encodeURIComponent(selectedProject.folder)}/${encodeURIComponent(nameForUrl)}${search ? `?${search}` : ''}`);
-        }
-      }
-    } catch {}
-  }, [viewerState, selectedProject, isAllMode, activeFilters?.dateRange, activeFilters?.fileType, activeFilters?.keepType, activeFilters?.orientation]);
 
   // Sync URL query with filters when in All mode (preserve current /all path and filename if any)
   useEffect(() => {
@@ -1901,38 +1403,25 @@ function App() {
     photos: sortedPhotos
   } : null;
 
-  // Stable viewer data: always pass an array of photos to PhotoViewer
-  const viewerPhotos = useMemo(() => {
-    if (isAllMode || viewerState.fromAll) {
-      return (viewerList && viewerState.isOpen ? viewerList : allPhotos) || [];
-    }
-    const pd = viewerList ? { photos: viewerList } : (filteredProjectData || projectData);
-    return (pd && Array.isArray(pd.photos)) ? pd.photos : [];
-  }, [isAllMode, viewerState.fromAll, viewerList, viewerState.isOpen, allPhotos, filteredProjectData, projectData]);
-
-  // Force a fresh mount when switching sources to avoid any subtle reuse issues
-  const viewerKey = useMemo(() => {
-    const source = (isAllMode || viewerState.fromAll) ? 'all' : (selectedProject?.folder || 'none');
-    const start = Number.isFinite(viewerState.startIndex) ? viewerState.startIndex : -1;
-    const idPart = (() => {
-      try {
-        const p = viewerPhotos[start];
-        return p ? `${p.project_folder || source}:${p.filename}` : `idx:${start}`;
-      } catch { return `idx:${start}`; }
-    })();
-    return `${source}:${idPart}`;
-  }, [isAllMode, viewerState.fromAll, selectedProject?.folder, viewerPhotos, viewerState.startIndex]);
-
-  // Debug: log viewer open state/props to detect any transient invalid data
-  useEffect(() => {
-    if (!viewerState?.isOpen) return;
-    const fromAll = !!(isAllMode || viewerState.fromAll);
-    const start = Number.isFinite(viewerState.startIndex) ? viewerState.startIndex : -1;
-    const len = Array.isArray(viewerPhotos) ? viewerPhotos.length : -1;
-    const cur = (start >= 0 && start < len) ? viewerPhotos[start] : null;
-    // eslint-disable-next-line no-console
-    console.debug('[Viewer] open', { fromAll, start, photosLen: len, startValid: start >= 0 && start < len, current: cur ? { filename: cur.filename, project_folder: cur.project_folder } : null });
-  }, [viewerState?.isOpen, viewerState?.startIndex, isAllMode, viewerState?.fromAll, viewerPhotos]);
+  const {
+    viewerPhotos,
+    viewerKey,
+    handleCloseViewer,
+    handleViewerIndexChange,
+  } = useViewerSync({
+    isAllMode,
+    viewerState,
+    setViewerState,
+    viewerList,
+    setViewerList,
+    allPhotos,
+    filteredProjectData,
+    projectData,
+    selectedProject,
+    activeFilters,
+    allDeepLinkRef,
+    suppressUrlRef,
+  });
 
   // Session viewer restoration removed - URL is single source of truth
 
@@ -1969,7 +1458,14 @@ function App() {
     try {
       await toast.promise(
         (async () => {
-          const res = await fetch(`/api/projects/${encodeURIComponent(selectedProject.folder)}/revert-changes`, { method: 'POST' });
+          const targetProjects = Array.from(pendingDeleteTotals.byProject || []);
+          const endpoint = isAllMode ? '/api/photos/revert-changes' : `/api/projects/${encodeURIComponent(selectedProject.folder)}/revert-changes`;
+          const body = (isAllMode && targetProjects.length) ? { projects: targetProjects } : undefined;
+          const res = await fetch(endpoint, {
+            method: 'POST',
+            headers: body ? { 'Content-Type': 'application/json' } : undefined,
+            body: body ? JSON.stringify(body) : undefined,
+          });
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
           // Optimistically reflect revert: keep flags back to availability
           setProjectData(prev => {
@@ -1981,7 +1477,7 @@ function App() {
             }));
             return { ...prev, photos };
           });
-          setPagedPhotos(prev => {
+          mutatePagedPhotos(prev => {
             if (!Array.isArray(prev)) return prev;
             return prev.map(p => ({
               ...p,
@@ -1989,6 +1485,17 @@ function App() {
               keep_raw: !!p.raw_available,
             }));
           });
+          mutateAllPhotos(prev => {
+            if (!Array.isArray(prev)) return prev;
+            return prev.map(p => ({
+              ...p,
+              keep_jpg: !!p.jpg_available,
+              keep_raw: !!p.raw_available,
+            }));
+          });
+          if (isAllMode) {
+            await refreshAllPhotos();
+          }
         })(),
         {
           pending: { emoji: '↩️', message: 'Reverting…', variant: 'info' },
@@ -1999,6 +1506,9 @@ function App() {
       setShowRevertModal(false);
     } catch (e) {
       // Revert changes failed
+      if (isAllMode) {
+        await refreshAllPhotos();
+      }
     } finally {
       setReverting(false);
     }
@@ -2050,11 +1560,19 @@ function App() {
     const onChange = (e) => {
       const files = Array.from(e.target.files || []);
       if (files.length > 0) {
-        actions.startAnalyze(files);
+        if (isAllMode) {
+          openProjectSelection(files);
+        } else if (selectedProject?.folder && selectedProject.folder !== ALL_PROJECT_SENTINEL.folder) {
+          openProjectSelection(files, selectedProject);
+        } else {
+          actions.startAnalyze(files);
+        }
       }
       // reset so selecting the same files again still triggers change
       e.target.value = '';
     };
+    const isDisabled = isAllMode ? false : !selectedProject || selectedProject.folder === ALL_PROJECT_SENTINEL.folder;
+
     return (
       <>
         <input
@@ -2067,9 +1585,9 @@ function App() {
         />
         <button
           onClick={onPick}
-          disabled={disabled}
-          className={`inline-flex items-center justify-center px-3 py-2 rounded-md ${disabled ? 'bg-gray-200 text-gray-500 cursor-not-allowed' : 'bg-blue-600 text-white hover:bg-blue-700'}`}
-          title={disabled ? 'Select a project to enable uploads' : 'Upload photos'}
+          disabled={disabled || isDisabled}
+          className={`inline-flex items-center justify-center px-3 py-2 rounded-md ${(disabled || isDisabled) ? 'bg-gray-200 text-gray-500 cursor-not-allowed' : 'bg-blue-600 text-white hover:bg-blue-700'}`}
+          title={(disabled || isDisabled) ? 'Select a project to enable uploads' : 'Upload photos'}
           aria-label="Upload photos"
         >
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="h-5 w-5">
@@ -2081,7 +1599,7 @@ function App() {
   };
 
   return (
-    <UploadProvider projectFolder={selectedProject?.folder} onCompleted={handlePhotosUploaded}>
+    <UploadProvider projectFolder={!isAllMode && selectedProject?.folder ? selectedProject.folder : null} onCompleted={handlePhotosUploaded}>
     <div className="min-h-screen bg-gray-50" ref={mainRef}>
       {/* Sticky Header Container */}
       <div className="sticky top-0 z-20 bg-gray-50">
@@ -2095,7 +1613,7 @@ function App() {
               
               {/* Right Controls: Upload (+) and Options (hamburger) */}
               <div className="flex items-center space-x-2">
-                <UploadButton disabled={isAllMode || !selectedProject} />
+                <UploadButton disabled={false} />
                 {showOptionsModal ? (
                   <button
                     onClick={() => setShowOptionsModal(false)}
@@ -2235,171 +1753,53 @@ function App() {
               <div className="px-4 py-2 bg-white border-t-0">
                 <div className="flex items-center justify-between gap-3">
                   {/* Left: Selection + recap */}
-                  <div className="flex items-center gap-3">
-                    {isAllMode ? (
-                      <>
-                        <button
-                          onClick={() => {
-                            if (!allPhotos?.length) return;
-                            if (allSelectedPhotos.size === allPhotos.length) {
-                              setAllSelectedPhotos(new Set());
-                            } else {
-                              setAllSelectedPhotos(new Set(allPhotos.map(e => `${e.project_folder}::${e.filename}`)));
-                            }
-                          }}
-                          className="text-sm text-blue-600 hover:underline"
-                        >
-                          {allSelectedPhotos.size === allPhotos?.length ? 'Deselect All' : 'Select All'}
-                        </button>
-                        <span className="text-sm text-gray-600">{allSelectedPhotos.size} selected</span>
-                      </>
-                    ) : (
-                      <>
-                        <button
-                          onClick={() => {
-                            if (!filteredProjectData?.photos?.length) return;
-                            if (selectedPhotos.size === filteredProjectData.photos.length) {
-                              setSelectedPhotos(new Set());
-                            } else {
-                              setSelectedPhotos(new Set(filteredProjectData.photos.map(e => e.filename)));
-                            }
-                          }}
-                          className="text-sm text-blue-600 hover:underline"
-                        >
-                          {selectedPhotos.size === filteredProjectData?.photos?.length ? 'Deselect All' : 'Select All'}
-                        </button>
-                        <span className="text-sm text-gray-600">{selectedPhotos.size} selected</span>
-                      </>
-                    )}
-                  </div>
+                  <SelectionToolbar
+                    isAllMode={isAllMode}
+                    allPhotos={allPhotos}
+                    allSelectedKeys={allSelectedKeys}
+                    onAllSelectAll={selectAllAllPhotos}
+                    onAllClearSelection={clearAllSelection}
+                    filteredProjectPhotos={filteredProjectData?.photos}
+                    selectedPhotos={selectedPhotos}
+                    onProjectToggleSelect={setSelectedPhotos}
+                  />
 
                   {/* Right: View toggle + Operations */}
                   <div className="flex items-center gap-2">
                     {isAllMode ? (
-                      allSelectedPhotos.size === 0 ? (
-                        <div key="controls-all" className="flex items-center gap-2 transition-all duration-150 ease-out transform opacity-100 scale-100 animate-fadeInScale">
-                          <div className="flex space-x-2">
-                            {/* Gallery (grid) icon */}
-                            <button
-                              onClick={() => setViewMode('grid')}
-                              className={`px-2.5 py-1.5 rounded-md ${viewMode === 'grid' ? 'bg-blue-500 text-white' : 'bg-gray-200 text-gray-700'}`}
-                              title="Gallery view"
-                              aria-label="Gallery view"
-                            >
-                              <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-                                <path d="M3 3h6v6H3V3zm8 0h6v6H11V3zM3 11h6v6H3v-6zm8 6h6v-6H11v6z" />
-                              </svg>
-                            </button>
-                            {/* Details (table/list) icon */}
-                            <button
-                              onClick={() => setViewMode('table')}
-                              className={`px-2.5 py-1.5 rounded-md ${viewMode === 'table' ? 'bg-blue-500 text-white' : 'bg-gray-200 text-gray-700'}`}
-                              title="Details view"
-                              aria-label="Details view"
-                            >
-                              <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-                                <path d="M3 5h14v2H3V5zm0 4h14v2H3V9zm0 4h14v2H3v-2z" />
-                              </svg>
-                            </button>
-                          </div>
-                        </div>
-                      ) : (
-                        <div key="actions-all" className="transition-all duration-150 ease-out transform opacity-100 scale-100 animate-fadeInScale">
-                          <button
-                            onClick={() => setShowAllMoveModal(true)}
-                            className="inline-flex items-center px-3 py-1.5 rounded-md bg-blue-600 text-white hover:bg-blue-700"
-                            title="Move selected photos to another project"
-                          >
-                            Move to…
-                          </button>
-                        </div>
-                      )
-                    ) : (
-                      selectedPhotos.size === 0 ? (
-                      <div key="controls" className="flex items-center gap-2 transition-all duration-150 ease-out transform opacity-100 scale-100 animate-fadeInScale">
-                        <div className="flex space-x-2">
-                          {/* Gallery (grid) icon */}
-                          <button
-                            onClick={() => setViewMode('grid')}
-                            className={`px-2.5 py-1.5 rounded-md ${viewMode === 'grid' ? 'bg-blue-500 text-white' : 'bg-gray-200 text-gray-700'}`}
-                            title="Gallery view"
-                            aria-label="Gallery view"
-                          >
-                            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-                              <path d="M3 3h6v6H3V3zm8 0h6v6H11V3zM3 11h6v6H3v-6zm8 6h6v-6H11v6z" />
-                            </svg>
-                          </button>
-                          {/* Details (table/list) icon */}
-                          <button
-                            onClick={() => setViewMode('table')}
-                            className={`px-2.5 py-1.5 rounded-md ${viewMode === 'table' ? 'bg-blue-500 text-white' : 'bg-gray-200 text-gray-700'}`}
-                            title="Details view"
-                            aria-label="Details view"
-                          >
-                            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-                              <path d="M3 5h14v2H3V5zm0 4h14v2H3V9zm0 4h14v2H3v-2z" />
-                            </svg>
-                          </button>
-                        </div>
-                        {/* Size control: s/m/l */}
-                        {selectedProject && (
-                          <div className="ml-2 hidden md:inline-flex rounded-md overflow-hidden border">
-                            <button
-                              className={`px-2 py-1 text-sm ${sizeLevel === 's' ? 'bg-gray-900 text-white' : 'bg-white text-gray-700 hover:bg-gray-100'}`}
-                              onClick={() => setSizeLevel('s')}
-                              title="Small previews"
-                              aria-label="Small previews"
-                            >
-                              S
-                            </button>
-                            <button
-                              className={`px-2 py-1 text-sm border-l ${sizeLevel === 'm' ? 'bg-gray-900 text-white' : 'bg-white text-gray-700 hover:bg-gray-100'}`}
-                              onClick={() => setSizeLevel('m')}
-                              title="Medium previews"
-                              aria-label="Medium previews"
-                            >
-                              M
-                            </button>
-                            <button
-                              className={`px-2 py-1 text-sm border-l ${sizeLevel === 'l' ? 'bg-gray-900 text-white' : 'bg-white text-gray-700 hover:bg-gray-100'}`}
-                              onClick={() => setSizeLevel('l')}
-                              title="Large previews"
-                              aria-label="Large previews"
-                            >
-                              L
-                            </button>
-                          </div>
-                        )}
-                        {/* Mobile: single size cycle button */}
-                        {selectedProject && (
-                          <button
-                            className="ml-2 md:hidden px-2.5 py-1 text-xs rounded-md bg-gray-200 text-gray-800 hover:bg-gray-300"
-                            onClick={() => setSizeLevel(prev => (prev === 's' ? 'm' : prev === 'm' ? 'l' : 's'))}
-                            title="Change preview size"
-                            aria-label="Change preview size"
-                          >
-                            Size {sizeLevel.toUpperCase()}
-                          </button>
-                        )}
-                      </div>
-                    ) : (
-                      selectedProject && (
-                        <div key="actions" className="transition-all duration-150 ease-out transform opacity-100 scale-100 animate-fadeInScale">
+                      <>
+                        <AllPhotosControls
+                          viewMode={viewMode}
+                          onViewModeChange={setViewMode}
+                        />
+                        <div className="transition-all duration-150 ease-out transform opacity-100 scale-100 animate-fadeInScale">
                           <OperationsMenu
-                            projectFolder={selectedProject.folder}
-                            projectData={filteredProjectData}
-                            selectedPhotos={selectedPhotos}
-                            setSelectedPhotos={setSelectedPhotos}
-                            onTagsUpdated={handleTagsUpdated}
-                            onKeepBulkUpdated={handleKeepBulkUpdated}
-                            onTagsBulkUpdated={handleTagsBulkUpdated}
+                            allMode
+                            allSelectedKeys={allSelectedKeys}
+                            setAllSelectedKeys={replaceAllSelection}
                             config={config}
                             trigger="label"
-                            onRequestMove={() => setShowMoveModal(true)}
+                            onRequestMove={() => setShowAllMoveModal(true)}
                           />
                         </div>
-                      )
-                    ))}
+                      </>
+                    ) : (
+                      <ProjectViewControls
+                        viewMode={viewMode}
+                        onViewModeChange={setViewMode}
+                        sizeLevel={sizeLevel}
+                        onSizeLevelChange={setSizeLevel}
+                        selectedProject={selectedProject}
+                        selectedPhotos={selectedPhotos}
+                        setSelectedPhotos={setSelectedPhotos}
+                        filteredProjectData={filteredProjectData}
+                        onTagsUpdated={handleTagsUpdated}
+                        onKeepBulkUpdated={handleKeepBulkUpdated}
+                        onTagsBulkUpdated={handleTagsBulkUpdated}
+                        config={config}
+                        onRequestMove={() => setShowMoveModal(true)}
+                      />
+                    )}
                   </div>
                 </div>
               </div>
@@ -2420,7 +1820,7 @@ function App() {
                       const photos = prev.photos.filter(p => !toRemove.has(p.filename));
                       return { ...prev, photos };
                     });
-                    setPagedPhotos(prev => Array.isArray(prev) ? prev.filter(p => !toRemove.has(p.filename)) : prev);
+                    mutatePagedPhotos(prev => Array.isArray(prev) ? prev.filter(p => !toRemove.has(p.filename)) : prev);
                   }
                   // Clear selection after updating UI
                   setSelectedPhotos(new Set());
@@ -2428,6 +1828,10 @@ function App() {
               }}
               sourceFolder={selectedProject ? selectedProject.folder : ''}
               selectedFilenames={Array.from(selectedPhotos || [])}
+              selectedProjectSummaries={(() => {
+                const folder = selectedProject?.folder ? [selectedProject.folder] : [];
+                return folder.map(f => ({ folder: f, count: selectedPhotos?.size || 0 }));
+              })()}
             />
 
             {/* Move photos modal — All Photos mode */}
@@ -2437,42 +1841,41 @@ function App() {
                 setShowAllMoveModal(false);
                 if (res && res.moved) {
                   const dest = res.destFolder;
-                  const movedKeys = new Set(Array.from(allSelectedPhotos || []));
+                  const movedKeys = new Set(Array.from(allSelectedKeys || []));
                   if (movedKeys.size > 0) {
-                    // Optimistically keep photos but update their project_folder to the destination
-                    setAllPhotos(prev => Array.isArray(prev)
-                      ? prev.map(p => {
-                          const key = `${p.project_folder}::${p.filename}`;
-                          return movedKeys.has(key)
-                            ? { ...p, project_folder: dest }
-                            : p;
-                        })
-                      : prev
-                    );
-                    // Maintain dedupe set by swapping old keys with new destination keys
-                    try {
-                      for (const key of movedKeys) {
-                        const idx = key.indexOf('::');
-                        const filename = idx >= 0 ? key.slice(idx + 2) : key;
-                        const newKey = `${dest}::${filename}`;
-                        if (allSeenKeysRef.current) {
-                          allSeenKeysRef.current.delete(key);
-                          allSeenKeysRef.current.add(newKey);
-                        }
-                      }
-                    } catch {}
+                    mutateAllPhotos(prev => {
+                      if (!Array.isArray(prev)) return prev;
+                      return prev.map(p => {
+                        const key = `${p.project_folder}::${p.filename}`;
+                        return movedKeys.has(key)
+                          ? { ...p, project_folder: dest }
+                          : p;
+                      });
+                    });
                   }
                   // Clear All Photos selection after updating UI
-                  setAllSelectedPhotos(new Set());
+                  clearAllSelection();
                 }
               }}
               // In All mode we allow selecting any destination (no single source folder)
               sourceFolder={''}
               // Map composite keys → filenames and dedupe
-              selectedFilenames={Array.from(allSelectedPhotos || []).map(k => {
+              selectedFilenames={Array.from(allSelectedKeys || []).map(k => {
                 const idx = k.indexOf('::');
                 return idx >= 0 ? k.slice(idx + 2) : k;
               })}
+              selectedProjectSummaries={Array.from(allSelectedKeys || []).reduce((acc, key) => {
+                const idx = key.indexOf('::');
+                const folder = idx >= 0 ? key.slice(0, idx) : '';
+                if (!folder) return acc;
+                const existing = acc.find(item => item.folder === folder);
+                if (existing) {
+                  existing.count += 1;
+                } else {
+                  acc.push({ folder, count: 1 });
+                }
+                return acc;
+              }, [])}
             />
 
             {/* Filters Panel */}
@@ -2525,7 +1928,7 @@ function App() {
               <h3 id="revert-modal-title" className="text-lg font-semibold">Revert keep flags</h3>
             </div>
             <div className="px-6 py-4 space-y-2">
-              <p id="revert-modal-desc" className="text-sm text-gray-700">This will reset all keep flags to match the actual file availability in the project.</p>
+              <p id="revert-modal-desc" className="text-sm text-gray-700">{revertDescription}</p>
             </div>
             <div className="px-6 py-4 border-t-0 flex justify-end gap-2">
               <button
@@ -2562,79 +1965,94 @@ function App() {
 
           {activeTab === 'view' && (
             <div>
-              {/* If no project selected, show a gentle prompt */}
-              {!selectedProject && projects.length > 0 && (
-                <div className="mt-10 text-center text-gray-600">Select a project from the dropdown to begin.</div>
-              )}
-              {selectedProject && (
-                <>
-                {/* Grid sorting controls */}
-              {viewMode === 'grid' && (
-                <div className="flex items-center gap-2 mb-2 px-1">
-                  <span className="text-xs text-gray-500 mr-2">Sort:</span>
-                  <button
-                    onClick={() => toggleSort('date')}
-                    className={`text-sm px-2 py-1 rounded ${sortKey === 'date' ? 'font-semibold bg-gray-100' : 'text-gray-700 hover:bg-gray-100'}`}
-                    title="Sort by date"
-                  >
-                    Date {sortKey === 'date' && (sortDir === 'asc' ? '▲' : '▼')}
-                  </button>
-                  <button
-                    onClick={() => toggleSort('name')}
-                    className={`text-sm px-2 py-1 rounded ${sortKey === 'name' ? 'font-semibold bg-gray-100' : 'text-gray-700 hover:bg-gray-100'}`}
-                    title="Sort by name"
-                  >
-                    Name {sortKey === 'name' && (sortDir === 'asc' ? '▲' : '▼')}
-                  </button>
-                </div>
-              )}
               {isAllMode ? (
-                <PhotoDisplay
-                  viewMode={viewMode}
-                  projectData={null}
-                  projectFolder={undefined}
-                  onPhotoSelect={(photo) => handleAllPhotoSelect(photo)}
-                  onToggleSelection={handleToggleSelectionAll}
-                  selectedPhotos={allSelectedPhotos}
-                  lazyLoadThreshold={config?.photo_grid?.lazy_load_threshold ?? 100}
-                  dwellMs={config?.photo_grid?.dwell_ms ?? 300}
-                  sortKey={sortKey}
-                  sortDir={sortDir}
-                  onSortChange={toggleSort}
-                  sizeLevel={sizeLevel}
-                  photos={allPhotos}
-                  hasMore={!!allNextCursor}
-                  onLoadMore={loadAllMore}
-                  hasPrev={allHasPrev}
-                  onLoadPrev={loadAllPrev}
-                  simplifiedMode={true}
-                  anchorIndex={allGridAnchorIndex}
-                  onAnchored={() => setAllGridAnchorIndex(null)}
-                />
+                <>
+                  {viewMode === 'grid' && (
+                    <div className="flex items-center gap-2 mb-2 px-1">
+                      <span className="text-xs text-gray-500 mr-2">Sort:</span>
+                      <button
+                        onClick={() => toggleSort('date')}
+                        className={`text-sm px-2 py-1 rounded ${sortKey === 'date' ? 'font-semibold bg-gray-100' : 'text-gray-700 hover:bg-gray-100'}`}
+                        title="Sort by date"
+                      >
+                        Date {sortKey === 'date' && (sortDir === 'asc' ? '▲' : '▼')}
+                      </button>
+                      <button
+                        onClick={() => toggleSort('name')}
+                        className={`text-sm px-2 py-1 rounded ${sortKey === 'name' ? 'font-semibold bg-gray-100' : 'text-gray-700 hover:bg-gray-100'}`}
+                        title="Sort by name"
+                      >
+                        Name {sortKey === 'name' && (sortDir === 'asc' ? '▲' : '▼')}
+                      </button>
+                    </div>
+                  )}
+                  <AllPhotosPane
+                    viewMode={viewMode}
+                    sortKey={sortKey}
+                    sortDir={sortDir}
+                    sizeLevel={sizeLevel}
+                    onSortChange={toggleSort}
+                    photos={allPhotos}
+                    hasMore={!!allNextCursor}
+                    onLoadMore={loadAllMore}
+                    hasPrev={allHasPrev}
+                    onLoadPrev={loadAllPrev}
+                    anchorIndex={allGridAnchorIndex}
+                    onAnchored={() => setAllGridAnchorIndex(null)}
+                    lazyLoadThreshold={config?.photo_grid?.lazy_load_threshold ?? 100}
+                    dwellMs={config?.photo_grid?.dwell_ms ?? 300}
+                    onPhotoSelect={handleAllPhotoSelect}
+                    onToggleSelection={handleToggleSelectionAll}
+                    selectedPhotos={allSelectedKeys}
+                  />
+                </>
+              ) : selectedProject ? (
+                <>
+                  {viewMode === 'grid' && (
+                    <div className="flex items-center gap-2 mb-2 px-1">
+                      <span className="text-xs text-gray-500 mr-2">Sort:</span>
+                      <button
+                        onClick={() => toggleSort('date')}
+                        className={`text-sm px-2 py-1 rounded ${sortKey === 'date' ? 'font-semibold bg-gray-100' : 'text-gray-700 hover:bg-gray-100'}`}
+                        title="Sort by date"
+                      >
+                        Date {sortKey === 'date' && (sortDir === 'asc' ? '▲' : '▼')}
+                      </button>
+                      <button
+                        onClick={() => toggleSort('name')}
+                        className={`text-sm px-2 py-1 rounded ${sortKey === 'name' ? 'font-semibold bg-gray-100' : 'text-gray-700 hover:bg-gray-100'}`}
+                        title="Sort by name"
+                      >
+                        Name {sortKey === 'name' && (sortDir === 'asc' ? '▲' : '▼')}
+                      </button>
+                    </div>
+                  )}
+                  <PhotoDisplay 
+                    viewMode={viewMode}
+                    projectData={filteredProjectData}
+                    projectFolder={selectedProject?.folder}
+                    onPhotoSelect={(photo) => handlePhotoSelect(photo, sortedPagedPhotos)}
+                    onToggleSelection={handleToggleSelection}
+                    selectedPhotos={selectedPhotos}
+                    lazyLoadThreshold={config?.photo_grid?.lazy_load_threshold ?? 100}
+                    dwellMs={config?.photo_grid?.dwell_ms ?? 300}
+                    sortKey={sortKey}
+                    sortDir={sortDir}
+                    onSortChange={toggleSort}
+                    sizeLevel={sizeLevel}
+                    photos={sortedPagedPhotos}
+                    hasMore={!!nextCursor}
+                    onLoadMore={loadMore}
+                    hasPrev={projectHasPrev}
+                    onLoadPrev={loadPrev}
+                    anchorIndex={gridAnchorIndex}
+                    onAnchored={() => setGridAnchorIndex(null)}
+                  />
+                </>
               ) : (
-                <PhotoDisplay 
-                  viewMode={viewMode}
-                  projectData={filteredProjectData}
-                  projectFolder={selectedProject?.folder}
-                  onPhotoSelect={(photo) => handlePhotoSelect(photo, sortedPagedPhotos)}
-                  onToggleSelection={handleToggleSelection}
-                  selectedPhotos={selectedPhotos}
-                  lazyLoadThreshold={config?.photo_grid?.lazy_load_threshold ?? 100}
-                  dwellMs={config?.photo_grid?.dwell_ms ?? 300}
-                  sortKey={sortKey}
-                  sortDir={sortDir}
-                  onSortChange={toggleSort}
-                  sizeLevel={sizeLevel}
-                  photos={sortedPagedPhotos}
-                  hasMore={!!nextCursor}
-                  onLoadMore={loadMore}
-                  hasPrev={projectHasPrev}
-                  onLoadPrev={loadPrev}
-                  anchorIndex={gridAnchorIndex}
-                  onAnchored={() => setGridAnchorIndex(null)}
-                />
-              )}
-              </>
+                projects.length > 0 && (
+                  <div className="mt-10 text-center text-gray-600">Select a project from the dropdown to begin.</div>
+                )
               )}
             </div>
           )}
@@ -2657,10 +2075,13 @@ function App() {
               <h3 id="commit-modal-title" className="text-lg font-semibold">Commit pending deletions</h3>
             </div>
             <div className="px-6 py-4 space-y-2">
-              <p id="commit-modal-desc" className="text-sm text-gray-700">This will move files marked not to keep into the project's .trash folder.</p>
+              <p id="commit-modal-desc" className="text-sm text-gray-700">{commitDescription}</p>
               <div className="text-sm text-gray-600">
-                <div>Total pending: <span className="font-medium">{pendingDeletes.total}</span></div>
-                <div className="text-xs">JPG: {pendingDeletes.jpg} · RAW: {pendingDeletes.raw}</div>
+                <div>Total pending: <span className="font-medium">{pendingDeleteTotals.total}</span></div>
+                <div className="text-xs">JPG: {pendingDeleteTotals.jpg} · RAW: {pendingDeleteTotals.raw}</div>
+                {pendingProjectsCount > 0 && (
+                  <div className="text-xs">Projects affected: {pendingProjectsCount}</div>
+                )}
               </div>
             </div>
             <div className="px-6 py-4 border-t-0 flex justify-end gap-2">
@@ -2677,8 +2098,8 @@ function App() {
                 type="button"
                 className="px-4 py-2 rounded-md bg-red-600 text-white hover:bg-red-700 disabled:opacity-50"
                 onClick={confirmCommitChanges}
-                disabled={committing || pendingDeletes.total === 0}
-                aria-disabled={committing || pendingDeletes.total === 0 ? 'true' : 'false'}
+                disabled={committing || pendingDeleteTotals.total === 0}
+                aria-disabled={committing || pendingDeleteTotals.total === 0 ? 'true' : 'false'}
                 aria-label="Confirm commit pending deletions"
               >
                 {committing ? 'Committing…' : 'Commit'}
@@ -2702,7 +2123,20 @@ function App() {
             onKeepUpdated={handleKeepUpdated}
             onCurrentIndexChange={handleViewerIndexChange}
             fromAllMode={!!(isAllMode || viewerState.fromAll)}
-            onOpenInProject={handleOpenInProjectFromViewer}
+            onRequestMove={(photo) => {
+              const sourceFolder = photo?.project_folder || selectedProject?.folder || '';
+              const filename = photo?.filename;
+              if (!filename) return;
+              if (isAllMode || viewerState.fromAll) {
+                setViewerState(prev => ({ ...(prev || {}), isOpen: false }));
+                replaceAllSelection(new Set([`${sourceFolder}::${filename}`]));
+                setShowAllMoveModal(true);
+              } else {
+                setViewerState(prev => ({ ...(prev || {}), isOpen: false }));
+                setSelectedPhotos(new Set([filename]));
+                setShowMoveModal(true);
+              }
+            }}
           />
         </ErrorBoundary>
       )}
@@ -2783,51 +2217,40 @@ function App() {
       <BottomUploadBar />
       <UploadHandler 
         selectedProject={selectedProject} 
-        pendingUploadFiles={pendingUploadFiles}
-        onUploadStarted={() => setPendingUploadFiles(null)}
+        pendingUpload={pendingUpload}
+        onUploadStarted={clearPendingUpload}
       />
       {(selectedProject?.folder || isAllMode) && (
         <GlobalDragDrop
-          onFilesDroppedInAllView={isAllMode ? (files) => {
-            setPendingUploadFiles(files);
-            setShowProjectSelection(true);
-          } : undefined}
+          onFilesDroppedInAllView={isAllMode ? handleFilesDroppedInAllView : (files) => {
+            if (!selectedProject?.folder) return;
+            openProjectSelection(files, selectedProject);
+          }}
         />
       )}
-      
+
       {/* Project selection modal for uploads from All view */}
       <ProjectSelectionModal
         isOpen={showProjectSelection}
         projects={projects}
-        onSelect={(project) => {
-          setShowProjectSelection(false);
-          if (pendingUploadFiles && project?.folder) {
-            // Switch to the selected project and start upload
-            setSelectedProject(project);
-            setIsAllMode(false);
-            // Store files and project for the upload handler
-            const filesToUpload = pendingUploadFiles;
-            setPendingUploadFiles({ files: filesToUpload, targetProject: project });
-          } else {
-            setPendingUploadFiles(null);
-          }
-        }}
-        onCancel={() => {
-          setShowProjectSelection(false);
-          setPendingUploadFiles(null);
-        }}
+        initialProject={initialProject}
+        onSelect={handleUploadProjectSelection}
+        onCancel={handleProjectSelectionCancel}
       />
       {/* Persistent bottom bar for pending commit/revert */}
-      {selectedProject && pendingDeletes.total > 0 && (
+      {hasPendingDeletes && (
         <div ref={commitBarRef} className="fixed bottom-0 inset-x-0 z-30">
           <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
             <div className="mb-3 rounded-lg shadow-lg border bg-white">
               <div className="px-4 py-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
                 <div className="flex items-center gap-3 text-sm" aria-live="polite">
                   <span className="inline-flex items-center justify-center px-2 py-0.5 text-xs font-medium rounded-full bg-red-100 text-red-800">
-                    Pending deletions: {pendingDeletes.total}
+                    Pending deletions: {pendingDeleteTotals.total}
                   </span>
-                  <span className="text-xs text-gray-600">JPG: {pendingDeletes.jpg} · RAW: {pendingDeletes.raw}</span>
+                  <span className="text-xs text-gray-600">JPG: {pendingDeleteTotals.jpg} · RAW: {pendingDeleteTotals.raw}</span>
+                  {pendingProjectsCount > 1 && (
+                    <span className="text-xs text-gray-600">Projects: {pendingProjectsCount}</span>
+                  )}
                 </div>
                 <div className="w-full grid grid-cols-3 gap-2 sm:w-auto sm:flex sm:items-center">
                   {/* Preview Mode toggle switch - syncs with keepType any_kept */}
@@ -2859,9 +2282,9 @@ function App() {
                     onClick={handleCommitChanges}
                     className="w-full px-3 py-2 rounded-md text-sm bg-red-600 text-white hover:bg-red-700"
                     title="Move unkept available files to .trash"
-                    aria-label={`Commit ${pendingDeletes.total} pending deletions`}
+                    aria-label={`Commit ${pendingDeleteTotals.total} pending deletions`}
                   >
-                    Commit ({pendingDeletes.total})
+                    Commit ({pendingDeleteTotals.total})
                   </button>
                 </div>
               </div>

@@ -1,0 +1,53 @@
+import { useCallback } from 'react';
+
+export default function useAllPhotosViewer({
+  allPhotos,
+  activeFilters,
+  setViewerList,
+  setViewerState,
+  setIsAllMode,
+  projects,
+  handleProjectSelect,
+  pendingOpenRef,
+}) {
+  const buildSearchParams = useCallback(() => {
+    const range = activeFilters?.dateRange || {};
+    const qp = new URLSearchParams();
+    if (range.start) qp.set('date_from', range.start);
+    if (range.end) qp.set('date_to', range.end);
+    if (activeFilters?.fileType && activeFilters.fileType !== 'any') qp.set('file_type', activeFilters.fileType);
+    if (activeFilters?.keepType && activeFilters.keepType !== 'any') qp.set('keep_type', activeFilters.keepType);
+    if (activeFilters?.orientation && activeFilters.orientation !== 'any') qp.set('orientation', activeFilters.orientation);
+    const search = qp.toString();
+    return search ? `?${search}` : '';
+  }, [activeFilters]);
+
+  const handleAllPhotoSelect = useCallback((photo) => {
+    if (!photo) return;
+    const idx = allPhotos.findIndex(p => p.project_folder === photo.project_folder && p.filename === photo.filename);
+    const start = idx >= 0 ? idx : 0;
+    setViewerList(allPhotos.slice());
+    setViewerState({ isOpen: true, startIndex: start, fromAll: true });
+    try {
+      const search = buildSearchParams();
+      const nameForUrl = photo.basename || (photo.filename || '').replace(/\.[^/.]+$/, '');
+      window.history.pushState({}, '', `/all/${encodeURIComponent(photo.project_folder)}/${encodeURIComponent(nameForUrl)}${search}`);
+    } catch {}
+  }, [allPhotos, buildSearchParams, setViewerList, setViewerState]);
+
+  const handleOpenInProjectFromViewer = useCallback((photo) => {
+    if (!photo || !photo.project_folder) return;
+    pendingOpenRef.current = { folder: photo.project_folder, filename: photo.filename };
+    setViewerState(prev => ({ ...(prev || {}), isOpen: false }));
+    setIsAllMode(false);
+    try {
+      const search = buildSearchParams();
+      const nameForUrl = photo.basename || (photo.filename || '').replace(/\.[^/.]+$/, '');
+      window.history.pushState({}, '', `/${encodeURIComponent(photo.project_folder)}/${encodeURIComponent(nameForUrl)}${search}`);
+    } catch {}
+    const proj = projects.find(p => p.folder === photo.project_folder);
+    if (proj) handleProjectSelect(proj);
+  }, [buildSearchParams, handleProjectSelect, pendingOpenRef, projects, setIsAllMode, setViewerState]);
+
+  return { handleAllPhotoSelect, handleOpenInProjectFromViewer };
+}

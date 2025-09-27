@@ -72,9 +72,13 @@
 - Frontend load shaping: the photo grid now uses a buffered `IntersectionObserver` with short dwell, which smooths scrolling and reduces bursty thumbnail requests without impacting perceived performance. This complements server-side rate limits.
 
 **Commit/Revert Endpoints**:
+- Project-scoped: `POST /api/projects/:folder/commit-changes` and `POST /api/projects/:folder/revert-changes`
+- Global: `POST /api/photos/commit-changes` and `POST /api/photos/revert-changes` (operates across multiple projects)
 - Commit is destructive: moves files to `.trash` and updates availability; ensure intent is authenticated/authorized in future multi-user mode.
 - Revert is non-destructive: resets `keep_*` to match `*_available`.
-- Rate limiting implemented: 10 requests per 5 minutes per IP on commit, revert, delete, and rename endpoints.
+- Global endpoints accept optional `{ projects: ["p1", "p2"] }` body to target specific projects; if omitted, auto-detects affected projects.
+- Rate limiting implemented: 10 requests per 5 minutes per IP on all commit, revert, delete, and rename endpoints.
+- Pending deletes summary: `GET /api/photos/pending-deletes` provides aggregated counts across projects for UI state management.
 
 **Realtime (SSE)**:
 - `GET /api/jobs/stream` hardened with per‑IP connection cap (default 2), heartbeat every 25s, and idle timeout (default 5 min). Env overrides: `SSE_MAX_CONN_PER_IP`, `SSE_IDLE_TIMEOUT_MS`.
@@ -204,6 +208,22 @@ All items from the previous cycle were assessed on 2025-08-20 UTC. Notes have be
 - Cross-links verified so `JOBS_OVERVIEW.md` remains the canonical jobs catalog for `upload_postprocess` and `image_move` semantics.
 
 No functional changes were introduced by this documentation update; it reflects the current implementation in `server/routes/photos.js`, `server/routes/assets.js`, and `server/routes/uploads.js`.
+
+2025-09-24 UTC — Image-scoped Endpoints Implementation
+
+- **Feature**: Implemented universal image-scoped endpoints for cross-project operations
+- **Changes**:
+  - Added new router `server/routes/photosActions.js` with endpoints for tags add/remove, keep, process, and move operations
+  - Added tag filtering to list endpoints via `tags` parameter
+  - Added optional tag inclusion in list responses via `include=tags` parameter
+- **Security Assessment**:
+  - ✅ **Rate limiting**: All new endpoints are rate-limited (60 requests per minute per IP)
+  - ✅ **Input validation**: Strict validation of photo_id and other parameters
+  - ✅ **Dry-run support**: All endpoints support `dry_run=true` to preview changes without applying them
+  - ✅ **Error handling**: Detailed error responses with per-item error tracking
+  - ✅ **SQL injection protection**: All queries use parameterized statements
+- **Risk**: Low. New endpoints follow existing security patterns and are properly rate-limited.
+- **Monitoring**: Server logs include operation details and error tracking for troubleshooting.
 
 2025-09-23 UTC — Unified Photo Filtering Implementation
 

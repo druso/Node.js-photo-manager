@@ -5,6 +5,8 @@ const router = express.Router();
 const { rateLimit } = require('../utils/rateLimit');
 
 const photosRepo = require('../services/repositories/photosRepo');
+const photoTagsRepo = require('../services/repositories/photoTagsRepo');
+const projectsRepo = require('../services/repositories/projectsRepo');
 
 // Apply rate limiting (60 requests per minute per IP)
 const apiRateLimit = rateLimit({
@@ -26,6 +28,8 @@ router.get('/photos/locate-page', apiRateLimit, async (req, res) => {
     
     const q = req.query || {};
     const { project_folder, filename, name, limit, date_from, date_to, file_type, keep_type, orientation } = q;
+    const includeTags = q.include === 'tags';
+    const tags = typeof q.tags === 'string' && q.tags.length ? q.tags : null; // comma-separated list of tags, with optional - prefix for exclusion
     
     // Input validation
     if (!project_folder) {
@@ -58,6 +62,7 @@ router.get('/photos/locate-page', apiRateLimit, async (req, res) => {
       file_type: file_type || undefined,
       keep_type: keep_type || undefined,
       orientation: orientation || undefined,
+      tags: tags || undefined,
     });
     
     // Map items to the same format as the /api/photos endpoint
@@ -83,6 +88,25 @@ router.get('/photos/locate-page', apiRateLimit, async (req, res) => {
       orientation: r.orientation ?? undefined,
       metadata: (() => { try { return r.meta_json ? JSON.parse(r.meta_json) : undefined; } catch { return undefined; } })(),
     }));
+    
+    // Optionally include tags when requested
+    if (includeTags && items.length > 0) {
+      try {
+        // Fetch tags for all photos in the page in a single efficient query
+        const photoIds = items.map(item => item.id);
+        const tagsMap = photoTagsRepo.listTagsForPhotos(photoIds);
+        
+        // Add tags to each item
+        items.forEach(item => {
+          item.tags = tagsMap[item.id] || [];
+        });
+        
+        log.debug('locate_page_tags_included', { count: photoIds.length });
+      } catch (tagErr) {
+        log.warn('locate_page_tags_fetch_failed', { error: tagErr?.message });
+        // Continue without tags rather than failing the whole request
+      }
+    }
     
     log.debug('locate_page_resp', {
       count: items.length,
@@ -148,11 +172,14 @@ router.get('/photos', async (req, res) => {
 
     const cursor = typeof q.cursor === 'string' && q.cursor.length ? q.cursor : null;
     const before_cursor = typeof q.before_cursor === 'string' && q.before_cursor.length ? q.before_cursor : null;
+    const project_folder = typeof q.project_folder === 'string' && q.project_folder.length ? q.project_folder : null;
     const date_from = typeof q.date_from === 'string' && q.date_from.length ? q.date_from : null;
     const date_to = typeof q.date_to === 'string' && q.date_to.length ? q.date_to : null;
     const file_type = typeof q.file_type === 'string' && q.file_type.length ? q.file_type : null; // any | jpg_only | raw_only | both
     const keep_type = typeof q.keep_type === 'string' && q.keep_type.length ? q.keep_type : null; // any | any_kept | jpg_only | raw_jpg | none
     const orientation = typeof q.orientation === 'string' && q.orientation.length ? q.orientation : null; // any | vertical | horizontal
+    const includeTags = q.include === 'tags';
+    const tags = typeof q.tags === 'string' && q.tags.length ? q.tags : null; // comma-separated list of tags, with optional - prefix for exclusion
     
     // Calculate total count directly
     let totalCount = 0;
@@ -172,7 +199,16 @@ router.get('/photos', async (req, res) => {
       date_from,
       date_to,
     });
-    const page = photosRepo.listAll({ limit, cursor, before_cursor, date_from, date_to, file_type, keep_type, orientation });
+    let projectId = null;
+    if (project_folder) {
+      const project = projectsRepo.getByFolder(project_folder);
+      if (!project || project.status === 'canceled') {
+        return res.json({ items: [], next_cursor: null, prev_cursor: null, total: 0, unfiltered_total: 0, limit, date_from, date_to });
+      }
+      projectId = project.id;
+    }
+
+    const page = photosRepo.listAll({ limit, cursor, before_cursor, date_from, date_to, file_type, keep_type, orientation, tags, project_id: projectId });
     const items = (page.items || []).map(r => ({
       id: r.id,
       project_id: r.project_id,
@@ -195,6 +231,25 @@ router.get('/photos', async (req, res) => {
       orientation: r.orientation ?? undefined,
       metadata: (() => { try { return r.meta_json ? JSON.parse(r.meta_json) : undefined; } catch { return undefined; } })(),
     }));
+    
+    // Optionally include tags when requested
+    if (includeTags && items.length > 0) {
+      try {
+        // Fetch tags for all photos in the page in a single efficient query
+        const photoIds = items.map(item => item.id);
+        const tagsMap = photoTagsRepo.listTagsForPhotos(photoIds);
+        
+        // Add tags to each item
+        items.forEach(item => {
+          item.tags = tagsMap[item.id] || [];
+        });
+        
+        log.debug('all_photos_tags_included', { count: photoIds.length });
+      } catch (tagErr) {
+        log.warn('all_photos_tags_fetch_failed', { error: tagErr?.message });
+        // Continue without tags rather than failing the whole request
+      }
+    }
 
     log.debug('all_photos_resp', {
       count: items.length,

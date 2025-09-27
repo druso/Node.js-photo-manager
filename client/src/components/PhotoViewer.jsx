@@ -3,7 +3,19 @@ import { getSessionState, setSessionViewer } from '../utils/storage';
 import { updateKeep } from '../api/keepApi';
 import { useToast } from '../ui/toast/ToastContext';
 
-const PhotoViewer = ({ projectData, projectFolder, startIndex, onClose, config, selectedPhotos, onToggleSelect, onKeepUpdated, onCurrentIndexChange, fromAllMode = false, onOpenInProject }) => {
+const PhotoViewer = ({
+  projectData,
+  projectFolder,
+  startIndex,
+  onClose,
+  config,
+  selectedPhotos,
+  onToggleSelect,
+  onKeepUpdated,
+  onCurrentIndexChange,
+  fromAllMode = false,
+  onRequestMove,
+}) => {
   // All hooks are called at the top level, unconditionally.
   const [currentIndex, setCurrentIndex] = useState(startIndex);
   const [zoomPercent, setZoomPercent] = useState(0); // 0 = Fit, 100 = Actual size, 200 = 2x
@@ -118,10 +130,17 @@ const PhotoViewer = ({ projectData, projectFolder, startIndex, onClose, config, 
     try { sessionStorage.setItem('viewer_show_info', showInfo ? '1' : '0'); } catch {}
   }, [showInfo]);
 
+  const resolveProjectFolder = useCallback(() => {
+    if (projectFolder && projectFolder !== '__all__') return projectFolder;
+    if (fromAllMode) return currentPhoto?.project_folder || null;
+    return null;
+  }, [projectFolder, fromAllMode, currentPhoto]);
+
   const applyKeep = useCallback(async (mode) => {
-    if (fromAllMode) return; // disabled in All mode
     // applyKeep invoked
-    if (!currentPhoto || !projectFolder) return;
+    if (!currentPhoto) return;
+    const targetFolder = resolveProjectFolder();
+    if (!targetFolder) return;
     let target;
     let msg;
     if (mode === 'none') {
@@ -141,7 +160,7 @@ const PhotoViewer = ({ projectData, projectFolder, startIndex, onClose, config, 
       msg += ` • 1 of ${total}`;
       toast.show({ emoji: '📝', message: msg, variant: 'notification' });
       // Sending keep update
-      await updateKeep(projectFolder, [{ filename: currentPhoto.filename, ...target }]);
+      await updateKeep(targetFolder, [{ filename: currentPhoto.filename, ...target }]);
       // notify parent to update in-memory data so lists/grid refresh without full reload
       onKeepUpdated && onKeepUpdated({ filename: currentPhoto.filename, ...target });
       // Keep update success
@@ -150,7 +169,7 @@ const PhotoViewer = ({ projectData, projectFolder, startIndex, onClose, config, 
       // Viewer keep error
       alert(e.message || 'Failed to update keep flags');
     }
-  }, [currentPhoto, projectFolder, toast, onKeepUpdated, nextPhoto, fromAllMode]);
+  }, [currentPhoto, resolveProjectFolder, toast, onKeepUpdated]);
 
   const prevPhoto = useCallback(() => {
     if (photos.length === 0) return;
@@ -191,13 +210,13 @@ const PhotoViewer = ({ projectData, projectFolder, startIndex, onClose, config, 
       } else if (e.key === keyZoomOut) {
         setZoomPercent((z) => Math.max(0, z - 5));
         if (zoomPercent - 5 <= 0) setPosition({ x: 0, y: 0 });
-      } else if (!fromAllMode && e.key === keyCancelKeep) {
+      } else if (e.key === keyCancelKeep) {
         e.preventDefault();
         applyKeep('none');
-      } else if (!fromAllMode && e.key && e.key.toLowerCase() === String(keyKeepJpg).toLowerCase()) {
+      } else if (e.key && e.key.toLowerCase() === String(keyKeepJpg).toLowerCase()) {
         e.preventDefault();
         applyKeep('jpg_only');
-      } else if (!fromAllMode && e.key && e.key.toLowerCase() === String(keyKeepRawJpg).toLowerCase()) {
+      } else if (e.key && e.key.toLowerCase() === String(keyKeepRawJpg).toLowerCase()) {
         e.preventDefault();
         applyKeep('raw_jpg');
       }
@@ -590,35 +609,36 @@ const PhotoViewer = ({ projectData, projectFolder, startIndex, onClose, config, 
         onMouseDown={(e)=>e.stopPropagation()}
         onClick={(e)=>e.stopPropagation()}
       >
-          {/* Project context (All Photos only) */}
-          {fromAllMode && currentPhoto?.project_folder && (
+          {/* Project context */}
+          {(currentPhoto?.project_folder || projectFolder) && (
             <div className="mb-4">
               <h3 className="text-sm font-semibold mb-2">Project</h3>
-              <div className="flex items-center justify-between gap-3 bg-gray-50 rounded-md px-3 py-2 border">
-                <div className="min-w-0 flex-1">
-                  <div className="text-sm font-medium text-gray-900 truncate" title={currentPhoto.project_name || currentPhoto.project_folder}>
-                    {currentPhoto.project_name || currentPhoto.project_folder}
+              <div className="flex flex-col gap-2 bg-gray-50 rounded-md px-3 py-3 border">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0 flex-1">
+                    <div className="text-sm font-medium text-gray-900 truncate" title={currentPhoto?.project_name || currentPhoto?.project_folder || projectFolder}>
+                      {currentPhoto?.project_name || currentPhoto?.project_folder || projectFolder}
+                    </div>
+                    <div className="text-xs text-gray-600 truncate" title={currentPhoto?.project_folder || projectFolder}>
+                      {currentPhoto?.project_folder || projectFolder}
+                    </div>
                   </div>
-                  <div className="text-xs text-gray-600 truncate" title={currentPhoto.project_folder}>
-                    {currentPhoto.project_folder}
-                  </div>
+                  {typeof onRequestMove === 'function' && (
+                    <button
+                      onClick={() => onRequestMove(currentPhoto)}
+                      className="h-8 px-3 inline-flex items-center text-sm rounded-md shadow bg-blue-600 text-white hover:bg-blue-700 border border-blue-600 flex-none"
+                      title="Move photo to another project"
+                    >
+                      Move
+                    </button>
+                  )}
                 </div>
-                {typeof onOpenInProject === 'function' && (
-                  <button
-                    onClick={() => onOpenInProject(currentPhoto)}
-                    className="h-8 px-3 inline-flex items-center text-sm rounded-md shadow bg-blue-600 text-white hover:bg-blue-700 border border-blue-600 flex-none"
-                    title="Open in project"
-                  >
-                    Open in project
-                  </button>
-                )}
               </div>
             </div>
           )}
           {/* Panel spacer top (after project block) */}
           <div className="mb-2"></div>
-          {/* Keep actions expander (above Quality) */}
-          {!fromAllMode && (
+          {/* Keep actions expander (Plan) */}
           <details className="mb-4" open>
             <summary className="cursor-pointer text-sm font-semibold select-none">Plan</summary>
             <div className="mt-2 grid grid-cols-3 gap-2">
@@ -676,7 +696,6 @@ const PhotoViewer = ({ projectData, projectFolder, startIndex, onClose, config, 
               </div>
             </div>
           </details>
-          )}
           {/* Quality section */}
           {!isRawFile && (
             <div className="mb-4">
