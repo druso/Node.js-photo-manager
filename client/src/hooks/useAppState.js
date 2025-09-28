@@ -1,4 +1,19 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useMemo } from 'react';
+
+/**
+ * ARCHITECTURAL DECISION: Unified View Context
+ * 
+ * There is NO conceptual distinction between "All Photos" and "Project" views.
+ * A Project view is simply the All Photos view with a project filter applied.
+ * 
+ * - Use view.project_filter (null = All Photos, string = specific project)
+ * - Use unified selection model with PhotoRef objects
+ * - Use unified modal states
+ * 
+ * IMPORTANT: Any code that treats these views differently should be refactored.
+ * If you encounter branching based on "isAllMode" or separate handling for
+ * All Photos vs Project views, please eliminate this distinction.
+ */
 
 /**
  * Core application state management hook
@@ -30,8 +45,46 @@ export function useAppState() {
 
   // Selection state
   const [selectedPhotos, setSelectedPhotos] = useState(new Set());
+  const [allSelectedKeys, setAllSelectedKeys] = useState(new Set());
+  
+  // Selection helpers
+  const clearAllSelection = useMemo(() => () => {
+    setAllSelectedKeys(new Set());
+  }, []);
+  
+  const toggleAllSelection = useMemo(() => (key, force) => {
+    setAllSelectedKeys(prev => {
+      const next = new Set(prev);
+      if (force === true || (force === undefined && !next.has(key))) {
+        next.add(key);
+      } else {
+        next.delete(key);
+      }
+      return next;
+    });
+  }, []);
 
-  // Mode state
+  // Unified view context
+  const [view, setView] = useState({
+    project_filter: null // null = All Photos, string = specific project folder
+  });
+
+  // Unified selection model
+  const [selection, setSelection] = useState([]);
+
+  // Unified modal state
+  const [uiModals, setUiModals] = useState({
+    move: {
+      open: false,
+      items: [],
+      suggestedDestination: null
+    }
+  });
+
+  /**
+   * @deprecated Use view.project_filter === null instead
+   * This will be removed after full unification is complete
+   */
   const [isAllMode, setIsAllMode] = useState(false);
 
   // Task and notification state
@@ -64,7 +117,62 @@ export function useAppState() {
   const uiPrefsReadyRef = useRef(false);
   const commitBarRef = useRef(null);
 
+  // Compatibility helpers for transition period
+  const updateIsAllMode = useMemo(() => (newValue) => {
+    setIsAllMode(newValue);
+    setView(prev => ({ ...prev, project_filter: newValue ? null : selectedProject?.folder || null }));
+  }, [selectedProject]);
+
+  const updateProjectFilter = useMemo(() => (newFilter) => {
+    setView(prev => ({ ...prev, project_filter: newFilter }));
+    setIsAllMode(newFilter === null);
+  }, []);
+  
+  // Active project tracking
+  const [activeProject, setActiveProject] = useState(null);
+  const registerActiveProject = useMemo(() => (project) => {
+    setActiveProject(project);
+  }, []);
+
+  // Sync legacy selection state with unified selection
+  const syncSelectionFromLegacy = useMemo(() => () => {
+    if (view.project_filter === null) {
+      // All Photos mode - convert from allSelectedKeys format
+      // This would be handled in App.jsx where allSelectedKeys is defined
+    } else {
+      // Project mode - convert from selectedPhotos format
+      const newSelection = Array.from(selectedPhotos).map(filename => ({
+        project_folder: view.project_filter,
+        filename
+      }));
+      setSelection(newSelection);
+    }
+  }, [selectedPhotos, view.project_filter]);
+
+  // Sync move modal state
+  const syncMoveModalState = useMemo(() => () => {
+    const isOpen = showMoveModal || showAllMoveModal;
+    if (isOpen !== uiModals.move.open) {
+      setUiModals(prev => ({
+        ...prev,
+        move: {
+          ...prev.move,
+          open: isOpen
+        }
+      }));
+    }
+  }, [showMoveModal, showAllMoveModal, uiModals.move.open]);
+
   return {
+    // New unified state
+    view,
+    setView,
+    updateProjectFilter,
+    selection,
+    setSelection,
+    uiModals,
+    setUiModals,
+    
     // Project and data state
     projects,
     setProjects,
@@ -106,10 +214,19 @@ export function useAppState() {
     // Selection state
     selectedPhotos,
     setSelectedPhotos,
+    allSelectedKeys,
+    setAllSelectedKeys,
+    clearAllSelection,
+    toggleAllSelection,
+    
+    // Active project tracking
+    activeProject,
+    setActiveProject,
+    registerActiveProject,
 
     // Mode state
     isAllMode,
-    setIsAllMode,
+    setIsAllMode: updateIsAllMode,
 
     // Task and notification state
     taskDefs,

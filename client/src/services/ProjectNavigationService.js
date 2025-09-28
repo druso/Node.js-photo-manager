@@ -3,9 +3,20 @@ import { clearSessionState } from '../utils/storage';
 /**
  * Service for handling project navigation and mode switching
  * Extracted from App.jsx to reduce component size
+ * 
+ * ARCHITECTURAL DECISION: Unified View Context
+ * There is NO conceptual distinction between "All Photos" and "Project" views.
+ * A Project view is simply the All Photos view with a project filter applied.
+ * 
+ * This service has been updated to use the unified view context while maintaining
+ * backward compatibility with the legacy isAllMode flag during the transition period.
  */
 export class ProjectNavigationService {
   constructor({
+    // Unified view context
+    view,
+    updateProjectFilter,
+    
     // State setters
     setSelectedProject,
     setProjectData,
@@ -31,6 +42,11 @@ export class ProjectNavigationService {
     // Constants
     ALL_PROJECT_SENTINEL
   }) {
+    // Unified view context
+    this.view = view;
+    this.updateProjectFilter = updateProjectFilter;
+    
+    // Legacy properties
     this.setSelectedProject = setSelectedProject;
     this.setProjectData = setProjectData;
     this.setSelectedPhotos = setSelectedPhotos;
@@ -59,9 +75,14 @@ export class ProjectNavigationService {
     }
     
     if (project.folder === this.ALL_PROJECT_SENTINEL.folder) {
+      // Update unified view context - set project_filter to null for All Photos view
+      this.updateProjectFilter(null);
       this.setIsAllMode(true);
       return;
     }
+    
+    // Update unified view context - set project_filter to the selected project folder
+    this.updateProjectFilter(project.folder);
     
     // Clear session state only when switching away from an already selected project
     // Avoid clearing on initial selection after a reload (selectedProject is null then)
@@ -95,6 +116,9 @@ export class ProjectNavigationService {
       const next = !prev;
       try {
         if (next) {
+          // Update unified view context - set project_filter to null for All Photos view
+          this.updateProjectFilter(null);
+          
           const range = (this.activeFilters?.dateRange) || {};
           const qp = new URLSearchParams();
           if (range.start) qp.set('date_from', range.start);
@@ -105,6 +129,9 @@ export class ProjectNavigationService {
           const search = qp.toString();
           window.history.pushState({}, '', `/all${search ? `?${search}` : ''}`);
         } else {
+          // Update unified view context - set project_filter to the selected project folder
+          this.updateProjectFilter(this.selectedProject?.folder || null);
+          
           if (this.selectedProject?.folder) {
             window.history.pushState({}, '', `/${encodeURIComponent(this.selectedProject.folder)}`);
           } else {
@@ -123,8 +150,16 @@ export class ProjectNavigationService {
 
 /**
  * Hook to use the ProjectNavigationService
+ * 
+ * ARCHITECTURAL DECISION: Unified View Context
+ * There is NO conceptual distinction between "All Photos" and "Project" views.
+ * A Project view is simply the All Photos view with a project filter applied.
  */
 export function useProjectNavigation({
+  // Unified view context
+  view,
+  updateProjectFilter,
+  
   // State setters
   setSelectedProject,
   setProjectData,
@@ -151,6 +186,11 @@ export function useProjectNavigation({
   ALL_PROJECT_SENTINEL
 }) {
   const service = new ProjectNavigationService({
+    // Unified view context
+    view,
+    updateProjectFilter,
+    
+    // Legacy properties
     setSelectedProject,
     setProjectData,
     setSelectedPhotos,

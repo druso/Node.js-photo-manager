@@ -1,6 +1,23 @@
 import { useState, useRef, useCallback } from 'react';
 
+/**
+ * Hook to handle commit and revert operations for both All Photos and Project views
+ * 
+ * ARCHITECTURAL DECISION: Unified View Context
+ * There is NO conceptual distinction between "All Photos" and "Project" views.
+ * A Project view is simply the All Photos view with a project filter applied.
+ * 
+ * This hook uses view.project_filter to determine the current view context
+ * while maintaining backward compatibility with isAllMode during transition.
+ */
 export const useCommitRevert = ({
+  // Unified view context
+  view,
+  
+  // Data refresh functions
+  refreshPhotoData,
+  
+  // Legacy properties (for backward compatibility)
   isAllMode,
   selectedProject,
   activeFilters,
@@ -20,10 +37,16 @@ export const useCommitRevert = ({
   const revertOpenerElRef = useRef(null);
 
   const handleCommitChanges = useCallback(() => {
-    if (!isAllMode && !selectedProject) return;
+    // Use unified view context to determine if we're in All Photos view
+    const isAllPhotosView = view?.project_filter === null;
+    
+    // For backward compatibility, fall back to isAllMode if view context is not available
+    const inAllPhotosMode = (view !== undefined) ? isAllPhotosView : isAllMode;
+    
+    if (!inAllPhotosMode && !selectedProject) return;
     try { commitOpenerElRef.current = document.activeElement; } catch {}
     setShowCommitModal(true);
-  }, [isAllMode, selectedProject]);
+  }, [view?.project_filter, isAllMode, selectedProject]);
 
   const openRevertConfirm = useCallback(() => {
     if (!selectedProject) return;
@@ -72,22 +95,34 @@ export const useCommitRevert = ({
       mutatePagedPhotos(prev => applyOptimisticCommit(prev));
       mutateAllPhotos(prev => applyOptimisticCommit(prev));
 
+      // Use unified view context to determine if we're in All Photos view
+      const isAllPhotosView = view?.project_filter === null;
+      
+      // For backward compatibility, fall back to isAllMode if view context is not available
+      const inAllPhotosMode = (view !== undefined) ? isAllPhotosView : isAllMode;
+
       await toast.promise(
         (async () => {
           const targetProjects = Array.from(pendingDeleteTotals.byProject || []);
-          const endpoint = isAllMode ? '/api/photos/commit-changes' : `/api/projects/${encodeURIComponent(selectedProject.folder)}/commit-changes`;
-          const body = (isAllMode && targetProjects.length) ? { projects: targetProjects } : undefined;
+          const endpoint = inAllPhotosMode ? '/api/photos/commit-changes' : `/api/projects/${encodeURIComponent(selectedProject.folder)}/commit-changes`;
+          const body = (inAllPhotosMode && targetProjects.length) ? { projects: targetProjects } : undefined;
           const res = await fetch(endpoint, {
             method: 'POST',
             headers: body ? { 'Content-Type': 'application/json' } : undefined,
             body: body ? JSON.stringify(body) : undefined,
           });
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
-          if (isAllMode) {
+          
+          if (inAllPhotosMode) {
             const data = await res.json().catch(() => ({}));
             const queued = Array.isArray(data.projects) ? data.projects.length : 0;
             if (!queued) {
-              await refreshAllPhotos();
+              // Use unified refresh function if available
+              if (refreshPhotoData) {
+                await refreshPhotoData();
+              } else {
+                await refreshAllPhotos();
+              }
             }
           }
         })(),
@@ -100,26 +135,41 @@ export const useCommitRevert = ({
       setShowCommitModal(false);
     } catch (e) {
       // Commit changes failed - revert optimistic changes by refetching on failure
-      if (selectedProject && !isAllMode) {
-        try { await fetchProjectData(selectedProject.folder); } catch {}
+      // Use unified refresh function if available
+      if (refreshPhotoData) {
+        await refreshPhotoData();
       } else {
-        await refreshAllPhotos();
+        // Fall back to legacy refresh functions
+        const isAllPhotosView = view?.project_filter === null;
+        const inAllPhotosMode = (view !== undefined) ? isAllPhotosView : isAllMode;
+        
+        if (selectedProject && !inAllPhotosMode) {
+          try { await fetchProjectData(selectedProject.folder); } catch {}
+        } else {
+          await refreshAllPhotos();
+        }
       }
     } finally {
       setCommitting(false);
     }
-  }, [selectedProject, isAllMode, setProjectData, mutatePagedPhotos, mutateAllPhotos, toast, refreshAllPhotos, fetchProjectData]);
+  }, [view?.project_filter, selectedProject, isAllMode, setProjectData, mutatePagedPhotos, mutateAllPhotos, toast, refreshPhotoData, refreshAllPhotos, fetchProjectData]);
 
   const confirmRevertChanges = useCallback(async (pendingDeleteTotals) => {
     if (!selectedProject) return;
     setReverting(true);
     
     try {
+      // Use unified view context to determine if we're in All Photos view
+      const isAllPhotosView = view?.project_filter === null;
+      
+      // For backward compatibility, fall back to isAllMode if view context is not available
+      const inAllPhotosMode = (view !== undefined) ? isAllPhotosView : isAllMode;
+      
       await toast.promise(
         (async () => {
           const targetProjects = Array.from(pendingDeleteTotals.byProject || []);
-          const endpoint = isAllMode ? '/api/photos/revert-changes' : `/api/projects/${encodeURIComponent(selectedProject.folder)}/revert-changes`;
-          const body = (isAllMode && targetProjects.length) ? { projects: targetProjects } : undefined;
+          const endpoint = inAllPhotosMode ? '/api/photos/revert-changes' : `/api/projects/${encodeURIComponent(selectedProject.folder)}/revert-changes`;
+          const body = (inAllPhotosMode && targetProjects.length) ? { projects: targetProjects } : undefined;
           const res = await fetch(endpoint, {
             method: 'POST',
             headers: body ? { 'Content-Type': 'application/json' } : undefined,
@@ -153,7 +203,11 @@ export const useCommitRevert = ({
               keep_raw: !!p.raw_available,
             }));
           });
-          if (isAllMode) {
+          
+          // Use unified refresh function if available
+          if (refreshPhotoData) {
+            await refreshPhotoData();
+          } else if (inAllPhotosMode) {
             await refreshAllPhotos();
           }
         })(),
@@ -165,13 +219,21 @@ export const useCommitRevert = ({
       );
       setShowRevertModal(false);
     } catch (e) {
-      if (isAllMode) {
-        await refreshAllPhotos();
+      // Use unified refresh function if available
+      if (refreshPhotoData) {
+        await refreshPhotoData();
+      } else {
+        const isAllPhotosView = view?.project_filter === null;
+        const inAllPhotosMode = (view !== undefined) ? isAllPhotosView : isAllMode;
+        
+        if (inAllPhotosMode) {
+          await refreshAllPhotos();
+        }
       }
     } finally {
       setReverting(false);
     }
-  }, [selectedProject, isAllMode, setProjectData, mutatePagedPhotos, mutateAllPhotos, toast, refreshAllPhotos]);
+  }, [view?.project_filter, selectedProject, isAllMode, setProjectData, mutatePagedPhotos, mutateAllPhotos, toast, refreshPhotoData, refreshAllPhotos]);
 
   return {
     // Modal state

@@ -85,3 +85,5 @@ export function usePhotoDataRefresh({
     refreshAllPhotos // For backward compatibility
   };
 }
+
+export default usePhotoDataRefresh;

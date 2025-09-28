@@ -24,6 +24,8 @@ The application is built around a few key concepts:
 
 *   **List and Viewer**: These are the main UI components for interacting with photos. The application provides two main views: "All Photos" (cross-project view) and "Project" view (single project). Both use virtualized grids for performance with large datasets and support server-side filtering by date range, file type, keep status, and orientation. The "Viewer" provides a full-size view of a single selected photo with keyboard navigation.
 
+*   **Unified View Architecture**: There is NO conceptual distinction between "All Photos" and "Project" views. A Project view is simply the All Photos view with a project filter applied. This architectural principle is enforced throughout the codebase with a unified view context (`view.project_filter`), unified selection model (`PhotoRef` objects), and unified modal states. This design eliminates duplicate code paths and ensures consistent behavior across the application.
+
 *   **Unified Filtering System**: Both All Photos and Project views use identical server-side filtering with consistent "filtered of total" count displays. Filters include date ranges, file type availability (JPG/RAW), keep flags, and photo orientation. This ensures scalable performance and consistent user experience across views.
 
 *   **Worker Pipeline**: To ensure the UI remains responsive, time-consuming tasks like generating thumbnails and previews are handled asynchronously by a background worker pipeline. The system includes specialized workers for image moves between projects, which update database records, move files and derivatives, and emit real-time SSE events to keep the UI synchronized. This system is designed to be extensible for future processing needs.
@@ -172,18 +174,28 @@ The main App.jsx component underwent extensive refactoring to improve maintainab
 - **Horizontal Scroll Fix**: Added `overflow-x-hidden` to prevent unwanted horizontal scrolling
 - **Content Spacing**: Proper spacer div placement to prevent content overlap with fixed header
 
+#### **Pagination Improvements (2025-09-28)**
+- **Global Manager Cache**: Implemented a module-level cache that persists PagedWindowManager instances across renders
+- **Mode-Specific Caching**: Separate caches for All Photos mode and each project folder
+- **Enhanced Manager Lifecycle**: Modified `ensureWindow` to check the cache before creating new instances
+- **Improved Reset Logic**: Updated `resetState` to reset manager state without destroying instances
+- **Sort Change Detection**: Added logic to detect sort changes and reset the appropriate manager
+- **Consistent Behavior**: Both All Photos and Project views now use the same pagination code path with identical behavior
+
 #### **Architecture Improvements**
 - **Better Separation of Concerns**: Complex logic isolated into focused, reusable hooks
 - **Enhanced Reusability**: Hooks can be reused across components and tested independently
 - **Improved Testability**: Extracted logic is easier to unit test in isolation
 - **Better Maintainability**: Smaller, focused files are easier to understand and modify
 - **Performance Optimization**: Better memoization opportunities and reduced re-renders
+- **State Persistence**: Critical state now persists across renders for improved reliability
 
 #### **Code Quality**
 - All hooks follow React best practices with proper dependency arrays
 - Consistent naming conventions and clear documentation
 - No functionality regressions - all features preserved
 - Build passes successfully with all optimizations
+- Comprehensive logging for easier debugging
 
 ## 6. Key Features
 

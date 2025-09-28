@@ -7,7 +7,7 @@ Order of truth and reconciliation:
 - Folder (disk) → SQL (DB) → Frontend (UI)
 - Implication: during destructive operations we always modify the folder first (move/delete files), then reconcile the DB, and finally update the UI incrementally.
 
-## Frontend Architecture (2025-09-27 Update)
+## Frontend Architecture (2025-09-28 Update)
 
 The frontend has been extensively refactored for optimal maintainability and performance:
 
@@ -16,8 +16,13 @@ The frontend has been extensively refactored for optimal maintainability and per
 - **Component Extraction**: Modular UI components eliminate code duplication and improve reusability
 - **Layout Stability**: Fixed header positioning and scroll behavior for consistent user experience
 - **API Integration**: Enhanced `projectsApi.js` includes `getConfig()` function for configuration management
+- **Pagination Improvements**: Implemented a global manager cache that persists PagedWindowManager instances across renders, ensuring consistent behavior between All Photos and Project views
+  - **Mode-Specific Caching**: Separate caches for All Photos mode and each project folder
+  - **Enhanced Manager Lifecycle**: Modified `ensureWindow` to check the cache before creating new instances
+  - **Improved Reset Logic**: Updated `resetState` to reset manager state without destroying instances
+  - **Sort Change Detection**: Added logic to detect sort changes and reset the appropriate manager
 
-This architecture maintains full backward compatibility while significantly improving code organization and developer experience.
+This architecture maintains full backward compatibility while significantly improving code organization, state persistence, and developer experience.
 
 ## SQLite Schema Overview
 

@@ -25,7 +25,7 @@ import { useScrollRestoration } from './hooks/useScrollRestoration';
 import { useFilterCalculations } from './hooks/useFilterCalculations';
 import { useModeSwitching } from './hooks/useModeSwitching';
 import { usePendingDeletes } from './hooks/usePendingDeletes';
-import { useAllPhotosRefresh } from './hooks/useAllPhotosRefresh';
+import { usePhotoDataRefresh } from './hooks/usePhotoDataRefresh';
 import { useCommitBarLayout } from './hooks/useCommitBarLayout';
 import { UploadProvider } from './upload/UploadContext';
 import UploadConfirmModal from './components/UploadConfirmModal';
@@ -64,19 +64,20 @@ import { useProjectNavigation } from './services/ProjectNavigationService';
 const ALL_PROJECT_SENTINEL = Object.freeze({ folder: '__all__', name: 'All Photos' });
 
 function App() {
-  // Extract state management into custom hooks
-  const appState = useAppState();
-  const filtersAndSort = useFiltersAndSort();
-  
-  // Destructure commonly used state from hooks
+  // Get app state with unified view context
   const {
+    // Unified view context
+    view, setView, updateProjectFilter, selection, setSelection,
+    
+    // Legacy properties (for backward compatibility)
     projects, setProjects,
     selectedProject, setSelectedProject,
     projectData, setProjectData,
-    loading, setLoading,
-    showOptionsModal, setShowOptionsModal,
-    optionsTab, setOptionsTab,
-    showCreateProject, setShowCreateProject,
+    allPhotos: appStateAllPhotos, setAllPhotos,
+    allSelectedKeys: appStateAllSelectedKeys, setAllSelectedKeys,
+    toggleAllSelection: appStateToggleAllSelection, clearAllSelection: appStateClearAllSelection,
+    registerActiveProject: appStateRegisterActiveProject,
+    activeProject, setActiveProject,
     config, setConfig,
     viewerState, setViewerState,
     viewerList, setViewerList,
@@ -92,6 +93,7 @@ function App() {
     showAllMoveModal, setShowAllMoveModal,
     allPendingDeletes, setAllPendingDeletes,
     uiPrefsReady, setUiPrefsReady,
+    
     // Refs
     suppressUrlRef,
     pendingOpenRef,
@@ -105,8 +107,9 @@ function App() {
     uiPrefsLoadedRef,
     uiPrefsReadyRef,
     commitBarRef
-  } = appState;
+  } = useAppState();
   
+  const filtersAndSort = useFiltersAndSort();
   const {
     activeFilters, setActiveFilters,
     sortKey, setSortKey,
@@ -116,6 +119,10 @@ function App() {
 
   const stickyHeaderRef = useRef(null);
   const [headerHeight, setHeaderHeight] = useState(160);
+  const [loading, setLoading] = useState(false);
+  const [showOptionsModal, setShowOptionsModal] = useState(false);
+  const [optionsTab, setOptionsTab] = useState('settings');
+  const [showCreateProject, setShowCreateProject] = useState(false);
 
   // Project pagination hook (must come before ProjectDataService)
   const {
@@ -135,10 +142,10 @@ function App() {
     resetState: resetProjectPagination,
   } = useProjectPagination({
     activeFilters,
-    projectFolder: selectedProject?.folder,
+    projectFolder: selectedProject?.folder || view?.project_filter || null,
     sortKey,
     sortDir,
-    isEnabled: !isAllMode && !!selectedProject?.folder,
+    isEnabled: view?.project_filter !== null && (!!selectedProject?.folder || !!view?.project_filter),
   });
 
   // Project data service for business logic
@@ -150,6 +157,8 @@ function App() {
     mainRef,
     viewerState
   });
+  // Use the existing selection functions from useAllPhotosSelection
+  // but avoid variable name conflicts with our unified view context
   const {
     selectedKeys: allSelectedKeys,
     replaceSelection: replaceAllSelection,
@@ -158,6 +167,8 @@ function App() {
     selectAllFromPhotos: selectAllAllPhotos,
   } = useAllPhotosSelection();
 
+  // Use the existing allPhotos from useAllPhotosPagination
+  // but avoid variable name conflicts with our unified view context
   const {
     photos: allPhotos,
     total: allTotal,
@@ -175,7 +186,7 @@ function App() {
     deepLinkRef: allDeepLinkRef,
   } = useAllPhotosPagination({
     activeFilters,
-    isEnabled: isAllMode,
+    isEnabled: view?.project_filter === null,
     onResolveDeepLink: ({ index, items }) => {
       setViewerList(items);
       setViewerState({ isOpen: true, startIndex: index, fromAll: true });
@@ -217,6 +228,10 @@ function App() {
 
   // Project navigation service (must come before useModeSwitching)
   const { handleProjectSelect, toggleAllMode } = useProjectNavigation({
+    // Unified view context
+    view,
+    updateProjectFilter,
+    
     // State setters
     setSelectedProject, setProjectData, setSelectedPhotos, setIsAllMode,
     
@@ -227,7 +242,7 @@ function App() {
     previousProjectRef, windowScrollRestoredRef, initialSavedYRef, pendingOpenRef,
     
     // Functions
-    registerActiveProject, fetchProjectData, clearAllSelection,
+    registerActiveProject: appStateRegisterActiveProject, fetchProjectData, clearAllSelection: appStateClearAllSelection,
     
     // Constants
     ALL_PROJECT_SENTINEL
@@ -235,6 +250,13 @@ function App() {
 
   // Mode switching logic extracted to custom hook
   useModeSwitching({
+    // Unified view context
+    view,
+    updateProjectFilter,
+    selection,
+    setSelection,
+    
+    // Legacy properties (for backward compatibility)
     isAllMode,
     projects,
     selectedProject,
@@ -244,8 +266,8 @@ function App() {
     setSelectedProject,
     setProjectData,
     setSelectedPhotos,
-    registerActiveProject,
-    clearAllSelection,
+    registerActiveProject: appStateRegisterActiveProject,
+    clearAllSelection: appStateClearAllSelection,
     handleProjectSelect,
   });
 
@@ -303,9 +325,17 @@ function App() {
   useAppInitialization({
     // State setters
     setProjects, setConfig, setTaskDefs, setAllPendingDeletes,
-    setSelectedProject, setIsAllMode, setViewMode, setSizeLevel,
+    setSelectedProject, setViewMode, setSizeLevel,
     setFiltersCollapsed, setActiveFilters, setViewerState,
     setPendingSelectProjectRef: (ref) => { pendingSelectProjectRef.current = ref; },
+    
+    // Unified view context
+    view,
+    setView,
+    updateProjectFilter,
+    
+    // Legacy properties (for backward compatibility)
+    setIsAllMode,
     
     // Current state
     projects, selectedProject, config, isAllMode, activeFilters,
@@ -400,18 +430,30 @@ function App() {
     hasPendingDeletes,
     pendingProjectsCount
   } = usePendingDeletes({
+    // Unified view context
+    view,
+    
+    // Legacy properties (for backward compatibility)
     projectData,
     selectedProject,
     allPendingDeletes,
     isAllMode
   });
 
-  // All Photos refresh logic extracted to custom hook
-  const { refreshAllPhotos } = useAllPhotosRefresh({
-    isAllMode,
+  // Photo data refresh logic extracted to custom hook
+  const { refreshPhotoData, refreshAllPhotos } = usePhotoDataRefresh({
+    // Unified view context
+    view,
+    
+    // Data loading functions
     loadAllInitial,
+    loadProjectData: fetchProjectData,
+    
+    // Legacy properties (for backward compatibility)
+    isAllMode,
     activeFilters,
-    setAllPendingDeletes
+    setAllPendingDeletes,
+    selectedProject
   });
 
 
@@ -430,6 +472,13 @@ function App() {
     commitOpenerElRef,
     revertOpenerElRef
   } = useCommitRevert({
+    // Unified view context
+    view,
+    
+    // Data refresh functions
+    refreshPhotoData,
+    
+    // Legacy properties (for backward compatibility)
     isAllMode,
     selectedProject,
     activeFilters,
@@ -626,19 +675,19 @@ function App() {
                   <label className="inline-flex items-center gap-2 text-sm text-gray-700 select-none">
                     <input
                       type="checkbox"
-                      checked={!!isAllMode}
+                      checked={view?.project_filter === null}
                       onChange={toggleAllMode}
                       className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
                       aria-label="Toggle All Photos mode"
                     />
                     <span>All</span>
                   </label>
-                  {/* Project selector (disabled in All mode with placeholder) */}
+                  {/* Project selector (disabled in All Photos view with placeholder) */}
                   <ProjectSelector
                     projects={projects}
-                    selectedProject={isAllMode ? null : selectedProject}
+                    selectedProject={view?.project_filter === null ? null : selectedProject}
                     onProjectSelect={handleProjectSelect}
-                    disabled={isAllMode}
+                    disabled={view?.project_filter === null}
                     placeholderLabel="All Projects"
                   />
                 </div>
@@ -670,7 +719,7 @@ function App() {
                   </button>
                   {/* Count next to Filters: consistent format for both All Photos and Project modes */}
                   <span className="text-sm text-gray-600 whitespace-nowrap">
-                    {isAllMode ? (
+                    {view?.project_filter === null ? (
                       hasActiveFilters ? (
                         <>
                           <span className="font-medium">{allTotal}</span> of {allUnfilteredTotal} images
@@ -724,7 +773,7 @@ function App() {
               <div className="flex items-center justify-between gap-3">
                 {/* Left: Selection + recap */}
                 <SelectionToolbar
-                  isAllMode={isAllMode}
+                  isAllMode={view?.project_filter === null}
                   allPhotos={allPhotos}
                   allSelectedKeys={allSelectedKeys}
                   onAllSelectAll={selectAllAllPhotos}
@@ -735,6 +784,9 @@ function App() {
                   onTagsUpdated={handleTagsUpdated}
                   onKeepBulkUpdated={handleKeepBulkUpdated}
                   onTagsBulkUpdated={handleTagsBulkUpdated}
+                  // Unified view context
+                  selection={selection}
+                  setSelection={setSelection}
                 />
 
                 {/* Right: View toggle + Operations */}
@@ -744,8 +796,8 @@ function App() {
                     onViewModeChange={setViewMode}
                     sizeLevel={sizeLevel}
                     onSizeLevelChange={setSizeLevel}
-                    hasSelection={isAllMode ? hasAllSelection : hasProjectSelection}
-                    operationsMenu={isAllMode
+                    hasSelection={(view?.project_filter === null) ? hasAllSelection : hasProjectSelection}
+                    operationsMenu={(view?.project_filter === null)
                       ? (
                         <OperationsMenu
                           allMode
@@ -754,6 +806,9 @@ function App() {
                           config={config}
                           trigger="label"
                           onRequestMove={() => setShowAllMoveModal(true)}
+                          // Unified view context
+                          selection={selection}
+                          setSelection={setSelection}
                         />
                       )
                       : selectedProject ? (
@@ -768,6 +823,9 @@ function App() {
                           config={config}
                           trigger="label"
                           onRequestMove={() => setShowMoveModal(true)}
+                          // Unified view context
+                          selection={selection}
+                          setSelection={setSelection}
                         />
                       ) : null}
                   />
@@ -779,6 +837,8 @@ function App() {
                     sortKey={sortKey}
                     sortDir={sortDir}
                     onSortChange={toggleSort}
+                    // Unified view context - same sort controls for both views
+                    viewType={view?.project_filter === null ? 'all' : 'project'}
                   />
                 </div>
               )}
@@ -835,7 +895,7 @@ function App() {
                     });
                   }
                   // Clear All Photos selection after updating UI
-                  clearAllSelection();
+                  appStateClearAllSelection();
                 }
               }}
               // In All mode we allow selecting any destination (no single source folder)

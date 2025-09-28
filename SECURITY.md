@@ -228,6 +228,39 @@ This ensures all functionality receives security review before deployment.
 
 All items from the previous cycle were assessed on 2025-08-20 UTC. Notes have been incorporated into this document (Security Overview and Suggested Interventions). No pending items remain here.
 
+2025-09-28 UTC — Unified View Context Architecture Implementation
+
+- **Feature**: Implemented a unified view context architecture to eliminate the conceptual distinction between All Photos and Project views
+- **Changes**: 
+  - Added `view.project_filter` state (null = All Photos, string = specific project) in `useAppState.js`
+  - Created `useUnifiedSelection.js` hook with a normalized selection model using `PhotoRef` objects
+  - Updated all components and hooks to use the unified view context
+  - Maintained backward compatibility with legacy `isAllMode` flag during transition period
+- **Security Assessment**:
+  - ✅ **No new attack vectors**: Pure architectural improvement with identical functionality
+  - ✅ **Improved maintainability**: Consistent state management and fewer branching conditions
+  - ✅ **Better testability**: Unified code paths are easier to test and verify
+  - ✅ **Reduced complexity**: Eliminates duplicate code and conditional logic based on view mode
+  - ✅ **Backward compatibility**: All existing security controls and validations preserved
+- **Risk**: None identified. This change improves code maintainability and reduces potential for inconsistent behavior between views.
+- **Monitoring**: Console logs provide detailed information about view context changes and selection operations.
+
+2025-09-28 UTC — Pagination improvements with global manager cache
+
+- **Feature**: Implemented a global manager cache that persists PagedWindowManager instances across renders
+- **Changes**: 
+  - Added module-level `managerInstances` object with separate caches for All Photos mode and each project folder
+  - Modified `ensureWindow` to check the cache before creating new instances
+  - Updated `resetState` to reset manager state without destroying instances
+  - Added logic to detect sort changes and reset the appropriate manager
+- **Security Assessment**:
+  - ✅ **No new attack vectors**: Pure state management improvement
+  - ✅ **Improved reliability**: Prevents state loss during navigation and filtering
+  - ✅ **Better debugging**: Added comprehensive logging for easier troubleshooting
+  - ✅ **Consistent behavior**: Both All Photos and Project views now use the same pagination code path
+- **Risk**: None identified. This change improves reliability and user experience without introducing new security concerns.
+- **Monitoring**: Console logs provide detailed information about manager lifecycle and state changes.
+
 2025-08-24 UTC — Frontend lazy-loading observer hardened to prevent random blank thumbnails and to shape thumbnail request rates (buffer margin + dwell). No new risks introduced; this reduces potential client-side request spikes during fast scrolling.
 
 2025-08-28 UTC — Deep-link photo redirect issue resolved. Removed session storage viewer state persistence that was causing conflicts with URL-based deep linking. The URL is now the single source of truth for viewer state, eliminating redirect loops and ensuring stable deep links like `/all/p6/DSC02415`. No new security risks introduced; this actually reduces client-side state complexity and potential for stale session data conflicts.

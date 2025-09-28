@@ -62,12 +62,21 @@ These behaviors make the "All Photos" surface rely on project iterations, compli
 ## Milestone 5 — Client Updates & Endpoint Migration
 
 - **Tasks**
-  - Audit `client/src/api/jobsApi.js`, `client/src/api/allPhotosApi.js`, `client/src/api/projectsApi.js`, and UI entry points (`App.jsx`, commit/revert toolbar, upload flows, move modal).
+  - Audit `client/src/api/jobsApi.js`, `client/src/api/allPhotosApi.js`, `client/src/api/projectsApi.js`, and UI entry points ([App.jsx](cci:7://file:///home/druso/code/Node.js%20photo%20manager/client/src/App.jsx:0:0-0:0), commit/revert toolbar, upload flows, move modal).
   - Switch client calls to the new endpoints/payloads, removing code paths that referenced project-scoped APIs only.
   - Ensure SSE handling (`jobsApi` singleton) and UI state interpret scope-aware job updates (new event metadata, aggregated progress) correctly.
-- **Tests**
-  - Frontend unit/RTL: verify API helpers emit the new request shapes and UI components react to scope-aware SSE events.
-  - E2E/manual: execute commit/revert, derivative processing, image move, and upload reconciliation from All Photos and project views; confirm single-task processing and correct UI feedback.
+  - **IMPORTANT**: Integrate with the unified view context architecture:
+    - Use `view.project_filter` instead of `isAllMode` to determine current view
+    - Leverage the unified selection model with `PhotoRef` objects for consistent job targeting
+    - Ensure job progress updates work consistently in both All Photos and Project views
+
+# Open Questions / Follow-ups
+
+- Do we need per-tenant scoping parallel to the new photo-set scope? (`jobsRepo` already stores `tenant_id`; verify requirements.)
+- Should we introduce job batching limits (e.g., max photos per job) to prevent extremely large payloads?
+- Decide how maintenance scheduling should operate in the new model (centralized photo-set runs vs project-level batching) and remove redundant scheduler loops.
+- How should job progress updates be displayed in the unified view context?
+- Should job scoping align with the unified view context (i.e., using `project_filter` as a scope identifier)?
 
 ## Milestone 6 — Documentation & Final Validation
 

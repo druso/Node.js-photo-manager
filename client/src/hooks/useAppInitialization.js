@@ -5,6 +5,16 @@ import { listAllPendingDeletes } from '../api/allPhotosApi';
 import { getSessionState, getLastProject, setLastProject } from '../utils/storage';
 
 /**
+ * ARCHITECTURAL DECISION: Unified View Context
+ * 
+ * There is NO conceptual distinction between "All Photos" and "Project" views.
+ * A Project view is simply the All Photos view with a project filter applied.
+ * 
+ * This hook uses view.project_filter (null = All Photos, string = specific project)
+ * while maintaining backward compatibility with isAllMode during the transition.
+ */
+
+/**
  * Hook to handle app initialization logic
  * Extracts large initialization useEffect blocks from App.jsx
  */
@@ -15,13 +25,20 @@ export function useAppInitialization({
   setTaskDefs,
   setAllPendingDeletes,
   setSelectedProject,
-  setIsAllMode,
   setViewMode,
   setSizeLevel,
   setFiltersCollapsed,
   setActiveFilters,
   setViewerState,
   setPendingSelectProjectRef,
+  
+  // Unified view context
+  view,
+  setView,
+  updateProjectFilter,
+  
+  // Legacy properties (for backward compatibility)
+  setIsAllMode,
   
   // Current state
   projects,
@@ -88,18 +105,44 @@ export function useAppInitialization({
       
       // Check for All Photos mode
       if (path === '/all' || params.get('mode') === 'all') {
+        // Set unified view context
+        updateProjectFilter(null);
+        
+        // Also set legacy mode for backward compatibility
         setIsAllMode(true);
         return;
       }
       
       // Handle project-specific URLs and viewer deep links
-      const match = path.match(/^\/project\/([^\/]+)(?:\/photo\/(.+))?$/);
+      // First check for /project/folder pattern
+      let match = path.match(/^\/project\/([^\/]+)(?:\/photo\/(.+))?$/);
+      
+      // If not found, check for direct /folder pattern
+      if (!match && path !== '/') {
+        // Extract folder from path (removing leading slash)
+        const folder = path.substring(1);
+        if (folder) {
+          match = [path, folder];
+        }
+      }
+      
       if (match) {
-        const [, projectFolder, photoPath] = match;
+        const projectFolder = match[1];
+        const photoPath = match[2]; // May be undefined
+        const decodedFolder = decodeURIComponent(projectFolder);
+        
+        console.log('Found project in URL:', decodedFolder);
+        
+        // Set unified view context
+        updateProjectFilter(decodedFolder);
+        
+        // Also set legacy mode for backward compatibility
+        setIsAllMode(false);
+        
         if (photoPath) {
           // Deep link to specific photo
           pendingOpenRef.current = {
-            folder: decodeURIComponent(projectFolder),
+            folder: decodedFolder,
             path: decodeURIComponent(photoPath)
           };
         }
@@ -108,14 +151,16 @@ export function useAppInitialization({
     } catch (error) {
       console.error('Failed to parse URL:', error);
     }
-  }, [setIsAllMode, pendingOpenRef]);
+  }, [updateProjectFilter, setIsAllMode, pendingOpenRef]);
 
-  // Persist All Photos mode
+  // Persist view context
   useEffect(() => {
     try { 
-      localStorage.setItem('all_mode', isAllMode ? '1' : '0'); 
+      // Store using the unified view context
+      const isAllPhotosView = view.project_filter === null;
+      localStorage.setItem('all_mode', isAllPhotosView ? '1' : '0'); 
     } catch {}
-  }, [isAllMode]);
+  }, [view.project_filter]);
 
   // Load UI prefs from localStorage on mount
   useEffect(() => {
@@ -155,8 +200,24 @@ export function useAppInitialization({
 
   // Remember last project (configurable)
   useEffect(() => {
-    if (isAllMode) return;
+    // Use unified view context to determine if we're in All Photos view
+    const isAllPhotosView = view.project_filter === null;
+    if (isAllPhotosView) return;
+    
     if (projects.length > 0 && !selectedProject) {
+      // First check if we have a project filter from the URL
+      if (view.project_filter) {
+        console.log('Looking for project from URL filter:', view.project_filter);
+        const projectFromUrl = projects.find(p => p.folder === view.project_filter);
+        if (projectFromUrl) {
+          console.log('Found project from URL:', projectFromUrl.folder);
+          setSelectedProject(projectFromUrl);
+          return;
+        } else {
+          console.log('Project from URL not found in projects list');
+        }
+      }
+      
       // Prefer pending selection set by creation flow
       const pendingFolder = setPendingSelectProjectRef?.current;
       if (pendingFolder) {
@@ -184,7 +245,7 @@ export function useAppInitialization({
         setSelectedProject(projects[0]);
       }
     }
-  }, [projects, selectedProject, config, isAllMode, setSelectedProject, setPendingSelectProjectRef]);
+  }, [projects, selectedProject, config, view.project_filter, setSelectedProject, setPendingSelectProjectRef]);
 
   // Remember selected project (configurable)
   useEffect(() => {
@@ -198,7 +259,9 @@ export function useAppInitialization({
 
   // Fetch pending deletions for All Photos mode
   useEffect(() => {
-    if (!isAllMode) return;
+    // Use unified view context to determine if we're in All Photos view
+    const isAllPhotosView = view.project_filter === null;
+    if (!isAllPhotosView) return;
     
     const fetchPendingDeletes = async () => {
       try {
@@ -222,7 +285,7 @@ export function useAppInitialization({
     };
 
     fetchPendingDeletes();
-  }, [isAllMode, activeFilters?.dateRange, activeFilters?.fileType, activeFilters?.orientation, setAllPendingDeletes]);
+  }, [view.project_filter, activeFilters?.dateRange, activeFilters?.fileType, activeFilters?.orientation, setAllPendingDeletes]);
 
   // Persist and restore window scroll position (session-only)
   useEffect(() => {

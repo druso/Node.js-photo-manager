@@ -1,10 +1,20 @@
 import { useMemo } from 'react';
 
 /**
- * Hook to calculate pending deletes for project mode
- * Extracts pending deletes calculation logic from App.jsx
+ * Hook to calculate pending deletes for both All Photos and Project views
+ * 
+ * ARCHITECTURAL DECISION: Unified View Context
+ * There is NO conceptual distinction between "All Photos" and "Project" views.
+ * A Project view is simply the All Photos view with a project filter applied.
+ * 
+ * This hook uses view.project_filter to determine the current view context
+ * while maintaining backward compatibility with isAllMode during transition.
  */
 export function usePendingDeletes({
+  // Unified view context
+  view,
+  
+  // Legacy properties (for backward compatibility)
   projectData,
   selectedProject,
   allPendingDeletes,
@@ -29,7 +39,13 @@ export function usePendingDeletes({
   // Separate state for All Photos pending deletions (independent of filtered view)
   const pendingDeletesAll = allPendingDeletes;
 
-  const pendingDeleteTotals = isAllMode ? pendingDeletesAll : pendingDeletesProject;
+  // Use unified view context to determine which pending deletes to use
+  const isAllPhotosView = view?.project_filter === null;
+  
+  // For backward compatibility, fall back to isAllMode if view context is not available
+  const pendingDeleteTotals = (view !== undefined) 
+    ? (isAllPhotosView ? pendingDeletesAll : pendingDeletesProject)
+    : (isAllMode ? pendingDeletesAll : pendingDeletesProject);
   const hasPendingDeletes = pendingDeleteTotals.total > 0;
   const pendingProjectsCount = pendingDeleteTotals.byProject ? pendingDeleteTotals.byProject.size : 0;
 
