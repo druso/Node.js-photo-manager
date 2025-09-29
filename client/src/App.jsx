@@ -87,7 +87,6 @@ function App() {
     sizeLevel, setSizeLevel,
     taskDefs, setTaskDefs,
     notifiedTasksRef,
-    isAllMode, setIsAllMode,
     previousProjectRef,
     showMoveModal, setShowMoveModal,
     showAllMoveModal, setShowAllMoveModal,
@@ -116,6 +115,8 @@ function App() {
     sortDir, setSortDir,
     toggleSort
   } = filtersAndSort;
+
+  const isAllMode = view?.project_filter === null;
 
   const stickyHeaderRef = useRef(null);
   const [headerHeight, setHeaderHeight] = useState(160);
@@ -221,7 +222,6 @@ function App() {
     onProjectChosen: (project, files) => {
       if (!project?.folder) return null;
       handleProjectSelect(project);
-      setIsAllMode(false);
       return { files, targetProject: project };
     },
   });
@@ -233,10 +233,10 @@ function App() {
     updateProjectFilter,
     
     // State setters
-    setSelectedProject, setProjectData, setSelectedPhotos, setIsAllMode,
+    setSelectedProject, setProjectData, setSelectedPhotos,
     
     // Current state
-    selectedProject, isAllMode, activeFilters,
+    selectedProject, activeFilters,
     
     // Refs
     previousProjectRef, windowScrollRestoredRef, initialSavedYRef, pendingOpenRef,
@@ -257,7 +257,6 @@ function App() {
     setSelection,
     
     // Legacy properties (for backward compatibility)
-    isAllMode,
     projects,
     selectedProject,
     previousProjectRef,
@@ -281,7 +280,6 @@ function App() {
     activeFilters,
     setViewerList,
     setViewerState,
-    setIsAllMode,
     projects,
     handleProjectSelect,
     pendingOpenRef,
@@ -306,14 +304,13 @@ function App() {
     pagedPhotos,
     nextCursor,
     loadingMore,
-    loadMore,
-    viewerState,
-    activeFilters,
+    projects,
+    handleProjectSelect,
     projectLocateTriedRef,
     setViewerList,
     setViewerState,
     setGridAnchorIndex,
-    applyProjectPage,
+    applyProjectPage
   });
 
 
@@ -334,11 +331,8 @@ function App() {
     setView,
     updateProjectFilter,
     
-    // Legacy properties (for backward compatibility)
-    setIsAllMode,
-    
     // Current state
-    projects, selectedProject, config, isAllMode, activeFilters,
+    projects, selectedProject, config, activeFilters,
     
     // Refs
     uiPrefsLoadedRef, uiPrefsReadyRef, initialSavedYRef,
@@ -358,34 +352,6 @@ function App() {
     
     // Config
     DEBUG_PERSIST
-  });
-
-  // Event handlers service
-  const {
-    handleProjectCreate,
-    handlePhotosUploaded,
-    handleTagsUpdated,
-    handleKeepBulkUpdated,
-    handleTagsBulkUpdated,
-    handleProjectDeleted,
-    handleProjectRenamed,
-    handlePhotoSelect,
-    handleKeepUpdated,
-    handleToggleSelection
-  } = useEventHandlers({
-    // State setters
-    setProjects, setSelectedProject, setProjectData, setSelectedPhotos,
-    setViewerState, setViewerList,
-    setPendingSelectProjectRef: (ref) => { pendingSelectProjectRef.current = ref; },
-    
-    // Current state
-    selectedProject, projectData, filteredProjectData: null, // TODO: implement filtered data
-    
-    // Functions
-    fetchProjectData,
-    
-    // Constants
-    ALL_PROJECT_SENTINEL
   });
 
   // Photo filtering and sorting
@@ -410,7 +376,6 @@ function App() {
   useKeyboardShortcuts({
     config,
     viewerState,
-    isAllMode,
     toggleAllMode,
     setFiltersCollapsed,
     setShowOptionsModal,
@@ -437,7 +402,6 @@ function App() {
     projectData,
     selectedProject,
     allPendingDeletes,
-    isAllMode
   });
 
   // Photo data refresh logic extracted to custom hook
@@ -450,7 +414,6 @@ function App() {
     loadProjectData: fetchProjectData,
     
     // Legacy properties (for backward compatibility)
-    isAllMode,
     activeFilters,
     setAllPendingDeletes,
     selectedProject
@@ -479,7 +442,6 @@ function App() {
     refreshPhotoData,
     
     // Legacy properties (for backward compatibility)
-    isAllMode,
     selectedProject,
     activeFilters,
     setProjectData,
@@ -543,17 +505,41 @@ function App() {
     notifiedTasksRef,
     committing,
   });
-
-
-
   
   // All Photos filtering is handled server-side, so we don't need client-side filtering
   // The loaded photos (allPhotos) are already filtered by the backend based on active filters
-
   const filteredProjectData = projectData ? {
     ...projectData,
     photos: sortedPhotos
   } : null;
+
+  // Event handlers service
+  const {
+    handleProjectCreate,
+    handlePhotosUploaded,
+    handleTagsUpdated,
+    handleKeepBulkUpdated,
+    handleTagsBulkUpdated,
+    handleProjectDeleted,
+    handleProjectRenamed,
+    handlePhotoSelect,
+    handleKeepUpdated,
+    handleToggleSelection
+  } = useEventHandlers({
+    // State setters
+    setProjects, setSelectedProject, setProjectData, setSelectedPhotos,
+    setViewerState, setViewerList,
+    setPendingSelectProjectRef: (ref) => { pendingSelectProjectRef.current = ref; },
+    
+    // Current state
+    selectedProject, projectData, filteredProjectData,
+    
+    // Functions
+    fetchProjectData,
+    
+    // Constants
+    ALL_PROJECT_SENTINEL
+  });
 
   const {
     viewerPhotos,

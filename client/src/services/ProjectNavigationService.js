@@ -21,11 +21,9 @@ export class ProjectNavigationService {
     setSelectedProject,
     setProjectData,
     setSelectedPhotos,
-    setIsAllMode,
     
     // Current state
     selectedProject,
-    isAllMode,
     activeFilters,
     
     // Refs
@@ -50,9 +48,7 @@ export class ProjectNavigationService {
     this.setSelectedProject = setSelectedProject;
     this.setProjectData = setProjectData;
     this.setSelectedPhotos = setSelectedPhotos;
-    this.setIsAllMode = setIsAllMode;
     this.selectedProject = selectedProject;
-    this.isAllMode = isAllMode;
     this.activeFilters = activeFilters;
     this.previousProjectRef = previousProjectRef;
     this.windowScrollRestoredRef = windowScrollRestoredRef;
@@ -77,7 +73,6 @@ export class ProjectNavigationService {
     if (project.folder === this.ALL_PROJECT_SENTINEL.folder) {
       // Update unified view context - set project_filter to null for All Photos view
       this.updateProjectFilter(null);
-      this.setIsAllMode(true);
       return;
     }
     
@@ -101,7 +96,7 @@ export class ProjectNavigationService {
     
     // Sync URL to project base when not in All Photos mode, unless we are in a pending deep link open
     try {
-      if (!this.isAllMode && project?.folder) {
+      if (this.view?.project_filter !== null && project?.folder) {
         const pending = this.pendingOpenRef.current;
         const isPendingDeepLink = !!(pending && pending.folder === project.folder);
         if (!isPendingDeepLink) {
@@ -112,37 +107,34 @@ export class ProjectNavigationService {
   }
 
   toggleAllMode() {
-    this.setIsAllMode(prev => {
-      const next = !prev;
-      try {
-        if (next) {
-          // Update unified view context - set project_filter to null for All Photos view
-          this.updateProjectFilter(null);
-          
-          const range = (this.activeFilters?.dateRange) || {};
-          const qp = new URLSearchParams();
-          if (range.start) qp.set('date_from', range.start);
-          if (range.end) qp.set('date_to', range.end);
-          if (this.activeFilters?.fileType && this.activeFilters.fileType !== 'any') qp.set('file_type', this.activeFilters.fileType);
-          if (this.activeFilters?.keepType && this.activeFilters.keepType !== 'any') qp.set('keep_type', this.activeFilters.keepType);
-          if (this.activeFilters?.orientation && this.activeFilters.orientation !== 'any') qp.set('orientation', this.activeFilters.orientation);
-          const search = qp.toString();
-          window.history.pushState({}, '', `/all${search ? `?${search}` : ''}`);
+    const currentlyAll = this.view?.project_filter === null;
+    const nextIsAll = !currentlyAll;
+
+    try {
+      if (nextIsAll) {
+        this.updateProjectFilter(null);
+
+        const range = (this.activeFilters?.dateRange) || {};
+        const qp = new URLSearchParams();
+        if (range.start) qp.set('date_from', range.start);
+        if (range.end) qp.set('date_to', range.end);
+        if (this.activeFilters?.fileType && this.activeFilters.fileType !== 'any') qp.set('file_type', this.activeFilters.fileType);
+        if (this.activeFilters?.keepType && this.activeFilters.keepType !== 'any') qp.set('keep_type', this.activeFilters.keepType);
+        if (this.activeFilters?.orientation && this.activeFilters.orientation !== 'any') qp.set('orientation', this.activeFilters.orientation);
+        const search = qp.toString();
+        window.history.pushState({}, '', `/all${search ? `?${search}` : ''}`);
+      } else {
+        const targetFolder = this.selectedProject?.folder || null;
+        this.updateProjectFilter(targetFolder);
+
+        if (targetFolder) {
+          window.history.pushState({}, '', `/${encodeURIComponent(targetFolder)}`);
         } else {
-          // Update unified view context - set project_filter to the selected project folder
-          this.updateProjectFilter(this.selectedProject?.folder || null);
-          
-          if (this.selectedProject?.folder) {
-            window.history.pushState({}, '', `/${encodeURIComponent(this.selectedProject.folder)}`);
-          } else {
-            window.history.pushState({}, '', '/');
-          }
+          window.history.pushState({}, '', '/');
         }
-      } catch {}
-      return next;
-    });
-    
-    // Clear selections when switching modes
+      }
+    } catch {}
+
     this.setSelectedPhotos(new Set());
     this.clearAllSelection();
   }
@@ -164,11 +156,9 @@ export function useProjectNavigation({
   setSelectedProject,
   setProjectData,
   setSelectedPhotos,
-  setIsAllMode,
   
   // Current state
   selectedProject,
-  isAllMode,
   activeFilters,
   
   // Refs
@@ -194,9 +184,7 @@ export function useProjectNavigation({
     setSelectedProject,
     setProjectData,
     setSelectedPhotos,
-    setIsAllMode,
     selectedProject,
-    isAllMode,
     activeFilters,
     previousProjectRef,
     windowScrollRestoredRef,

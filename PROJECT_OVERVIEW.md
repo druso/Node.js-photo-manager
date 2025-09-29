@@ -87,6 +87,7 @@ The frontend is a modern single-page application (SPA) responsible for all user 
         - **Modals**: `CommitModal.jsx`, `RevertModal.jsx`, `CreateProjectModal.jsx`
         - **Core**: `PhotoGrid.jsx`, `PhotoViewer.jsx`, etc.
     *   `services/`: Business logic services (`ProjectDataService.js`, `EventHandlersService.js`)
+        - `EventHandlersService.js` consumes the canonical `filteredProjectData` computed from server-filtered results to keep viewer selections and project modals in sync without placeholder state.
     *   `api/`: API client modules for backend communication
 
 ### Backend (`server/`)
@@ -154,7 +155,7 @@ The main App.jsx component underwent extensive refactoring to improve maintainab
 - **Target Achievement**: ✅ Within optimal range of 800-1000 lines
 
 #### **Systematic Extraction Phases**
-1. **State Management**: Extracted all useState/useRef declarations to `useAppState.js` and `useFiltersAndSort.js`
+1. **State Management**: Extracted all useState/useRef declarations to `useAppState.js` and `useFiltersAndSort.js` (legacy `isAllMode` flag removed; `useAppState()` now relies solely on `view.project_filter`).
 2. **Business Logic Services**: Created `ProjectDataService.js`, `EventHandlersService.js`, `ProjectNavigationService.js`
 3. **Effects & Initialization**: Moved large useEffect blocks to `useAppInitialization.js`, `usePersistence.js`
 4. **Complex Logic**: Extracted photo filtering, keyboard shortcuts, deep linking, scroll restoration

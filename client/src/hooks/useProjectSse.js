@@ -33,6 +33,7 @@ export default function useProjectSse({
 
   useEffect(() => {
     if (!selectedProject?.folder) return;
+    if (selectedProject.folder === '__all__') return;
 
     const close = openJobStream((evt) => {
       sseReadyRef.current = true;

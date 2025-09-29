@@ -81,12 +81,6 @@ export function useAppState() {
     }
   });
 
-  /**
-   * @deprecated Use view.project_filter === null instead
-   * This will be removed after full unification is complete
-   */
-  const [isAllMode, setIsAllMode] = useState(false);
-
   // Task and notification state
   const [taskDefs, setTaskDefs] = useState(null);
   const notifiedTasksRef = useRef(new Set());
@@ -117,15 +111,8 @@ export function useAppState() {
   const uiPrefsReadyRef = useRef(false);
   const commitBarRef = useRef(null);
 
-  // Compatibility helpers for transition period
-  const updateIsAllMode = useMemo(() => (newValue) => {
-    setIsAllMode(newValue);
-    setView(prev => ({ ...prev, project_filter: newValue ? null : selectedProject?.folder || null }));
-  }, [selectedProject]);
-
   const updateProjectFilter = useMemo(() => (newFilter) => {
     setView(prev => ({ ...prev, project_filter: newFilter }));
-    setIsAllMode(newFilter === null);
   }, []);
   
   // Active project tracking
@@ -225,9 +212,6 @@ export function useAppState() {
     registerActiveProject,
 
     // Mode state
-    isAllMode,
-    setIsAllMode: updateIsAllMode,
-
     // Task and notification state
     taskDefs,
     setTaskDefs,
