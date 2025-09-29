@@ -24,7 +24,7 @@ The application is built around a few key concepts:
 
 *   **List and Viewer**: These are the main UI components for interacting with photos. The application provides two main views: "All Photos" (cross-project view) and "Project" view (single project). Both use virtualized grids for performance with large datasets and support server-side filtering by date range, file type, keep status, and orientation. The "Viewer" provides a full-size view of a single selected photo with keyboard navigation.
 
-*   **Unified View Architecture**: There is NO conceptual distinction between "All Photos" and "Project" views. A Project view is simply the All Photos view with a project filter applied. This architectural principle is enforced throughout the codebase with a unified view context (`view.project_filter`), unified selection model (`PhotoRef` objects), and unified modal states. This design eliminates duplicate code paths and ensures consistent behavior across the application.
+*   **Unified View Architecture**: There is NO conceptual distinction between "All Photos" and "Project" views. A Project view is simply the All Photos view with a project filter applied. This architectural principle is enforced throughout the codebase with a unified view context (`view.project_filter === null` for All Photos mode, or a project folder string for Project mode), unified selection model (`PhotoRef` objects), and unified modal states. The codebase has been fully refactored to use this single source of truth, eliminating duplicate code paths and ensuring consistent behavior across the application.
 
 *   **Unified Filtering System**: Both All Photos and Project views use identical server-side filtering with consistent "filtered of total" count displays. Filters include date ranges, file type availability (JPG/RAW), keep flags, and photo orientation. This ensures scalable performance and consistent user experience across views.
 
@@ -80,7 +80,7 @@ The frontend is a modern single-page application (SPA) responsible for all user 
         - **Effects & Initialization**: `useAppInitialization.js`, `usePersistence.js`, `usePhotoDeepLinking.js`
         - **UI Logic**: `useScrollRestoration.js`, `useFilterCalculations.js`, `useCommitBarLayout.js`
         - **Feature-Specific**: `useAllPhotosPagination.js`, `useProjectSse.js`, `useViewerSync.js`, `useAllPhotosUploads.js`
-        - **Mode Management**: `useModeSwitching.js`, `usePendingDeletes.js`, `useAllPhotosRefresh.js`
+        - **Mode Management**: `useModeSwitching.js` (handles transitions between All Photos and Project views), `usePendingDeletes.js`, `usePhotoDataRefresh.js`
     *   `components/`: Modular UI components extracted from App.jsx:
         - **Layout**: `MainContentRenderer.jsx`, `CommitRevertBar.jsx`
         - **Controls**: `SortControls.jsx` (eliminates 4x code duplication)

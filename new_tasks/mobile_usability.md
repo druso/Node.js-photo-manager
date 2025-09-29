@@ -14,7 +14,7 @@ description: mobile interaction + selection refresh
 - **Desktop grid** (`PhotoGridView.jsx`): hover darkens entire image, shows "View" button overlay and small selection circle. Clicking the button opens the viewer; clicking anywhere else toggles selection.
 - **Mobile grid**: touch triggers the same `onClick` toggle logic, so first tap selects instead of opening. No long-press detection. Hover-dependent affordances (darken overlay, selection circle) are unreliable on touch devices.
 - **Viewer** (`PhotoViewer.jsx`): supports pinch zoom and pan, but no swipe navigation gestures. `touchAction: none` blocks natural scrolling and tap-to-close vertical gestures.
-- **Unified View Context**: The application now uses a unified view context architecture where there's no conceptual distinction between All Photos and Project views. Selection is handled through a unified selection model using `PhotoRef` objects.
+- **Unified View Context**: The application uses a unified view context architecture where there's no conceptual distinction between All Photos and Project views. The view state is controlled through `view.project_filter` (null for All Photos mode, project folder string for Project mode). Selection is handled through a unified selection model using `PhotoRef` objects.
 
 ## Target Interaction Model
 
@@ -62,7 +62,7 @@ description: mobile interaction + selection refresh
 ## Risks & Mitigations
 - **Gesture conflicts**: swipe navigation must not interfere with pinch/zoom; mitigate via gesture state machine and thresholds.
 - **Event handling complexity**: unify pointer/touch events, preferring PointerEvents where supported. Provide fallbacks for iOS Safari quirks.
-- **Unified View Integration**: ensure selection mode works seamlessly with the unified view context and selection model; maintain backward compatibility with legacy code during the transition period, but then legacy code should be removed.
+- **Unified View Integration**: ensure selection mode works seamlessly with the unified view context (`view.project_filter`) and selection model. The codebase has been fully refactored to use this unified approach, with no legacy compatibility code remaining.
 
 ## Verification Checklist
 - **Desktop**: hover shows gradient, circle selectable, regular click opens viewer, keyboard shortcuts unaffected.

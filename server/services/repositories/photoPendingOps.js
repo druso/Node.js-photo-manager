@@ -169,9 +169,29 @@ function listKeepMismatchesByProject({ project_id = null, project_folder = null 
   return rows;
 }
 
+/**
+ * Count photos missing generated derivatives for a specific project
+ * Missing asset = thumbnail or preview not marked generated
+ */
+function countMissingDerivativesForProject(project_id) {
+  if (!project_id) return 0;
+  const db = getDb();
+  const row = db.prepare(`
+    SELECT COUNT(*) AS c
+    FROM photos
+    WHERE project_id = ?
+      AND (
+        COALESCE(thumbnail_status, '') != 'generated'
+        OR COALESCE(preview_status, '') != 'generated'
+      )
+  `).get(project_id);
+  return row?.c || 0;
+}
+
 module.exports = {
   listPendingDeletesForProject,
   listPendingDeletesByProject,
   listKeepMismatchesForProject,
-  listKeepMismatchesByProject
+  listKeepMismatchesByProject,
+  countMissingDerivativesForProject
 };

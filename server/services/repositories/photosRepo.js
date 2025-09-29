@@ -51,6 +51,7 @@ const listPendingDeletesForProject = photoPendingOps.listPendingDeletesForProjec
 const listPendingDeletesByProject = photoPendingOps.listPendingDeletesByProject;
 const listKeepMismatchesForProject = photoPendingOps.listKeepMismatchesForProject;
 const listKeepMismatchesByProject = photoPendingOps.listKeepMismatchesByProject;
+const countMissingDerivativesForProject = photoPendingOps.countMissingDerivativesForProject;
 
 module.exports = {
   // CRUD operations
@@ -80,4 +81,5 @@ module.exports = {
   listPendingDeletesByProject,
   listKeepMismatchesForProject,
   listKeepMismatchesByProject,
+  countMissingDerivativesForProject,
 };

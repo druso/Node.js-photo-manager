@@ -51,9 +51,9 @@ export class ProjectDataService {
 
     this.setLoading(true);
     try {
-      const data = await getProject(projectFolder);
-      this.setProjectData(data);
-      // Kick off initial paginated load (do not await to keep UI responsive)
+      const project = await getProject(projectFolder);
+      const normalized = project ? { ...project, photos: project.photos || [] } : null;
+      this.setProjectData(normalized);
       try { this.resetProjectPagination(); } catch {}
     } catch (error) {
       // Error fetching project data

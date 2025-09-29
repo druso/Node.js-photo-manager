@@ -116,7 +116,7 @@ function App() {
     toggleSort
   } = filtersAndSort;
 
-  const isAllMode = view?.project_filter === null;
+  // All Photos mode is determined by view.project_filter being null
 
   const stickyHeaderRef = useRef(null);
   const [headerHeight, setHeaderHeight] = useState(160);
@@ -236,7 +236,7 @@ function App() {
     setSelectedProject, setProjectData, setSelectedPhotos,
     
     // Current state
-    selectedProject, activeFilters,
+    selectedProject, activeFilters, projects,
     
     // Refs
     previousProjectRef, windowScrollRestoredRef, initialSavedYRef, pendingOpenRef,
@@ -282,7 +282,6 @@ function App() {
     setViewerState,
     projects,
     handleProjectSelect,
-    pendingOpenRef,
   });
 
   // Toggle selection for All Photos mode (composite key to avoid collisions across projects)
@@ -298,19 +297,31 @@ function App() {
   // First attempt project-scoped locate-page for precise paging + index; fall back to sequential pagination.
   // Photo deep linking logic extracted to custom hook
   usePhotoDeepLinking({
+    // Common parameters for both modes
     pendingOpenRef,
+    viewerState,
+    activeFilters,
+    projectLocateTriedRef,
+    setViewerList,
+    setViewerState,
+    
+    // Project mode parameters
     selectedProject,
     projectData,
     pagedPhotos,
     nextCursor,
     loadingMore,
-    projects,
-    handleProjectSelect,
-    projectLocateTriedRef,
-    setViewerList,
-    setViewerState,
+    loadMore,
     setGridAnchorIndex,
-    applyProjectPage
+    applyProjectPage,
+    
+    // All Photos mode parameters
+    allPhotos,
+    allDeepLinkRef,
+    allNextCursor: allNextCursor,
+    allLoadingMore: allLoadingMore,
+    loadAllMore,
+    setAllGridAnchorIndex
   });
 
 
@@ -325,6 +336,7 @@ function App() {
     setSelectedProject, setViewMode, setSizeLevel,
     setFiltersCollapsed, setActiveFilters, setViewerState,
     setPendingSelectProjectRef: (ref) => { pendingSelectProjectRef.current = ref; },
+    setAllDeepLink,
     
     // Unified view context
     view,
@@ -367,7 +379,7 @@ function App() {
     activeFilters,
     sortKey,
     sortDir,
-    projectData,
+    projectData: selectedProject?.summary,
     pagedPhotos
   });
 
@@ -453,16 +465,16 @@ function App() {
   });
 
   useUrlSync({
-    isAllMode,
+    view,
     selectedProject,
     activeFilters
   });
 
-  const commitDescription = isAllMode
+  const commitDescription = view?.project_filter === null
     ? 'This will move files marked not to keep into each affected project\'s .trash folder.'
     : 'This will move files marked not to keep into the project\'s .trash folder.';
 
-  const revertDescription = isAllMode
+  const revertDescription = view?.project_filter === null
     ? 'This will reset all keep flags to match actual file availability across affected projects.'
     : 'This will reset all keep flags to match the actual file availability in the project.';
 
@@ -508,10 +520,16 @@ function App() {
   
   // All Photos filtering is handled server-side, so we don't need client-side filtering
   // The loaded photos (allPhotos) are already filtered by the backend based on active filters
-  const filteredProjectData = projectData ? {
-    ...projectData,
-    photos: sortedPhotos
-  } : null;
+  const filteredProjectData = useMemo(() => {
+    if (!selectedProject?.summary) return null;
+    return {
+      summary: selectedProject.summary,
+      photos: sortedPagedPhotos,
+      counts: projectData?.counts,
+      recent_activity: projectData?.recent_activity,
+      links: projectData?.links
+    };
+  }, [selectedProject?.summary, sortedPagedPhotos, projectData?.counts, projectData?.recent_activity, projectData?.links]);
 
   // Event handlers service
   const {
@@ -547,7 +565,7 @@ function App() {
     handleCloseViewer,
     handleViewerIndexChange,
   } = useViewerSync({
-    isAllMode,
+    isAllMode: view?.project_filter === null,
     viewerState,
     setViewerState,
     viewerList,
@@ -589,7 +607,7 @@ function App() {
 
     window.addEventListener('resize', updateHeight);
     return () => window.removeEventListener('resize', updateHeight);
-  }, [filtersCollapsed, viewMode, isAllMode, hasPendingDeletes, showOptionsModal, hasActiveFilters, hasAllSelection, hasProjectSelection]);
+  }, [filtersCollapsed, viewMode, view?.project_filter, hasPendingDeletes, showOptionsModal, hasActiveFilters, hasAllSelection, hasProjectSelection]);
 
   
 
@@ -598,7 +616,7 @@ function App() {
 
   return (
     <UploadProvider
-      projectFolder={!isAllMode && selectedProject?.folder ? selectedProject.folder : null}
+      projectFolder={view?.project_filter !== null && selectedProject?.folder ? selectedProject.folder : null}
       onCompleted={handlePhotosUploaded}
     >
       <div className="bg-gray-50 overflow-x-hidden">
@@ -615,7 +633,7 @@ function App() {
               {/* Right Controls: Upload (+) and Options (hamburger) */}
               <div className="flex items-center space-x-2">
                 <UploadButton
-                  isAllMode={isAllMode}
+                  isAllMode={view?.project_filter === null}
                   selectedProject={selectedProject}
                   allProjectFolder={ALL_PROJECT_SENTINEL.folder}
                   openProjectSelection={openProjectSelection}
@@ -652,7 +670,7 @@ function App() {
         </header>
 
         {/* Project selector bar (replaces tabs) */}
-        {(selectedProject || isAllMode) && (
+        {(selectedProject || view?.project_filter === null) && (
           <div className="bg-white border-b-0 relative">
             <div className="w-full px-4 sm:px-6 lg:px-8">
               <div className="flex items-center justify-between py-2">
@@ -913,7 +931,7 @@ function App() {
                   filters={activeFilters}
                   onFilterChange={setActiveFilters}
                   disabled={loading}
-                  isAllMode={isAllMode}
+                  isAllMode={view?.project_filter === null}
                   onClose={() => setFiltersCollapsed(true)}
                 />
               </div>
@@ -956,7 +974,7 @@ function App() {
       ) : (
         <div className="w-full px-4 sm:px-6 lg:px-8 pt-2 pb-8" ref={mainRef}>
           <MainContentRenderer
-            isAllMode={isAllMode}
+            isAllMode={view?.project_filter === null}
             selectedProject={selectedProject}
             projects={projects}
             viewMode={viewMode}
@@ -1011,12 +1029,12 @@ function App() {
             onToggleSelect={handleToggleSelection}
             onKeepUpdated={handleKeepUpdated}
             onCurrentIndexChange={handleViewerIndexChange}
-            fromAllMode={!!(isAllMode || viewerState.fromAll)}
+            fromAllMode={!!(view?.project_filter === null || viewerState.fromAll)}
             onRequestMove={(photo) => {
               const sourceFolder = photo?.project_folder || selectedProject?.folder || '';
               const filename = photo?.filename;
               if (!filename) return;
-              if (isAllMode || viewerState.fromAll) {
+              if (view?.project_filter === null || viewerState.fromAll) {
                 setViewerState(prev => ({ ...(prev || {}), isOpen: false }));
                 replaceAllSelection(new Set([`${sourceFolder}::${filename}`]));
                 setShowAllMoveModal(true);
@@ -1067,9 +1085,9 @@ function App() {
         pendingUpload={pendingUpload}
         onUploadStarted={clearPendingUpload}
       />
-      {(selectedProject?.folder || isAllMode) && (
+      {(selectedProject?.folder || view?.project_filter === null) && (
         <GlobalDragDrop
-          onFilesDroppedInAllView={isAllMode ? handleFilesDroppedInAllView : (files) => {
+          onFilesDroppedInAllView={view?.project_filter === null ? handleFilesDroppedInAllView : (files) => {
             if (!selectedProject?.folder) return;
             openProjectSelection(files, selectedProject);
           }}

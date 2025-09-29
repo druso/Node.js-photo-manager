@@ -31,20 +31,17 @@ export function useAppInitialization({
   setActiveFilters,
   setViewerState,
   setPendingSelectProjectRef,
+  setAllDeepLink,
   
   // Unified view context
   view,
   setView,
   updateProjectFilter,
   
-  // Legacy properties (for backward compatibility)
-  setIsAllMode,
-  
   // Current state
   projects,
   selectedProject,
   config,
-  isAllMode,
   activeFilters,
   
   // Refs
@@ -107,51 +104,70 @@ export function useAppInitialization({
       if (path === '/all' || params.get('mode') === 'all') {
         // Set unified view context
         updateProjectFilter(null);
-        
-        // Also set legacy mode for backward compatibility
-        setIsAllMode(true);
         return;
       }
       
       // Handle project-specific URLs and viewer deep links
       // First check for /project/folder pattern
       let match = path.match(/^\/project\/([^\/]+)(?:\/photo\/(.+))?$/);
-      
-      // If not found, check for direct /folder pattern
-      if (!match && path !== '/') {
-        // Extract folder from path (removing leading slash)
-        const folder = path.substring(1);
-        if (folder) {
-          match = [path, folder];
+
+      // If not found, check for direct /folder or /folder/filename pattern
+      if (!match && path && path !== '/') {
+        const withoutLeadingSlash = path.startsWith('/') ? path.slice(1) : path;
+        if (withoutLeadingSlash) {
+          const segments = withoutLeadingSlash.split('/');
+          const [first, ...rest] = segments;
+
+          if (first === 'all') {
+            updateProjectFilter(null);
+
+            const projectSegment = rest[0];
+            const photoSegment = rest.slice(1).join('/') || undefined;
+
+            if (projectSegment && photoSegment && typeof setAllDeepLink === 'function') {
+              setAllDeepLink({
+                folder: decodeURIComponent(projectSegment),
+                filename: decodeURIComponent(photoSegment),
+              });
+            }
+
+            // All-mode deep links fully handled
+            return;
+          }
+
+          if (first) {
+            const rawPhoto = rest.length ? rest.join('/') : undefined;
+            match = [path, first, rawPhoto];
+          }
         }
       }
-      
+
       if (match) {
-        const projectFolder = match[1];
+        const projectFolder = match[1] || '';
         const photoPath = match[2]; // May be undefined
         const decodedFolder = decodeURIComponent(projectFolder);
-        
-        console.log('Found project in URL:', decodedFolder);
-        
-        // Set unified view context
-        updateProjectFilter(decodedFolder);
-        
-        // Also set legacy mode for backward compatibility
-        setIsAllMode(false);
-        
-        if (photoPath) {
-          // Deep link to specific photo
-          pendingOpenRef.current = {
-            folder: decodedFolder,
-            path: decodeURIComponent(photoPath)
-          };
+
+        if (decodedFolder) {
+          // Set unified view context
+          updateProjectFilter(decodedFolder);
+
+          if (photoPath && pendingOpenRef?.current !== undefined) {
+            // Deep link to specific photo
+            pendingOpenRef.current = {
+              folder: decodedFolder,
+              filename: decodeURIComponent(photoPath)
+            };
+            if (projectLocateTriedRef?.current !== undefined) {
+              projectLocateTriedRef.current = false;
+            }
+          }
         }
         // Project will be selected when projects load
       }
     } catch (error) {
       console.error('Failed to parse URL:', error);
     }
-  }, [updateProjectFilter, setIsAllMode, pendingOpenRef]);
+  }, [updateProjectFilter, pendingOpenRef]);
 
   // Persist view context
   useEffect(() => {

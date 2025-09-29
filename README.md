@@ -15,6 +15,7 @@ This application helps photographers manage their photo collections by:
 ## Technology
 
 - **Frontend**: React with Vite and Tailwind CSS
+  - **Unified View Architecture**: Single source of truth using `view.project_filter` context (null for All Photos, project folder string for Project view)
   - **Highly Optimized Architecture**: Main App.jsx reduced from ~2,350 to 1,021 lines (57% reduction) through systematic extraction
   - **Modular Hook System**: 20+ specialized React hooks for separation of concerns and reusability
   - **Component Extraction**: Modular UI components (MainContentRenderer, CommitRevertBar, SortControls, etc.)

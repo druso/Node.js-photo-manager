@@ -1,15 +1,22 @@
 import { useEffect } from 'react';
 
 export const useUrlSync = ({
-  isAllMode,
+  view,
   selectedProject,
   activeFilters
 }) => {
+  const isAllPhotosView = view?.project_filter === null;
   // Sync URL query with filters when in All mode (preserve current /all path and filename if any)
   useEffect(() => {
-    if (!isAllMode) return;
+    if (!isAllPhotosView) return;
     try {
-      const path = window.location?.pathname || '/all';
+      const path = window.location?.pathname || '/';
+
+      // Only normalize to /all when we're already on an /all route or at the root.
+      if (!path.startsWith('/all') && path !== '/' && path !== '') {
+        return;
+      }
+
       const keepPath = path.startsWith('/all') ? path : '/all';
       const range = (activeFilters?.dateRange) || {};
       const qp = new URLSearchParams();
@@ -25,11 +32,11 @@ export const useUrlSync = ({
         window.history.replaceState({}, '', target);
       }
     } catch {}
-  }, [isAllMode, activeFilters?.dateRange?.start, activeFilters?.dateRange?.end, activeFilters?.fileType, activeFilters?.keepType, activeFilters?.orientation]);
+  }, [isAllPhotosView, activeFilters?.dateRange?.start, activeFilters?.dateRange?.end, activeFilters?.fileType, activeFilters?.keepType, activeFilters?.orientation]);
 
   // Sync URL query with filters when in Project mode as well
   useEffect(() => {
-    if (isAllMode) return;
+    if (isAllPhotosView) return;
     try {
       const basePath = selectedProject?.folder ? `/${encodeURIComponent(selectedProject.folder)}` : (window.location?.pathname || '/');
       // Preserve filename segment if present
@@ -49,5 +56,5 @@ export const useUrlSync = ({
         window.history.replaceState({}, '', target);
       }
     } catch {}
-  }, [isAllMode, selectedProject?.folder, activeFilters?.dateRange?.start, activeFilters?.dateRange?.end, activeFilters?.fileType, activeFilters?.keepType, activeFilters?.orientation]);
+  }, [isAllPhotosView, selectedProject?.folder, activeFilters?.dateRange?.start, activeFilters?.dateRange?.end, activeFilters?.fileType, activeFilters?.keepType, activeFilters?.orientation]);
 };

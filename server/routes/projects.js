@@ -129,46 +129,50 @@ router.get('/:folder', async (req, res) => {
     if (!isCanonicalProjectFolder(folder)) {
       return res.status(400).json({ error: 'Invalid project folder format' });
     }
+
     const project = projectsRepo.getByFolder(folder);
-    if (!project) {
-      return res.status(404).json({ error: 'Project not found' });
-    }
-    if (project.status === 'canceled') {
+    if (!project || project.status === 'canceled') {
       return res.status(404).json({ error: 'Project not found' });
     }
 
-    // Map photos rows to legacy manifest-like shape expected by client
-    const page = photosRepo.listPaged({ project_id: project.id, limit: 100000, sort: 'filename', dir: 'ASC', cursor: null });
-    const photos = (page.items || []).map(r => ({
-      id: r.id,
-      manifest_id: r.manifest_id,
-      filename: r.filename,
-      basename: r.basename || undefined,
-      ext: r.ext || undefined,
-      created_at: r.created_at,
-      updated_at: r.updated_at,
-      date_time_original: r.date_time_original || undefined,
-      jpg_available: !!r.jpg_available,
-      raw_available: !!r.raw_available,
-      other_available: !!r.other_available,
-      keep_jpg: !!r.keep_jpg,
-      keep_raw: !!r.keep_raw,
-      thumbnail_status: r.thumbnail_status || undefined,
-      preview_status: r.preview_status || undefined,
-      orientation: r.orientation ?? undefined,
-      metadata: r.meta_json ? JSON.parse(r.meta_json) : undefined,
-    }));
+    const pendingDeletes = photosRepo.listPendingDeletesForProject(project.id) || [];
+    const keepMismatches = photosRepo.listKeepMismatchesForProject(project.id) || [];
+    const missingDerivatives = photosRepo.countMissingDerivativesForProject
+      ? photosRepo.countMissingDerivativesForProject(project.id)
+      : 0;
+    const totalPhotos = photosRepo.countByProject(project.id);
+    const recentJobs = jobsRepo.listByProject(project.id, { limit: 1 }) || [];
+    const recent = recentJobs.length ? {
+      last_job_started_at: recentJobs[0].started_at || recentJobs[0].created_at || null,
+      last_job_type: recentJobs[0].type || null,
+      last_job_status: recentJobs[0].status || null,
+    } : null;
 
-    const projectData = {
-      id: project.id,
-      project_name: project.project_name,
-      project_folder: project.project_folder,
-      created_at: project.created_at,
-      updated_at: project.updated_at,
-      photos,
-    };
-
-    res.json(projectData);
+    res.json({
+      summary: {
+        id: project.id,
+        project_name: project.project_name,
+        project_folder: project.project_folder,
+        created_at: project.created_at,
+        updated_at: project.updated_at,
+        status: project.status || 'active',
+      },
+      counts: {
+        photos_total: totalPhotos,
+        photos_pending_delete: pendingDeletes.length,
+        photos_keep_mismatch: keepMismatches.length,
+        photos_missing_derivatives: missingDerivatives,
+      },
+      recent_activity: recent,
+      feature_flags: {
+        legacy_manifest_enabled: false,
+      },
+      links: {
+        photos: `/api/projects/${encodeURIComponent(project.project_folder)}/photos`,
+        locate_page: `/api/projects/${encodeURIComponent(project.project_folder)}/photos/locate-page`,
+        jobs: `/api/projects/${encodeURIComponent(project.project_folder)}/jobs`,
+      },
+    });
   } catch (err) {
     log.error('project_get_failed', { error: err && err.message, stack: err && err.stack, project_folder: req.params && req.params.folder });
     res.status(500).json({ error: 'Failed to get project details' });

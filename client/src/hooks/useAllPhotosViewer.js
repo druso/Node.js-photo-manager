@@ -5,7 +5,6 @@ export default function useAllPhotosViewer({
   activeFilters,
   setViewerList,
   setViewerState,
-  setIsAllMode,
   projects,
   handleProjectSelect,
   pendingOpenRef,
@@ -35,19 +34,5 @@ export default function useAllPhotosViewer({
     } catch {}
   }, [allPhotos, buildSearchParams, setViewerList, setViewerState]);
 
-  const handleOpenInProjectFromViewer = useCallback((photo) => {
-    if (!photo || !photo.project_folder) return;
-    pendingOpenRef.current = { folder: photo.project_folder, filename: photo.filename };
-    setViewerState(prev => ({ ...(prev || {}), isOpen: false }));
-    setIsAllMode(false);
-    try {
-      const search = buildSearchParams();
-      const nameForUrl = photo.basename || (photo.filename || '').replace(/\.[^/.]+$/, '');
-      window.history.pushState({}, '', `/${encodeURIComponent(photo.project_folder)}/${encodeURIComponent(nameForUrl)}${search}`);
-    } catch {}
-    const proj = projects.find(p => p.folder === photo.project_folder);
-    if (proj) handleProjectSelect(proj);
-  }, [buildSearchParams, handleProjectSelect, pendingOpenRef, projects, setIsAllMode, setViewerState]);
-
-  return { handleAllPhotoSelect, handleOpenInProjectFromViewer };
+  return { handleAllPhotoSelect };
 }

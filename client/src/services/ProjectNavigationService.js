@@ -25,6 +25,7 @@ export class ProjectNavigationService {
     // Current state
     selectedProject,
     activeFilters,
+    projects,
     
     // Refs
     previousProjectRef,
@@ -50,6 +51,7 @@ export class ProjectNavigationService {
     this.setSelectedPhotos = setSelectedPhotos;
     this.selectedProject = selectedProject;
     this.activeFilters = activeFilters;
+    this.projects = projects;
     this.previousProjectRef = previousProjectRef;
     this.windowScrollRestoredRef = windowScrollRestoredRef;
     this.initialSavedYRef = initialSavedYRef;
@@ -109,11 +111,26 @@ export class ProjectNavigationService {
   toggleAllMode() {
     const currentlyAll = this.view?.project_filter === null;
     const nextIsAll = !currentlyAll;
+    
+    console.log('[toggle] Current state:', { 
+      currentlyAll, 
+      nextIsAll,
+      currentView: this.view,
+      selectedProject: this.selectedProject,
+      previousProject: this.previousProjectRef.current
+    });
 
     try {
       if (nextIsAll) {
+        // Switching TO All Photos mode
         this.updateProjectFilter(null);
-
+        
+        // Remember previous project for when we switch back
+        if (this.selectedProject && this.selectedProject.folder !== this.ALL_PROJECT_SENTINEL.folder) {
+          this.previousProjectRef.current = this.selectedProject;
+        }
+        
+        // Set URL to /all with any active filters
         const range = (this.activeFilters?.dateRange) || {};
         const qp = new URLSearchParams();
         if (range.start) qp.set('date_from', range.start);
@@ -124,16 +141,38 @@ export class ProjectNavigationService {
         const search = qp.toString();
         window.history.pushState({}, '', `/all${search ? `?${search}` : ''}`);
       } else {
-        const targetFolder = this.selectedProject?.folder || null;
-        this.updateProjectFilter(targetFolder);
-
+        // Switching FROM All Photos mode
+        
+        // Use previous project if available, otherwise use first project in list
+        let targetProject = this.previousProjectRef.current;
+        
+        // If no previous project is stored, use the first available project
+        if (!targetProject && this.projects && this.projects.length > 0) {
+          targetProject = this.projects[0];
+          console.log('[toggle] No previous project, using first available:', targetProject);
+        }
+        
+        const targetFolder = targetProject?.folder || null;
+        console.log('[toggle] Switching to project mode with target:', targetProject);
+        
+        // If we have a valid project, select it directly
+        if (targetProject) {
+          this.handleProjectSelect(targetProject);
+        } else {
+          // Otherwise just update the filter
+          this.updateProjectFilter(targetFolder);
+        }
+        
+        // Update URL
         if (targetFolder) {
           window.history.pushState({}, '', `/${encodeURIComponent(targetFolder)}`);
         } else {
           window.history.pushState({}, '', '/');
         }
       }
-    } catch {}
+    } catch (error) {
+      console.error('Error toggling All Photos mode:', error);
+    }
 
     this.setSelectedPhotos(new Set());
     this.clearAllSelection();
@@ -160,6 +199,7 @@ export function useProjectNavigation({
   // Current state
   selectedProject,
   activeFilters,
+  projects,
   
   // Refs
   previousProjectRef,
@@ -186,6 +226,7 @@ export function useProjectNavigation({
     setSelectedPhotos,
     selectedProject,
     activeFilters,
+    projects,
     previousProjectRef,
     windowScrollRestoredRef,
     initialSavedYRef,
