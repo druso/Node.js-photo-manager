@@ -4,14 +4,16 @@ import { setSessionWindowY, setSessionMainY } from '../utils/storage';
 /**
  * Hook to handle UI state persistence
  * Extracts persistence-related useEffect blocks from App.jsx
+ * 
+ * NOTE: filtersCollapsed and activeFilters are no longer persisted.
+ * - filtersCollapsed: UI state not worth persisting
+ * - activeFilters: now managed via URL parameters
  */
 export function usePersistence({
   // State
   uiPrefsReady,
   viewMode,
   sizeLevel,
-  filtersCollapsed,
-  activeFilters,
   
   // Refs
   uiPrefsReadyRef,
@@ -21,22 +23,20 @@ export function usePersistence({
   // Config
   DEBUG_PERSIST = false
 }) {
-  // Persist UI prefs when they change
+  // Persist UI prefs when they change (only viewMode and sizeLevel)
   useEffect(() => {
     if (!uiPrefsReadyRef.current || !uiPrefsReady) return; // wait until load attempt completes
     try {
       const toSave = {
         viewMode,
-        sizeLevel,
-        filtersCollapsed,
-        activeFilters
+        sizeLevel
       };
       localStorage.setItem('ui_prefs', JSON.stringify(toSave));
       if (DEBUG_PERSIST) console.debug('[persist] saved ui_prefs:', toSave);
     } catch (error) {
       if (DEBUG_PERSIST) console.debug('[persist] failed to save ui_prefs:', error);
     }
-  }, [uiPrefsReady, viewMode, sizeLevel, filtersCollapsed, activeFilters, uiPrefsReadyRef, DEBUG_PERSIST]);
+  }, [uiPrefsReady, viewMode, sizeLevel, uiPrefsReadyRef, DEBUG_PERSIST]);
 
   // Ensure we save once after readiness even if no user changes yet
   useEffect(() => {
@@ -47,14 +47,14 @@ export function usePersistence({
     // Trigger a save by updating a dummy dependency
     const timer = setTimeout(() => {
       try {
-        const toSave = { viewMode, sizeLevel, filtersCollapsed, activeFilters };
+        const toSave = { viewMode, sizeLevel };
         localStorage.setItem('ui_prefs', JSON.stringify(toSave));
         if (DEBUG_PERSIST) console.debug('[persist] initial save after ready:', toSave);
       } catch {}
     }, 100);
     
     return () => clearTimeout(timer);
-  }, [uiPrefsReady, viewMode, sizeLevel, filtersCollapsed, activeFilters, prefsLoadedOnceRef, DEBUG_PERSIST]);
+  }, [uiPrefsReady, viewMode, sizeLevel, prefsLoadedOnceRef, DEBUG_PERSIST]);
 
   // Persist main scroll position (session-only)
   useEffect(() => {

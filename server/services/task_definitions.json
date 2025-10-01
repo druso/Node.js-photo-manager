@@ -2,6 +2,7 @@
   "upload_postprocess": {
     "label": "Upload Post-Process",
     "user_relevant": true,
+    "scope": "project",
     "steps": [
       { "type": "upload_postprocess", "priority": 90 },
       { "type": "manifest_check", "priority": 95 },
@@ -11,6 +12,18 @@
   "change_commit": {
     "label": "Commit Changes",
     "user_relevant": true,
+    "scope": "project",
+    "steps": [
+      { "type": "file_removal", "priority": 100 },
+      { "type": "manifest_check", "priority": 95 },
+      { "type": "folder_check", "priority": 95 },
+      { "type": "manifest_cleaning", "priority": 80 }
+    ]
+  },
+  "change_commit_all": {
+    "label": "Commit Changes (All Photos)",
+    "user_relevant": true,
+    "scope": "photo_set",
     "steps": [
       { "type": "file_removal", "priority": 100 },
       { "type": "manifest_check", "priority": 95 },
@@ -21,6 +34,18 @@
   "maintenance": {
     "label": "Maintenance",
     "user_relevant": false,
+    "scope": "project",
+    "steps": [
+      { "type": "trash_maintenance", "priority": 100 },
+      { "type": "manifest_check", "priority": 95 },
+      { "type": "folder_check", "priority": 95 },
+      { "type": "manifest_cleaning", "priority": 80 }
+    ]
+  },
+  "maintenance_global": {
+    "label": "Global Maintenance",
+    "user_relevant": false,
+    "scope": "global",
     "steps": [
       { "type": "trash_maintenance", "priority": 100 },
       { "type": "manifest_check", "priority": 95 },
@@ -31,6 +56,7 @@
   "trash_only": {
     "label": "Trash Cleanup Only",
     "user_relevant": false,
+    "scope": "project",
     "steps": [
       { "type": "trash_maintenance", "priority": 100 }
     ]
@@ -38,6 +64,15 @@
   "project_scavenge": {
     "label": "Project Scavenge (Archived Only)",
     "user_relevant": false,
+    "scope": "project",
+    "steps": [
+      { "type": "project_scavenge", "priority": 100 }
+    ]
+  },
+  "project_scavenge_global": {
+    "label": "Global Project Scavenge",
+    "user_relevant": false,
+    "scope": "global",
     "steps": [
       { "type": "project_scavenge", "priority": 100 }
     ]
@@ -45,6 +80,7 @@
   "project_delete": {
     "label": "Delete Project",
     "user_relevant": true,
+    "scope": "project",
     "steps": [
       { "type": "project_stop_processes", "priority": 100 },
       { "type": "project_delete_files", "priority": 100 },
@@ -54,6 +90,7 @@
   "image_move": {
     "label": "Move Image Between Projects",
     "user_relevant": true,
+    "scope": "photo_set",
     "steps": [
       { "type": "image_move_files", "priority": 95 },
       { "type": "manifest_check", "priority": 95 },

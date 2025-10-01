@@ -83,10 +83,11 @@ function applySchema(db) {
   CREATE INDEX IF NOT EXISTS idx_photos_orientation ON photos(project_id, orientation);
 
   -- Durable async jobs (global queue)
+  -- Note: project_id is now optional to support cross-project and global jobs
   CREATE TABLE IF NOT EXISTS jobs (
     id INTEGER PRIMARY KEY,
     tenant_id TEXT NOT NULL,
-    project_id INTEGER NOT NULL,
+    project_id INTEGER,
     type TEXT NOT NULL,
     status TEXT NOT NULL,
     created_at TEXT NOT NULL,
@@ -100,7 +101,9 @@ function applySchema(db) {
     heartbeat_at TEXT,
     -- priority is part of the fresh-start schema; ensure for new DBs
     priority INTEGER NOT NULL DEFAULT 0,
-    FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
+    -- scope indicates the job's operational context: 'project', 'photo_set', 'global'
+    scope TEXT NOT NULL,
+    FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE SET NULL
   );
 
   CREATE TABLE IF NOT EXISTS job_items (
@@ -143,6 +146,17 @@ function applySchema(db) {
   } catch (e) {
     try { log.warn('index_create_failed', { index: 'idx_jobs_status_priority_created', error: e && e.message }); } catch {}
   }
+  // Add index for scope-based queries
+  try {
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_jobs_scope_status ON jobs(scope, status, created_at DESC)`);
+  } catch (e) {
+    try { log.warn('index_create_failed', { index: 'idx_jobs_scope_status', error: e && e.message }); } catch {}
+  }
+  try {
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_jobs_tenant_scope ON jobs(tenant_id, scope, status, created_at DESC)`);
+  } catch (e) {
+    try { log.warn('index_create_failed', { index: 'idx_jobs_tenant_scope', error: e && e.message }); } catch {}
+  }
 
   // Index to support cross-project photos ordering (taken_at DESC, id DESC)
   // taken_at is COALESCE(date_time_original, created_at); we index both date_time_original and created_at with id
@@ -151,6 +165,7 @@ function applySchema(db) {
   } catch (e) {
     try { log.warn('index_create_failed', { index: 'idx_photos_taken_created_id', error: e && e.message }); } catch {}
   }
+
 }
 
 function withTransaction(fn) {

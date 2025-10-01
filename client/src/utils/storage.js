@@ -1,8 +1,10 @@
-// Centralized persistent storage with migration from legacy session/local keys
+// Centralized persistent storage
 // Canonical schema:
-// - localStorage 'ui_prefs': { viewMode, sizeLevel, filtersCollapsed, activeFilters, activeTab }
+// - localStorage 'ui_prefs': { viewMode, sizeLevel }
 // - SESSION-ONLY single key `session_ui_state` for current tab session:
-//     { windowY?: number, mainY?: number, viewer?: { isOpen: boolean, startIndex?: number, filename?: string, showInfo?: boolean } }
+//     { windowY?: number, mainY?: number, pagination?: { [mode]: { cursors, pages } } }
+//
+// NOTE: Viewer state, filters, and other navigation state are now managed via URL parameters
 
 const safeParse = (s, fallback = null) => {
   try { return JSON.parse(s); } catch { return fallback; }
@@ -51,8 +53,23 @@ export function clearSessionState() {
 
 export function setSessionWindowY(y) { setSessionState({ windowY: Number(y) || 0 }); }
 export function setSessionMainY(y) { setSessionState({ mainY: Number(y) || 0 }); }
-export function setSessionViewer(viewer) {
+
+// Pagination cursor persistence
+export function getSessionPagination(mode) {
+  const state = getSessionState();
+  return state?.pagination?.[mode] || null;
+}
+
+export function setSessionPagination(mode, paginationState) {
   const prev = getSessionState();
-  const mergedViewer = { ...(prev.viewer || {}), ...(viewer || {}) };
-  setSessionState({ viewer: mergedViewer });
+  const pagination = { ...(prev.pagination || {}), [mode]: paginationState };
+  setSessionState({ pagination });
+}
+
+export function clearSessionPagination(mode) {
+  const prev = getSessionState();
+  if (!prev.pagination) return;
+  const pagination = { ...prev.pagination };
+  delete pagination[mode];
+  setSessionState({ pagination });
 }

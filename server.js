@@ -74,6 +74,9 @@ app.use('/api', photosRouter);
 // Image-scoped actions (tags/keep, future process/move)
 const photosActionsRouter = require('./server/routes/photosActions');
 app.use('/api', photosActionsRouter);
+// SSE (Server-Sent Events) for real-time updates
+const { router: sseRouter } = require('./server/routes/sse');
+app.use('/api/sse', sseRouter);
 
 // Centralized error handler (must be after routes)
 app.use(errorHandler);

@@ -15,6 +15,7 @@ This application helps photographers manage their photo collections by:
 ## Technology
 
 - **Frontend**: React with Vite and Tailwind CSS
+  - **URL-Based State Management**: Shareable and bookmarkable URLs with filters and viewer state in URL parameters
   - **Unified View Architecture**: Single source of truth using `view.project_filter` context (null for All Photos, project folder string for Project view)
   - **Highly Optimized Architecture**: Main App.jsx reduced from ~2,350 to 1,021 lines (57% reduction) through systematic extraction
   - **Modular Hook System**: 20+ specialized React hooks for separation of concerns and reusability
@@ -27,6 +28,7 @@ This application helps photographers manage their photo collections by:
 - **Modular Architecture**: Both frontend and backend use modular architecture:
   - **Frontend**: Specialized hooks, services, and components for maintainability
   - **Backend**: Repository layer optimized into focused modules (photosRepo.js delegates to specialized photoCrud, photoFiltering, photoPagination, photoPendingOps, and photoQueryBuilders modules)
+  - **Job Pipeline**: Workers consume scope-aware jobs (`project`, `photo_set`, `global`) using shared helpers in `server/services/workers/shared/photoSetUtils.js` so cross-project operations stay consistent. See `JOBS_OVERVIEW.md` for the canonical catalog.
 
 ## API Quick Reference
 
@@ -58,6 +60,7 @@ This application helps photographers manage their photo collections by:
 - **Realtime Jobs**
   - `GET /api/jobs/stream` — SSE stream
   - `GET /api/jobs` — list jobs (admin/dev)
+  - Scope-aware orchestration: jobs carry `scope` metadata so workers can operate on single projects, arbitrary photo sets, or global maintenance without custom code paths.
 
 - **All Photos (cross-project)**
   - `GET /api/photos` — paginated list across all non-archived projects
@@ -70,6 +73,7 @@ This application helps photographers manage their photo collections by:
       - `include=tags`: optionally include tag names for each photo
     - Returns: `{ items, total, unfiltered_total, next_cursor, prev_cursor, limit, date_from, date_to }`
     - Headers: `Cache-Control: no-store`
+    - Payload guardrail: endpoints accepting photo lists enforce a 2,000 item limit (see "Payload Validation").
   - `GET /api/photos/locate-page` — locate and return the page that contains a specific photo
     - Required: `project_folder`, and one of `filename` (with extension) or `name` (basename)
     - Optional: `limit(1-300)`, `date_from`, `date_to`, `file_type`, `keep_type`, `orientation`, `tags`, `include=tags`

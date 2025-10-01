@@ -14,21 +14,45 @@ function loadDefs() {
   return defs;
 }
 
-function startTask({ project_id, type, source = 'user', items = null, tenant_id = 'user_0' }) {
+function startTask({ project_id = null, type, source = 'user', items = null, tenant_id = 'user_0', scope = null, payload: extraPayload = null }) {
   const d = loadDefs();
   const def = d[type];
   if (!def) throw new Error(`Unknown task type: ${type}`);
+  
+  const effectiveScope = scope || def.scope;
+  if (!effectiveScope) throw new Error(`Task type '${type}' missing scope in definition`);
+  
   const task_id = uuidv4();
   const first = def.steps && def.steps[0];
   if (!first) return { task_id, type };
-  const payload = { task_id, task_type: type, source };
+  
+  const payload = { task_id, task_type: type, source, ...extraPayload };
   let job;
+  
   if (items && Array.isArray(items) && items.length > 0) {
-    job = jobsRepo.enqueueWithItems({ tenant_id, project_id, type: first.type, payload, items: items.map(fn => ({ filename: fn })), priority: first.priority || 0 });
+    job = jobsRepo.enqueueWithItems({ 
+      tenant_id, 
+      project_id, 
+      type: first.type, 
+      payload, 
+      items: items.map(fn => typeof fn === 'string' ? { filename: fn } : fn), 
+      priority: first.priority || 0,
+      scope: effectiveScope
+    });
   } else {
-    job = jobsRepo.enqueue({ tenant_id, project_id, type: first.type, payload, priority: first.priority || 0 });
+    job = jobsRepo.enqueue({ 
+      tenant_id, 
+      project_id, 
+      type: first.type, 
+      payload, 
+      priority: first.priority || 0,
+      scope: effectiveScope
+    });
   }
-  return { task_id, type, first_job_id: job?.id };
+  
+  // Handle chunked jobs (array return from enqueueWithItems)
+  const firstJobId = Array.isArray(job) ? job[0]?.id : job?.id;
+  return { task_id, type, first_job_id: firstJobId, chunked: Array.isArray(job), job_count: Array.isArray(job) ? job.length : 1 };
 }
 
 function onJobCompleted(job) {
@@ -54,8 +78,9 @@ function onJobCompleted(job) {
   }
   const tenant_id = job.tenant_id || 'user_0';
   const project_id = job.project_id;
+  const scope = job.scope;
   const nextPayload = { ...payload }; // propagate task metadata
-  jobsRepo.enqueue({ tenant_id, project_id, type: next.type, payload: nextPayload, priority: next.priority || 0 });
+  jobsRepo.enqueue({ tenant_id, project_id, type: next.type, payload: nextPayload, priority: next.priority || 0, scope });
 }
 
 module.exports = { startTask, onJobCompleted };

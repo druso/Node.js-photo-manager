@@ -100,6 +100,35 @@ export function useAppInitialization({
       const qs = window.location?.search || '';
       const params = new URLSearchParams(qs);
       
+      // Parse filter parameters from URL
+      const urlFilters = {};
+      const dateFrom = params.get('date_from');
+      const dateTo = params.get('date_to');
+      if (dateFrom || dateTo) {
+        urlFilters.dateRange = { start: dateFrom || '', end: dateTo || '' };
+      }
+      const fileType = params.get('file_type');
+      if (fileType && fileType !== 'any') urlFilters.fileType = fileType;
+      const keepType = params.get('keep_type');
+      if (keepType && keepType !== 'any') urlFilters.keepType = keepType;
+      const orientation = params.get('orientation');
+      if (orientation && orientation !== 'any') urlFilters.orientation = orientation;
+      
+      // Apply URL filters if any were found
+      if (Object.keys(urlFilters).length > 0) {
+        setActiveFilters(prev => ({ ...prev, ...urlFilters }));
+      }
+      
+      // Parse showdetail parameter for viewer - will be applied when viewer opens
+      const showDetail = params.get('showdetail') === '1';
+      if (showDetail) {
+        console.log('[useAppInitialization] Found showdetail=1 in URL');
+        // Store in sessionStorage so PhotoViewer can read it
+        try {
+          sessionStorage.setItem('viewer_show_detail_from_url', '1');
+        } catch {}
+      }
+      
       // Check for All Photos mode
       if (path === '/all' || params.get('mode') === 'all') {
         // Set unified view context
@@ -178,7 +207,8 @@ export function useAppInitialization({
     } catch {}
   }, [view.project_filter]);
 
-  // Load UI prefs from localStorage on mount
+  // Load UI prefs from localStorage on mount (only viewMode and sizeLevel)
+  // NOTE: filtersCollapsed and activeFilters are no longer persisted
   useEffect(() => {
     try {
       const raw = localStorage.getItem('ui_prefs');
@@ -193,8 +223,7 @@ export function useAppInitialization({
       
       if (prefs.viewMode) setViewMode(prefs.viewMode);
       if (prefs.sizeLevel) setSizeLevel(prefs.sizeLevel);
-      if (typeof prefs.filtersCollapsed === 'boolean') setFiltersCollapsed(prefs.filtersCollapsed);
-      if (prefs.activeFilters) setActiveFilters(prev => ({ ...prev, ...prefs.activeFilters }));
+      // filtersCollapsed and activeFilters are no longer loaded from localStorage
       
       uiPrefsLoadedRef.current = true;
     } catch (error) {
@@ -202,7 +231,7 @@ export function useAppInitialization({
     } finally {
       uiPrefsReadyRef.current = true;
     }
-  }, [setViewMode, setSizeLevel, setFiltersCollapsed, setActiveFilters, uiPrefsLoadedRef, uiPrefsReadyRef, DEBUG_PERSIST]);
+  }, [setViewMode, setSizeLevel, uiPrefsLoadedRef, uiPrefsReadyRef, DEBUG_PERSIST]);
 
   // Apply UI defaults on config load (only if no saved UI prefs were found)
   useEffect(() => {
@@ -282,11 +311,12 @@ export function useAppInitialization({
     const fetchPendingDeletes = async () => {
       try {
         const range = activeFilters?.dateRange || {};
+        // Don't pass keep_type to pending deletes API - it has its own internal filter
         const result = await listAllPendingDeletes({
           date_from: range.start || undefined,
           date_to: range.end || undefined,
-          file_type: activeFilters?.fileType,
-          orientation: activeFilters?.orientation,
+          file_type: activeFilters?.fileType !== 'any' ? activeFilters?.fileType : undefined,
+          orientation: activeFilters?.orientation !== 'any' ? activeFilters?.orientation : undefined,
         });
         setAllPendingDeletes({
           jpg: result.jpg || 0,

@@ -72,15 +72,16 @@ export default function useViewerSync({
 
   const handleCloseViewer = useCallback(() => {
     const wasAll = !!(isAllMode || viewerState.fromAll);
-    setViewerState(prev => ({ ...(prev || {}), isOpen: false }));
+    setViewerState(prev => ({ ...(prev || {}), isOpen: false, showInfo: false }));
     const query = buildQueryString(activeFilters);
-    if (wasAll) {
-      safePushState(`/all${query}`);
-    } else if (selectedProject?.folder) {
-      safePushState(`/${encodeURIComponent(selectedProject.folder)}${query}`);
-    } else {
-      safePushState('/');
-    }
+    const targetUrl = wasAll 
+      ? `/all${query}`
+      : selectedProject?.folder 
+        ? `/${encodeURIComponent(selectedProject.folder)}${query}`
+        : '/';
+    
+    console.log('[handleCloseViewer] Closing viewer, updating URL to:', targetUrl);
+    safePushState(targetUrl);
     setViewerList(null);
   }, [isAllMode, viewerState.fromAll, setViewerState, activeFilters, selectedProject?.folder, setViewerList]);
 

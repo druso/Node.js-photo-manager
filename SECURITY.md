@@ -312,3 +312,22 @@ No functional changes were introduced by this documentation update; it reflects 
   - ✅ **Backward compatibility**: All existing security controls and validations preserved
 - **Risk**: None identified. This is a pure architectural improvement that enhances code maintainability without changing security posture.
 - **Monitoring**: Server startup logs confirm successful module loading and delegation.
+
+## 2025-09-30: Real-time Pending Changes SSE
+
+- **Feature**: Implemented Server-Sent Events stream for real-time pending changes notifications
+- **Changes**:
+  - New endpoint: `GET /api/sse/pending-changes` broadcasts boolean flags per project
+  - Automatically triggers on keep flag updates via `PUT /api/projects/:folder/keep`
+  - Frontend hooks: `usePendingChangesSSE()` maintains connection, `usePendingDeletes()` consumes data
+  - Drives commit/revert toolbar visibility in real-time across all browser tabs
+- **Security Assessment**:
+  - ✅ **No authentication required**: Single-user application, consistent with existing SSE endpoints
+  - ✅ **Minimal data exposure**: Only boolean flags per project (no photo data, filenames, or metadata)
+  - ✅ **SQL injection protection**: Parameterized queries via `better-sqlite3`
+  - ✅ **Resource management**: Connection tracking with cleanup on disconnect, keepalive every 30s
+  - ✅ **DoS mitigation**: Broadcasts only on actual state changes, not on every request
+  - ⚠️ **Connection limits**: No per-IP limits (unlike `/api/jobs/stream`), but low overhead per connection
+- **Risk**: Low. Minimal data exposure, efficient resource usage, consistent with existing SSE patterns.
+- **Future Consideration**: Add connection limits if multi-user deployment planned.
+- **Monitoring**: Server logs SSE connections, disconnections, and broadcast events.

@@ -3,57 +3,63 @@ import { useMemo } from 'react';
 /**
  * Hook to calculate pending deletes for both All Photos and Project views
  * 
- * ARCHITECTURAL DECISION: Unified View Context
- * There is NO conceptual distinction between "All Photos" and "Project" views.
- * A Project view is simply the All Photos view with a project filter applied.
+ * ARCHITECTURAL DECISION: SSE-Driven Pending Changes
+ * Uses Server-Sent Events (SSE) to receive real-time updates about pending changes.
+ * The backend sends boolean flags per project indicating if changes are pending.
  * 
- * This hook uses view.project_filter to determine the current view context
- * while maintaining backward compatibility with isAllMode during transition.
+ * This hook uses view.project_filter to determine the current view context.
  */
 export function usePendingDeletes({
   // Unified view context
   view,
   
+  // SSE data (real-time pending changes from backend)
+  pendingChangesSSE,
+  
   // Legacy properties (for backward compatibility)
-  projectData,
   selectedProject,
-  allPendingDeletes,
   isAllMode
 }) {
-  // Pending destructive actions: assets available but marked not to keep
-  const pendingDeletesProject = useMemo(() => {
-    const photos = projectData?.photos || [];
-    let jpg = 0, raw = 0;
-    for (const p of photos) {
-      if (p.jpg_available && p.keep_jpg === false) jpg++;
-      if (p.raw_available && p.keep_raw === false) raw++;
-    }
-    const total = jpg + raw;
-    const byProject = new Set();
-    if (total > 0 && selectedProject?.folder) {
-      byProject.add(selectedProject.folder);
-    }
-    return { jpg, raw, total, byProject };
-  }, [projectData, selectedProject?.folder]);
-
-  // Separate state for All Photos pending deletions (independent of filtered view)
-  const pendingDeletesAll = allPendingDeletes;
-
   // Use unified view context to determine which pending deletes to use
   const isAllPhotosView = view?.project_filter === null;
   
-  // For backward compatibility, fall back to isAllMode if view context is not available
-  const pendingDeleteTotals = (view !== undefined) 
-    ? (isAllPhotosView ? pendingDeletesAll : pendingDeletesProject)
-    : (isAllMode ? pendingDeletesAll : pendingDeletesProject);
-  const hasPendingDeletes = pendingDeleteTotals.total > 0;
-  const pendingProjectsCount = pendingDeleteTotals.byProject ? pendingDeleteTotals.byProject.size : 0;
+  // For All Photos: check if ANY project has pending changes
+  const hasPendingDeletesAll = useMemo(() => {
+    if (!pendingChangesSSE || typeof pendingChangesSSE !== 'object') return false;
+    return Object.values(pendingChangesSSE).some(hasPending => hasPending === true);
+  }, [pendingChangesSSE]);
+  
+  // For Project: check if THIS project has pending changes
+  const hasPendingDeletesProject = useMemo(() => {
+    if (!pendingChangesSSE || !selectedProject?.folder) return false;
+    return pendingChangesSSE[selectedProject.folder] === true;
+  }, [pendingChangesSSE, selectedProject?.folder]);
+  
+  // Determine if toolbar should show based on current view
+  const hasPendingDeletes = (view !== undefined)
+    ? (isAllPhotosView ? hasPendingDeletesAll : hasPendingDeletesProject)
+    : (isAllMode ? hasPendingDeletesAll : hasPendingDeletesProject);
+  
+  // Count how many projects have pending changes (for All Photos mode)
+  const pendingProjectsCount = useMemo(() => {
+    if (!pendingChangesSSE || typeof pendingChangesSSE !== 'object') return 0;
+    return Object.values(pendingChangesSSE).filter(hasPending => hasPending === true).length;
+  }, [pendingChangesSSE]);
+  
+  // Debug logging (only in development)
+  if (import.meta.env.DEV) {
+    console.log('[usePendingDeletes]', {
+      isAllPhotosView,
+      selectedProject: selectedProject?.folder,
+      hasPendingDeletes,
+      pendingProjectsCount
+    });
+  }
 
   return {
-    pendingDeletesProject,
-    pendingDeletesAll,
-    pendingDeleteTotals,
     hasPendingDeletes,
-    pendingProjectsCount
+    pendingProjectsCount,
+    // Legacy return values (kept for compatibility, but not used with SSE)
+    pendingDeleteTotals: { total: hasPendingDeletes ? 1 : 0 }
   };
 }

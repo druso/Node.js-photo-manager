@@ -8,6 +8,7 @@ const { rateLimit } = require('../utils/rateLimit');
 const projectsRepo = require('../services/repositories/projectsRepo');
 const photosRepo = require('../services/repositories/photosRepo');
 const { emitJobUpdate } = require('../services/events');
+const { broadcastPendingChanges } = require('./sse');
 
 const router = express.Router();
 // Ensure JSON parsing for this router
@@ -71,6 +72,16 @@ router.put('/:folder/keep', rateLimit({ windowMs: 60 * 1000, max: 120 }), async 
         }
       }
     }
+    
+    // Broadcast pending changes update via SSE
+    if (updatedCount > 0) {
+      try {
+        broadcastPendingChanges(folder);
+      } catch (err) {
+        log.error('sse_broadcast_failed', { error: err && err.message });
+      }
+    }
+    
     res.json({ message: `Updated keep flags for ${updatedCount} photos`, updated_count: updatedCount });
   } catch (err) {
     log.error('keep_update_failed', { error: err && err.message, stack: err && err.stack, project_folder: req.params && req.params.folder });

@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { getSessionState, setSessionViewer } from '../utils/storage';
 import { updateKeep } from '../api/keepApi';
 import { useToast } from '../ui/toast/ToastContext';
 
@@ -15,17 +14,30 @@ const PhotoViewer = ({
   onCurrentIndexChange,
   fromAllMode = false,
   onRequestMove,
+  onShowInfoChange,
 }) => {
   // All hooks are called at the top level, unconditionally.
   const [currentIndex, setCurrentIndex] = useState(startIndex);
   const [zoomPercent, setZoomPercent] = useState(0); // 0 = Fit, 100 = Actual size, 200 = 2x
   const [position, setPosition] = useState({ x: 0, y: 0 });
+  
+  // Read showInfo from URL parameter or sessionStorage
   const [showInfo, setShowInfo] = useState(() => {
     try {
-      const st = getSessionState();
-      if (st && st.viewer && typeof st.viewer.showInfo === 'boolean') return !!st.viewer.showInfo;
-    } catch {}
-    try { return sessionStorage.getItem('viewer_show_info') === '1'; } catch { return false; }
+      // Check sessionStorage first (set by useAppInitialization)
+      const fromStorage = sessionStorage.getItem('viewer_show_detail_from_url');
+      if (fromStorage === '1') {
+        sessionStorage.removeItem('viewer_show_detail_from_url');
+        console.log('[PhotoViewer] Opening with detail panel from URL');
+        return true;
+      }
+      
+      // Fallback to checking URL directly
+      const params = new URLSearchParams(window.location.search);
+      return params.get('showdetail') === '1';
+    } catch {
+      return false;
+    }
   });
   const containerRef = useRef(null);
   const [naturalSize, setNaturalSize] = useState({ w: 0, h: 0 });
@@ -124,11 +136,21 @@ const PhotoViewer = ({
 
   // Toasts handled globally via ToastProvider
   
-  // Persist Details panel visibility in session state (also keep legacy sessionStorage write during session)
+  // showInfo is now managed via URL parameter (handled by useUrlSync in App.jsx)
+  // Notify parent when showInfo changes so it can update the URL
   useEffect(() => {
-    try { setSessionViewer({ showInfo: !!showInfo }); } catch {}
-    try { sessionStorage.setItem('viewer_show_info', showInfo ? '1' : '0'); } catch {}
-  }, [showInfo]);
+    if (onShowInfoChange) {
+      onShowInfoChange(showInfo);
+    }
+  }, [showInfo, onShowInfoChange]);
+  
+  // On mount, if showInfo is true, notify parent immediately
+  useEffect(() => {
+    if (showInfo && onShowInfoChange) {
+      console.log('[PhotoViewer] Notifying parent of initial showInfo=true');
+      onShowInfoChange(true);
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const resolveProjectFolder = useCallback(() => {
     if (projectFolder && projectFolder !== '__all__') return projectFolder;

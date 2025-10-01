@@ -25,6 +25,7 @@ import { useScrollRestoration } from './hooks/useScrollRestoration';
 import { useFilterCalculations } from './hooks/useFilterCalculations';
 import { useModeSwitching } from './hooks/useModeSwitching';
 import { usePendingDeletes } from './hooks/usePendingDeletes';
+import { usePendingChangesSSE } from './hooks/usePendingChangesSSE';
 import { usePhotoDataRefresh } from './hooks/usePhotoDataRefresh';
 import { useCommitBarLayout } from './hooks/useCommitBarLayout';
 import { UploadProvider } from './upload/UploadContext';
@@ -289,6 +290,11 @@ function App() {
     toggleAllSelection(photo);
   }, [toggleAllSelection]);
 
+  // Handle showInfo changes from PhotoViewer
+  const handleShowInfoChange = useCallback((showInfo) => {
+    setViewerState(prev => ({ ...prev, showInfo }));
+  }, [setViewerState]);
+
 
 
 
@@ -357,7 +363,7 @@ function App() {
 
   usePersistence({
     // State
-    uiPrefsReady, viewMode, sizeLevel, filtersCollapsed, activeFilters,
+    uiPrefsReady, viewMode, sizeLevel,
     
     // Refs
     uiPrefsReadyRef, prefsLoadedOnceRef, mainRef,
@@ -398,11 +404,12 @@ function App() {
 
 
 
+  // Connect to SSE stream for real-time pending changes updates
+  const { pendingChanges, connected: sseConnected } = usePendingChangesSSE();
+  
   // Pending destructive actions: assets available but marked not to keep
-  // Pending deletes calculations extracted to custom hook
+  // Pending deletes calculations extracted to custom hook (now using SSE data)
   const {
-    pendingDeletesProject,
-    pendingDeletesAll,
     pendingDeleteTotals,
     hasPendingDeletes,
     pendingProjectsCount
@@ -410,10 +417,11 @@ function App() {
     // Unified view context
     view,
     
+    // SSE data (real-time pending changes from backend)
+    pendingChangesSSE: pendingChanges,
+    
     // Legacy properties (for backward compatibility)
-    projectData,
     selectedProject,
-    allPendingDeletes,
   });
 
   // Photo data refresh logic extracted to custom hook
@@ -467,7 +475,8 @@ function App() {
   useUrlSync({
     view,
     selectedProject,
-    activeFilters
+    activeFilters,
+    viewerState
   });
 
   const commitDescription = view?.project_filter === null
@@ -1030,6 +1039,7 @@ function App() {
             onKeepUpdated={handleKeepUpdated}
             onCurrentIndexChange={handleViewerIndexChange}
             fromAllMode={!!(view?.project_filter === null || viewerState.fromAll)}
+            onShowInfoChange={handleShowInfoChange}
             onRequestMove={(photo) => {
               const sourceFolder = photo?.project_folder || selectedProject?.folder || '';
               const filename = photo?.filename;

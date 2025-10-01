@@ -17,6 +17,15 @@ These behaviors make the "All Photos" surface rely on project iterations, compli
 2. Remove project-scoped assumptions from the pipeline entirely; project will become an optional attribute on any job.
 3. Deliver clear, modernized API contracts (backend + frontend) that embrace the new scope model, accepting endpoint changes as needed.
 
+# Confirmed Decisions & Constraints
+
+- **Tenant scope**: Treat the job layer as tenant-agnostic. `tenant_id` remains stored for folder access controls and per-tenant databases, but orchestration logic does not segment by tenant.
+- **Maximum job size**: Cap target lists at **2,000 photos per job**. Internally generated jobs must auto-chunk payloads above this limit; client-triggered endpoints must reject oversize requests with actionable guidance.
+- **Global maintenance**: Replace per-project scheduler loops with a single global maintenance task that evaluates all active projects.
+- **Progress visibility**: Each tenant sees only its own job progress in the UI. No additional project/category grouping is required beyond the tenant filter.
+- **Filter metadata**: Do not persist originating view filters (`project_filter`, date ranges, etc.) in job payloads.
+- **Deployment**: Plan a downtime migration. Ensure the job queue is empty before applying schema changes; no live migration is required in development.
+
 # Workplan with Milestones & Tests
 
 ## Milestone 1 — Schema & Repository Overhaul
@@ -25,6 +34,7 @@ These behaviors make the "All Photos" surface rely on project iterations, compli
   - Extend or rebuild the `jobs` table so `project_id` is optional and prefer storing explicit `targets` (photo IDs, project IDs, or both) in `payload_json`.
   - Update `jobsRepo.enqueue()` / `enqueueWithItems()` to use the new structure and drop mandatory project constraints.
   - Introduce `scope` metadata (e.g., `'photo_set'`, `'project'`, `'global'`) at the repository level to drive worker dispatch.
+  - Enforce the 2,000-item ceiling at enqueue time and split larger payloads into additional jobs transparently for internal callers.
 - **Tests**
   - Unit: `jobsRepo.enqueue()` with `scope='photo_set'` and no `project_id` persists payload and is claimable.
   - Integration: enqueue a dummy `photo_set` task via an express route (temporary harness) and verify `workerLoop` claims/executes it without project context.
@@ -35,6 +45,7 @@ These behaviors make the "All Photos" surface rely on project iterations, compli
   - Build shared utilities (e.g., `server/services/workers/shared/photoSetUtils.js`) that map incoming targets to `{ project_id, photo_ids[] }` batches when filesystem access requires grouping.
   - Rewrite `runGenerateDerivatives()`, `runFileRemoval()`, maintenance routines, and any other workers to operate purely on the supplied targets, without assuming `job.project_id` exists.
   - Remove legacy branches; ensure every worker gracefully handles mixed-project inputs using the new utilities.
+  - Ensure batching utilities can emit multiple chunked jobs or sub-steps when a payload exceeds the ceiling, so long-running tasks stay within resource bounds.
 - **Tests**
   - Unit: shared utility groups multi-project payloads correctly (and handles single-project cases transparently).
   - Integration: simulate cross-project derivative and commit jobs; confirm results for every targeted photo and absence of project-specific assumptions.
@@ -55,6 +66,7 @@ These behaviors make the "All Photos" surface rely on project iterations, compli
   - Redesign `/api/photos/commit-changes`, `/api/photos/revert-changes`, `/api/photos/process`, and related routes to accept explicit photo ID lists or filter descriptors, enqueueing a single scope-aware task.
   - Remove legacy per-project endpoints if redundant; consolidate around the new API surface.
   - Update `server/routes/uploads.js`, `photosActions.js`, `maintenance.js`, and any other route to use the rewritten orchestration.
+  - Validate client-submitted target lists against the 2,000-item ceiling, returning user-facing errors when limits are exceeded.
 - **Tests**
   - Integration: hit each endpoint with mixed-project inputs and validate that a single task/job lifecycle handles the request end-to-end.
   - Contract: ensure error handling and validation messages reflect the new API semantics (e.g., unknown photo IDs, oversized payloads).
@@ -69,27 +81,15 @@ These behaviors make the "All Photos" surface rely on project iterations, compli
     - Use `view.project_filter` instead of `isAllMode` to determine current view
     - Leverage the unified selection model with `PhotoRef` objects for consistent job targeting
     - Ensure job progress updates work consistently in both All Photos and Project views
-
-# Open Questions / Follow-ups
-
-- Do we need per-tenant scoping parallel to the new photo-set scope? (`jobsRepo` already stores `tenant_id`; verify requirements.)
-- Should we introduce job batching limits (e.g., max photos per job) to prevent extremely large payloads?
-- Decide how maintenance scheduling should operate in the new model (centralized photo-set runs vs project-level batching) and remove redundant scheduler loops.
-- How should job progress updates be displayed in the unified view context?
-- Should job scoping align with the unified view context (i.e., using `project_filter` as a scope identifier)?
+  - Filter progress displays so each tenant sees only its own jobs, aligning with the shared job pipeline.
 
 ## Milestone 6 — Documentation & Final Validation
 
 - **Tasks**
   - Update `JOBS_OVERVIEW.md`, `PROJECT_OVERVIEW.md`, `SCHEMA_DOCUMENTATION.md`, `README.md`, and affected workflows to describe the new scope-first design and retired endpoints.
   - Add release notes in `SECURITY.md` addressing rate limits, payload validation, and SSE behavior under the new model.
-  - Provide migration notes or one-time scripts to clean up existing queue rows/jobs to the new format.
+  - Provide migration notes detailing the downtime procedure: drain existing jobs, apply schema changes, and reseed task definitions before restarting workers.
+  - Document the 2,000-item limit and chunking expectations for both internal and client-triggered flows.
 - **Tests**
   - Final regression: run automated suites and targeted manual verification across all flows (upload, commit, revert, maintenance, image move) using the new endpoints.
   - Documentation review: confirm cross-links and workflow instructions match the refactored API surface.
-
-# Open Questions / Follow-ups
-
-- Do we need per-tenant scoping parallel to the new photo-set scope? (`jobsRepo` already stores `tenant_id`; verify requirements.)
-- Should we introduce job batching limits (e.g., max photos per job) to prevent extremely large payloads?
-- Decide how maintenance scheduling should operate in the new model (centralized photo-set runs vs project-level batching) and remove redundant scheduler loops.

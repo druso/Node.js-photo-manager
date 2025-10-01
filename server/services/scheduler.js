@@ -6,28 +6,22 @@ const log = makeLogger('scheduler');
 let timers = [];
 
 function startMaintenanceForActiveProjects() {
-  const projects = projectsRepo.list();
-  for (const p of projects) {
-    if (p.status === 'canceled') continue; // skip archived
-    try {
-      tasksOrchestrator.startTask({ project_id: p.id, type: 'maintenance', source: 'maintenance' });
-    } catch (e) {
-      try { log.warn('start_task_failed', { task_type: 'maintenance', project_id: p.id, project_folder: p.project_folder, project_name: p.project_name, error: e && e.message }); } catch {}
-    }
+  // Use global maintenance task instead of per-project loops
+  try {
+    tasksOrchestrator.startTask({ type: 'maintenance_global', source: 'maintenance', scope: 'global' });
+    try { log.info('started_global_maintenance', { task_type: 'maintenance_global' }); } catch {}
+  } catch (e) {
+    try { log.warn('start_task_failed', { task_type: 'maintenance_global', error: e && e.message }); } catch {}
   }
 }
 
 function startScavengeForArchivedProjects() {
-  const projects = projectsRepo.list();
-  for (const p of projects) {
-    if (p.status !== 'canceled') continue; // only archived
-    try {
-      tasksOrchestrator.startTask({ project_id: p.id, type: 'project_scavenge', source: 'maintenance' });
-      // Also run trash cleanup for archived projects
-      tasksOrchestrator.startTask({ project_id: p.id, type: 'trash_only', source: 'maintenance' });
-    } catch (e) {
-      try { log.warn('start_task_failed', { task_type: 'project_scavenge', project_id: p.id, project_folder: p.project_folder, project_name: p.project_name, error: e && e.message }); } catch {}
-    }
+  // Use global scavenge task instead of per-project loops
+  try {
+    tasksOrchestrator.startTask({ type: 'project_scavenge_global', source: 'maintenance', scope: 'global' });
+    try { log.info('started_global_scavenge', { task_type: 'project_scavenge_global' }); } catch {}
+  } catch (e) {
+    try { log.warn('start_task_failed', { task_type: 'project_scavenge_global', error: e && e.message }); } catch {}
   }
 }
 

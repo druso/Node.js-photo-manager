@@ -28,11 +28,13 @@ The application is built around a few key concepts:
 
 *   **Unified Filtering System**: Both All Photos and Project views use identical server-side filtering with consistent "filtered of total" count displays. Filters include date ranges, file type availability (JPG/RAW), keep flags, and photo orientation. This ensures scalable performance and consistent user experience across views.
 
-*   **Worker Pipeline**: To ensure the UI remains responsive, time-consuming tasks like generating thumbnails and previews are handled asynchronously by a background worker pipeline. The system includes specialized workers for image moves between projects, which update database records, move files and derivatives, and emit real-time SSE events to keep the UI synchronized. This system is designed to be extensible for future processing needs.
+*   **Worker Pipeline**: To ensure the UI remains responsive, time-consuming tasks like generating thumbnails and previews are handled asynchronously by a background worker pipeline. Each job now carries an explicit `scope` (`project`, `photo_set`, or `global`) so workers can operate on single projects, arbitrary photo collections, or system-wide maintenance alike. Shared helpers in `server/services/workers/shared/photoSetUtils.js` resolve job targets and group photo sets per project, keeping filesystem access safe for cross-project operations. The system includes specialized workers for image moves between projects, which update database records, move files and derivatives, and emit real-time SSE events to keep the UI synchronized. This system is designed to be extensible for future processing needs and the canonical job catalog lives in `JOBS_OVERVIEW.md`.
 
 *   **Database**: While photo files (originals, raws, previews) are stored on the file system, all their metadata—such as project association, tags, timestamps, and file paths—is stored in a central SQLite database. The frontend application relies on this database for fast access to photo information.
 
 *   **Modular Repository Architecture**: The photo repository layer has been optimized into focused, single-responsibility modules to improve maintainability and testability. The main `photosRepo.js` serves as a clean interface that delegates to specialized modules: `photoCrud.js` for basic operations, `photoFiltering.js` for search and filtering, `photoPagination.js` for pagination logic, `photoPendingOps.js` for pending operations, and `photoQueryBuilders.js` for SQL construction utilities. This architecture reduces complexity while maintaining full backward compatibility.
+
+*   **URL-Based State Management**: The application uses URLs as the primary source of truth for navigation state, making the application shareable and bookmarkable. URL parameters control filters (`date_from`, `date_to`, `file_type`, `keep_type`, `orientation`), viewer state (photo path in URL), and UI preferences (`showinfo=1` for info panel). localStorage stores only essential UI preferences (viewMode, sizeLevel), while sessionStorage handles scroll positions and pagination cursors. This architecture eliminates redundant state storage and provides a better user experience with shareable URLs.
 
 ## 3. Technology Stack
 
@@ -292,6 +294,7 @@ Refer to `SECURITY.md` for detailed security implementation and best practices.
 1.  **Job Polling**: The `workerLoop.js` service periodically polls the `jobs` table for new, unprocessed jobs.
 2.  **Job Execution**: When a new job is found, the worker executes the corresponding task (e.g., the thumbnail generation worker is called).
     - The pipeline has two lanes. Deletion steps run with priority ≥ threshold so they claim priority slots and run ahead of normal jobs.
+    - Scope drives execution: `project` jobs operate on a single project, `photo_set` jobs iterate over grouped photo subsets, and `global` jobs run system-wide reconciliation.
 3.  **Processing**: The worker generates the required assets (e.g., a JPEG preview and a smaller thumbnail) and saves them to the appropriate directory.
 4.  **Update Database**: The paths to the newly generated assets are saved in the photo's database record.
 5.  **Job Completion**: The job is marked as `completed` in the `jobs` table.
@@ -309,7 +312,7 @@ Refer to `SECURITY.md` for detailed security implementation and best practices.
 
 ### Maintenance Processes
 
-Maintenance tasks keep the on‑disk state and the database in sync. They are implemented as high‑priority, idempotent jobs handled by the same worker loop.
+Maintenance tasks keep the on‑disk state and the database in sync. They are implemented as high‑priority, idempotent jobs handled by the same worker loop and scheduled through scope-aware tasks.
 
 Job types:
 
@@ -341,15 +344,9 @@ Job types:
 
 Scheduler (`server/services/scheduler.js`) cadence:
 
-- Hourly kickoff of the unified `maintenance` task for active (non‑archived) projects only. This task encapsulates:
-  - `trash_maintenance` (priority 100)
-  - `manifest_check` (95)
-  - `folder_check` (95)
-  - `manifest_cleaning` (80)
-- Hourly kickoff of `project_scavenge` for archived projects to remove any leftover `.projects/<project_folder>/` directories.
+- Hourly kickoff of a single global `maintenance_global` task (scope `global`). This fans out to `trash_maintenance` (priority 100), `manifest_check` (95), `folder_check` (95), and `manifest_cleaning` (80) inside the pipeline without looping over projects in the scheduler itself.
+- Hourly kickoff of `project_scavenge_global` (scope `global`) for archived projects to remove any leftover `.projects/<project_folder>/` directories.
   See `server/services/scheduler.js` and the canonical jobs catalog in `JOBS_OVERVIEW.md`.
-
-Manual reconciliation endpoints:
 
 - `POST /api/projects/:folder/commit-changes` (project-scoped)
   - Moves non‑kept files to `.trash` based on `keep_jpg`/`keep_raw` flags for the specified project
@@ -576,6 +573,8 @@ Response shape:
 - If new defaults are introduced, they will be appended to `config.json` on first run after upgrade. This persistence is expected and helps keep config current.
 
 ### Real-time Features
+
+#### Job Updates SSE
 *   **Server-Sent Events**: `GET /api/jobs/stream` - Live job and item updates
 *   **Job Status**: Real-time notifications for thumbnail generation, uploads, etc.
 *   **Client SSE Singleton**: The client uses a single shared `EventSource` managed in `client/src/api/jobsApi.js` (`openJobStream()`) to avoid exceeding server per‑IP limits and to reduce resource usage.
@@ -586,6 +585,19 @@ Response shape:
     - Item updates now include keep flag changes. The `PUT /api/projects/:folder/keep` route emits `type: "item"` with `keep_jpg`/`keep_raw` so the client can reconcile preview/filters without a page refresh. The client normalizes filenames (strips known photo extensions) so SSE events reconcile correctly whether the DB stored a filename with or without an extension.
     - Grid sync: the paginated grid state (`pagedPhotos`) is kept in sync with optimistic actions (commit/revert/keep changes) and SSE `item`, `item_removed`, and `manifest_changed` events so preview mode reflects changes immediately without page refresh.
     - Dev-only logs: `[SSE] ...` messages from the client are printed only in Vite dev mode (`import.meta.env.DEV`). Production builds suppress these logs.
+
+#### Pending Changes SSE
+*   **Real-time Toolbar Updates**: `GET /api/sse/pending-changes` - Live pending changes status per project
+*   **Purpose**: Drives commit/revert toolbar visibility in real-time across all browser tabs
+*   **Architecture**: Server-Sent Events stream that broadcasts boolean flags per project indicating if pending changes exist (mismatches between availability and keep flags)
+*   **Data Format**: `{ "p15": true, "p7": false, ... }` where `true` indicates the project has photos marked for deletion
+*   **Trigger**: Automatically broadcasts updates when keep flags are modified via `PUT /api/projects/:folder/keep`
+*   **Client Integration**: 
+    - Frontend hook `usePendingChangesSSE()` maintains connection and state
+    - `usePendingDeletes()` hook consumes SSE data to determine toolbar visibility
+    - All Photos mode: Toolbar shows if ANY project has pending changes
+    - Project mode: Toolbar shows if THAT specific project has pending changes
+*   **Benefits**: Instant feedback, multi-tab synchronization, no polling overhead, simplified client logic
 
 ### All Photos (cross-project)
 

@@ -1,52 +1,99 @@
-# Jobs Overview
+{{ ... }}
 
 This document summarizes the background job pipeline, supported job types, their options, and how key flows (file upload, maintenance, and change commit) use them.
 
 - Source files: `server/services/workerLoop.js`, `server/services/scheduler.js`, `server/routes/uploads.js`, `server/routes/maintenance.js`, `server/routes/jobs.js`
 - Repositories: `server/services/repositories/jobsRepo.js`
-- Related docs: `PROJECT_OVERVIEW.md`, `SCHEMA_DOCUMENTATION.md`
+-## Related Docs
+
+- `PROJECT_OVERVIEW.md`
+- `SCHEMA_DOCUMENTATION.md`
+- `tasks_progress/jobs_refactoring_progress.md`
+- `tasks_progress/job_refactoring/REFACTORING_SUMMARY.md`
+- `tasks_progress/job_refactoring_backwardcompatibilitynotes.md` (removal timeline for `scope` column)
 
 ## Pipeline Architecture (brief)
 
-- Two-lane worker pipeline controlled by config:
+- **Two-lane worker pipeline** controlled by config:
   - Priority lane: jobs with `priority >= pipeline.priority_threshold`.
-  - Normal lane: all other jobs.
-- Key knobs (see `config.json` / `config.default.json`):
+  - Normal Lane: all other jobs.
+- **Key knobs** (see `config.json` / `config.default.json`):
   - `pipeline.max_parallel_jobs`, `pipeline.priority_lane_slots`, `pipeline.priority_threshold`
   - `pipeline.heartbeat_ms`, `pipeline.stale_seconds`, `pipeline.max_attempts_default`
-- Heartbeats, crash recovery (`requeueStaleRunning`), and bounded retries (`max_attempts_default`) are handled by `workerLoop.js`.
-- Live job updates via SSE: `GET /api/jobs/stream` (also item-level events from `derivativesWorker`).
+{{ ... }}
+- **Heartbeats, crash recovery** (`requeueStaleRunning`), and bounded retries (`max_attempts_default`) are handled by `workerLoop.js`.
+- **Live job updates via SSE**: `GET /api/jobs/stream` (also item-level events from `derivativesWorker`).
+- **Scope-aware jobs** (as of 2025-10-01): Jobs can operate on arbitrary photo subsets across projects via `scope` field.
+- **Shared helpers**: Worker modules rely on `server/services/workers/shared/photoSetUtils.js` to resolve job targets, group items by project, and enforce payload limits consistently across `project`, `photo_set`, and `global` scopes.
 
 Image Move emits realtime events too. See "Image Move" below for `item_removed` and `item_moved` semantics.
 
+## Job Scopes (Cross-Project Support)
+
+Jobs now support three scope types via the `scope` column:
+
+- **`project`**: Traditional single-project operations (requires `project_id`)
+- **`photo_set`**: Arbitrary photo collections, potentially spanning multiple projects (optional `project_id`)
+- **`global`**: System-wide operations like maintenance (no `project_id`)
+
+**Payload Limits**: All jobs enforce a maximum of 2,000 items per job. Larger batches are automatically chunked or rejected at the API level.
+
+**Backward Compatibility**: Existing jobs without `scope` default to `'project'`. See `tasks_progress/job_refactoring_backwardcompatibilitynotes.md` for removal timeline.
+
 ## At a glance: Tasks → Steps and Priorities
 
-- Upload Post-Process (`upload_postprocess` task)
+### Project-Scoped Tasks
+
+- **Upload Post-Process** (`upload_postprocess` task, scope: `project`)
   - `upload_postprocess` (90)
   - `manifest_check` (95)
   - `folder_check` (95)
 
-- Commit Changes (`change_commit` task)
+- **Commit Changes** (`change_commit` task, scope: `project`)
   - `file_removal` (100)
   - `manifest_check` (95)
   - `folder_check` (95)
   - `manifest_cleaning` (80)
 
-- Maintenance (`maintenance` task)
+- **Maintenance** (`maintenance` task, scope: `project`)
   - `trash_maintenance` (100)
   - `manifest_check` (95)
   - `folder_check` (95)
   - `manifest_cleaning` (80)
 
-- Project Scavenge (`project_scavenge` task)
+- **Project Scavenge** (`project_scavenge` task, scope: `project`)
   - `project_scavenge` (100)
 
-- Delete Project (`project_delete` task)
+- **Delete Project** (`project_delete` task, scope: `project`)
   - `project_stop_processes` (100)
   - `project_delete_files` (100)
   - `project_cleanup_db` (95)
 
-Lane behavior: steps with priority ≥ `pipeline.priority_threshold` run in the priority lane and can preempt normal jobs. See `config.json` for `pipeline.priority_lane_slots` and `pipeline.priority_threshold`.
+### Cross-Project Tasks (New)
+
+- **Commit Changes (All Photos)** (`change_commit_all` task, scope: `photo_set`)
+  - `file_removal` (100)
+  - `manifest_check` (95)
+  - `folder_check` (95)
+  - `manifest_cleaning` (80)
+
+- **Image Move** (`image_move` task, scope: `photo_set`)
+  - `image_move_files` (95)
+  - `manifest_check` (95)
+  - `generate_derivatives` (90)
+
+### Global Tasks (New)
+
+- **Global Maintenance** (`maintenance_global` task, scope: `global`)
+  - `trash_maintenance` (100)
+  - `manifest_check` (95)
+  - `folder_check` (95)
+  - `manifest_cleaning` (80)
+
+- **Global Project Scavenge** (`project_scavenge_global` task, scope: `global`)
+  - `project_scavenge` (100)
+
+**Lane behavior**: Steps with priority ≥ `pipeline.priority_threshold` run in the priority lane and can preempt normal jobs. See `config.json` for `pipeline.priority_lane_slots` and `pipeline.priority_threshold`.
 
 ## Supported Job Types
 
@@ -197,6 +244,59 @@ Note: Any other `type` will be failed by `workerLoop` as Unknown.
   - `{ type: "item_removed", project_folder: <source>, filename, updated_at }` — remove from source UI lists.
   - `{ type: "item_moved", project_folder: <dest>, filename, thumbnail_status, preview_status, updated_at }` — add/update in destination with derivative statuses set to `generated` if a derivative was moved, `pending` if it must be regenerated, or `not_supported` for RAW.
 - Uploads integration: when posting to `POST /api/projects/:folder/upload` with multipart field `reloadConflictsIntoThisProject=true`, the server detects uploaded bases that exist in other projects and auto‑starts `image_move` into the current `:folder` for those bases.
+
+---
+
+## Cross-Project API Endpoints (New)
+
+The following endpoints accept photo_id lists and enforce payload size limits:
+
+### Photo Operations
+- **`POST /api/photos/tags/add`** - Add tags to photos (max 2,000 items)
+  - Body: `{ items: [{ photo_id, tags: [...] }], dry_run?: boolean }`
+  - Returns: `{ updated: number, errors?: [...] }`
+
+- **`POST /api/photos/tags/remove`** - Remove tags from photos (max 2,000 items)
+  - Body: `{ items: [{ photo_id, tags: [...] }], dry_run?: boolean }`
+  - Returns: `{ updated: number, errors?: [...] }`
+
+- **`POST /api/photos/keep`** - Update keep flags (max 2,000 items)
+  - Body: `{ items: [{ photo_id, keep_jpg?: boolean, keep_raw?: boolean }], dry_run?: boolean }`
+  - Returns: `{ updated: number, errors?: [...] }`
+  - Emits SSE item-level updates for real-time UI sync
+
+- **`POST /api/photos/process`** - Generate derivatives (max 2,000 items)
+  - Body: `{ items: [{ photo_id }], force?: boolean, dry_run?: boolean }`
+  - Returns: `{ task_id: string, job_count: number, job_ids: [...], chunked?: boolean, errors?: [...] }`
+  - Uses single `photo_set`-scoped task for all photos (optimized, no per-project fan-out)
+
+- **`POST /api/photos/move`** - Move photos between projects (max 2,000 items)
+  - Body: `{ items: [{ photo_id }], dest_folder: string, dry_run?: boolean }`
+  - Returns: `{ job_count: number, job_ids: [...], destination_project: {...}, errors?: [...] }`
+  - Groups photos by source project and enqueues per-project image_move jobs
+
+### Commit/Revert Operations
+- **`POST /api/photos/commit-changes`** - Commit pending deletions across projects
+  - Body: `{ projects?: [...], project_folders?: [...] }` (optional selectors)
+  - Returns: `{ queued_projects: number, projects: [...], skipped?: [...] }`
+  - Fans out to per-project `change_commit` tasks
+
+- **`POST /api/photos/revert-changes`** - Revert keep flag mismatches across projects
+  - Body: `{ projects?: [...], project_folders?: [...] }` (optional selectors)
+  - Returns: `{ queued_projects: number, projects: [...], skipped?: [...] }`
+  - Fans out to per-project revert operations
+
+### Payload Validation
+All endpoints enforce a **maximum of 2,000 items per request**. Requests exceeding this limit return:
+```json
+{
+  "error": "Payload contains X items, exceeding maximum of 2000. Please reduce the batch size or split into multiple requests."
+}
+```
+
+**Status Code**: 400 Bad Request
+
+**Note**: Internal callers (workers, orchestrator) can use `autoChunk: true` in `jobsRepo.enqueueWithItems()` to automatically split large batches into multiple jobs.
 
 ## API Contract (Tasks-only)
 

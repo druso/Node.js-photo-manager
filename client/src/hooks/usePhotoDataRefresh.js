@@ -42,11 +42,12 @@ export function usePhotoDataRefresh({
         
         // Also refresh pending deletions count
         const range = activeFilters?.dateRange || {};
+        // Don't pass keep_type to pending deletes API - it has its own internal filter
         const result = await listAllPendingDeletes({
           date_from: range.start || undefined,
           date_to: range.end || undefined,
-          file_type: activeFilters?.fileType,
-          orientation: activeFilters?.orientation,
+          file_type: activeFilters?.fileType !== 'any' ? activeFilters?.fileType : undefined,
+          orientation: activeFilters?.orientation !== 'any' ? activeFilters?.orientation : undefined,
         });
         setAllPendingDeletes({
           jpg: result.jpg || 0,

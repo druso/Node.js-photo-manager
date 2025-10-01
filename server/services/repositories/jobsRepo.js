@@ -16,6 +16,7 @@ function rowToJob(row) {
     type: row.type,
     status: row.status,
     priority: row.priority ?? 0,
+    scope: row.scope,
     created_at: row.created_at,
     started_at: row.started_at,
     finished_at: row.finished_at,
@@ -48,19 +49,52 @@ function listByProject(project_id, { limit = 50, offset = 0, status, type } = {}
   return rows.map(rowToJob);
 }
 
-function enqueue({ tenant_id, project_id, type, payload = null, progress_total = null, priority = 0 }) {
+function listByTenant(tenant_id, { limit = 50, offset = 0, status, type, scope } = {}) {
+  const db = getDb();
+  const conds = ['tenant_id = ?'];
+  const params = [tenant_id];
+  if (status) { conds.push('status = ?'); params.push(status); }
+  if (type) { conds.push('type = ?'); params.push(type); }
+  if (scope) { conds.push('scope = ?'); params.push(scope); }
+  const where = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
+  const rows = db.prepare(`SELECT * FROM jobs ${where} ORDER BY created_at DESC LIMIT ? OFFSET ?`).all(...params, limit, offset);
+  return rows.map(rowToJob);
+}
+
+function enqueue({ tenant_id, project_id = null, type, payload = null, progress_total = null, priority = 0, scope }) {
   const db = getDb();
   const created_at = nowISO();
-  const info = db.prepare(`INSERT INTO jobs (tenant_id, project_id, type, status, created_at, progress_total, progress_done, payload_json, attempts, priority)
-    VALUES (?, ?, ?, 'queued', ?, ?, 0, ?, 0, ?)
-  `).run(tenant_id, project_id, type, created_at, progress_total, payload ? JSON.stringify(payload) : null, priority);
+  if (!scope) throw new Error('scope is required');
+  const effectiveScope = scope;
+  const info = db.prepare(`INSERT INTO jobs (tenant_id, project_id, type, status, created_at, progress_total, progress_done, payload_json, attempts, priority, scope)
+    VALUES (?, ?, ?, 'queued', ?, ?, 0, ?, 0, ?, ?)
+  `).run(tenant_id, project_id, type, created_at, progress_total, payload ? JSON.stringify(payload) : null, priority, effectiveScope);
   return getById(info.lastInsertRowid);
 }
 
-function enqueueWithItems({ tenant_id, project_id, type, payload = null, items = [], priority = 0 }) {
+const MAX_ITEMS_PER_JOB = 2000;
+
+function enqueueWithItems({ tenant_id, project_id = null, type, payload = null, items = [], priority = 0, scope = null, autoChunk = false }) {
   // items: array of { photo_id?, filename?, status? }
+  // If autoChunk is true and items exceed MAX_ITEMS_PER_JOB, split into multiple jobs
+  if (autoChunk && items.length > MAX_ITEMS_PER_JOB) {
+    const jobs = [];
+    for (let i = 0; i < items.length; i += MAX_ITEMS_PER_JOB) {
+      const chunk = items.slice(i, i + MAX_ITEMS_PER_JOB);
+      const chunkPayload = { ...payload, chunk_index: Math.floor(i / MAX_ITEMS_PER_JOB), total_chunks: Math.ceil(items.length / MAX_ITEMS_PER_JOB) };
+      const job = enqueueWithItems({ tenant_id, project_id, type, payload: chunkPayload, items: chunk, priority, scope, autoChunk: false });
+      jobs.push(job);
+    }
+    return jobs; // Return array of jobs when chunked
+  }
+
+  // Enforce limit for non-auto-chunked requests
+  if (items.length > MAX_ITEMS_PER_JOB) {
+    throw new Error(`Job item count (${items.length}) exceeds maximum allowed (${MAX_ITEMS_PER_JOB}). Use autoChunk=true for internal callers or reduce the payload size.`);
+  }
+
   return withTransaction(() => {
-    const job = enqueue({ tenant_id, project_id, type, payload, progress_total: items.length, priority });
+    const job = enqueue({ tenant_id, project_id, type, payload, progress_total: items.length, priority, scope });
     const db = getDb();
     const now = nowISO();
     const stmt = db.prepare(`INSERT INTO job_items (tenant_id, job_id, photo_id, filename, status, message, created_at, updated_at)
@@ -160,6 +194,7 @@ function nextPendingItem(job_id) {
 module.exports = {
   getById,
   listByProject,
+  listByTenant,
   enqueue,
   enqueueWithItems,
   claimNext,
@@ -173,6 +208,7 @@ module.exports = {
   listItems,
   updateItemStatus,
   nextPendingItem,
+  MAX_ITEMS_PER_JOB,
 };
 
 // ---- Retry/Recovery helpers ----

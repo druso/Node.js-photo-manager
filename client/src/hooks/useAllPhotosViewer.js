@@ -21,17 +21,24 @@ export default function useAllPhotosViewer({
     return search ? `?${search}` : '';
   }, [activeFilters]);
 
-  const handleAllPhotoSelect = useCallback((photo) => {
+  const handleAllPhotoSelect = useCallback((photo, photosList) => {
     if (!photo) return;
-    const idx = allPhotos.findIndex(p => p.project_folder === photo.project_folder && p.filename === photo.filename);
+    
+    // Use photosList if provided, otherwise fall back to allPhotos
+    const list = photosList || allPhotos;
+    const idx = list.findIndex(p => p.project_folder === photo.project_folder && p.filename === photo.filename);
     const start = idx >= 0 ? idx : 0;
-    setViewerList(allPhotos.slice());
+    
+    setViewerList(list.slice());
     setViewerState({ isOpen: true, startIndex: start, fromAll: true });
+    
     try {
       const search = buildSearchParams();
       const nameForUrl = photo.basename || (photo.filename || '').replace(/\.[^/.]+$/, '');
       window.history.pushState({}, '', `/all/${encodeURIComponent(photo.project_folder)}/${encodeURIComponent(nameForUrl)}${search}`);
-    } catch {}
+    } catch (err) {
+      console.error('[useAllPhotosViewer] Error updating URL:', err);
+    }
   }, [allPhotos, buildSearchParams, setViewerList, setViewerState]);
 
   return { handleAllPhotoSelect };

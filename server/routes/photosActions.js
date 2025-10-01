@@ -79,6 +79,16 @@ function ensureItemsArray(body) {
   return body.items;
 }
 
+// Validate payload size against MAX_ITEMS_PER_JOB limit
+function validatePayloadSize(items) {
+  const { MAX_ITEMS_PER_JOB } = jobsRepo;
+  if (items.length > MAX_ITEMS_PER_JOB) {
+    const err = new Error(`Payload contains ${items.length} items, exceeding maximum of ${MAX_ITEMS_PER_JOB}. Please reduce the batch size or split into multiple requests.`);
+    err.status = 400;
+    throw err;
+  }
+}
+
 function parseDryRun(body) {
   return Boolean(body && body.dry_run);
 }
@@ -107,6 +117,7 @@ router.post(
   async (req, res) => {
     try {
       const items = ensureItemsArray(req.body);
+      validatePayloadSize(items); // Enforce 2K item limit
       const dryRun = parseDryRun(req.body);
 
       let updated = 0;
@@ -160,6 +171,7 @@ router.post(
   async (req, res) => {
     try {
       const items = ensureItemsArray(req.body);
+      validatePayloadSize(items); // Enforce 2K item limit
       const dryRun = parseDryRun(req.body);
 
       let updated = 0;
@@ -215,6 +227,7 @@ router.post(
   async (req, res) => {
     try {
       const items = ensureItemsArray(req.body);
+      validatePayloadSize(items); // Enforce 2K item limit
       const dryRun = parseDryRun(req.body);
 
       let updated = 0;
@@ -276,6 +289,7 @@ router.post(
   async (req, res) => {
     try {
       const items = ensureItemsArray(req.body);
+      validatePayloadSize(items); // Enforce 2K item limit
       const dryRun = parseDryRun(req.body);
       const force = Boolean(req.body && req.body.force);
 
@@ -322,38 +336,39 @@ router.post(
         });
       }
 
-      // Second pass: enqueue processing jobs per project
-      const jobIds = [];
-      for (const [projectId, photos] of Object.entries(photosByProject)) {
-        try {
-          const project = projectsRepo.getById(Number(projectId));
-          if (!project) {
-            errors.push({ project_id: projectId, error: 'Project not found' });
-            continue;
-          }
-
-          // Enqueue a generate_derivatives job for this project
-          const jobInfo = await tasksOrchestrator.startTask({
-            project_id: project.id,
-            type: 'generate_derivatives',
-            source: 'user',
-            items: photos.map(p => p.basename),
-            tenant_id: 'user_0',
-            options: { force }
-          });
-
-          jobIds.push(jobInfo.id);
-        } catch (e) {
-          errors.push({ project_id: projectId, error: e.message });
+      // Use scope-aware orchestration for cross-project processing
+      try {
+        // Flatten all photos into a single list with photo_id
+        const allPhotoIds = [];
+        for (const photos of Object.values(photosByProject)) {
+          allPhotoIds.push(...photos.map(p => p.photo_id));
         }
-      }
 
-      res.json({
-        message: 'Processing queued',
-        job_count: jobIds.length,
-        job_ids: jobIds,
-        errors: errors.length ? errors : undefined
-      });
+        // Enqueue a single photo_set-scoped job for all photos
+        const jobInfo = tasksOrchestrator.startTask({
+          type: 'generate_derivatives',
+          source: 'user',
+          scope: 'photo_set',
+          items: allPhotoIds.map(id => ({ photo_id: id })),
+          payload: { force },
+          tenant_id: 'user_0'
+        });
+
+        res.json({
+          message: 'Processing queued',
+          task_id: jobInfo.task_id,
+          job_count: jobInfo.job_count || 1,
+          job_ids: jobInfo.chunked ? [jobInfo.first_job_id] : [jobInfo.first_job_id],
+          chunked: jobInfo.chunked,
+          errors: errors.length ? errors : undefined
+        });
+      } catch (e) {
+        errors.push({ error: e.message });
+        res.status(500).json({
+          error: 'Failed to queue processing',
+          errors
+        });
+      }
     } catch (err) {
       log.error('process_photos_failed', { error: err && err.message, stack: err && err.stack });
       res.status(err.status || 500).json({ error: err.message || 'Failed to process photos' });
@@ -369,6 +384,7 @@ router.post(
   async (req, res) => {
     try {
       const items = ensureItemsArray(req.body);
+      validatePayloadSize(items); // Enforce 2K item limit
       const dryRun = parseDryRun(req.body);
       const destFolder = req.body && req.body.dest_folder;
       

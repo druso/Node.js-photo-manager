@@ -597,7 +597,10 @@ const VirtualizedPhotoGrid = ({
                     {isSelected && (<div className="absolute inset-0 bg-blue-500/25 pointer-events-none"></div>)}
                     <div className={`absolute inset-0 bg-black/40 flex items-center justify-center transition-opacity p-2 ${isSelected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
                       <button
-                        onClick={(e) => { e.stopPropagation(); onPhotoSelect && onPhotoSelect(photo, photos); }}
+                        onClick={(e) => { 
+                          e.stopPropagation(); 
+                          onPhotoSelect && onPhotoSelect(photo, photos);
+                        }}
                         className="px-4 py-2 text-base font-semibold text-white bg-gray-900/90 rounded-md hover:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-white cursor-pointer"
                       >
                         View

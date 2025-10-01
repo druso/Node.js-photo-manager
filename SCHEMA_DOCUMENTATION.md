@@ -142,14 +142,15 @@ parseProjectIdFromFolder('p12') // => 12
 Durable background jobs are stored in two tables: `jobs` and `job_items`.
 
 - `jobs`
-  - Columns: `id`, `tenant_id`, `project_id` (FK), `type`, `status`, `created_at`, `started_at`, `finished_at`,
+  - Columns: `id`, `tenant_id`, `project_id` (INTEGER FK nullable), `scope` (TEXT, default `'project'`), `type`, `status`, `created_at`, `started_at`, `finished_at`,
     `progress_total`, `progress_done`, `payload_json`, `error_message`, `worker_id`, `heartbeat_at`,
     `attempts`, `max_attempts`, `last_error_at`, `priority`.
-  - Indexes: `(project_id, created_at DESC)`, `(status)`, `(tenant_id, created_at DESC)`, `(tenant_id, status)`, `(status, priority DESC, created_at ASC)`.
+  - `scope` indicates how a job should be resolved: `'project'`, `'photo_set'`, or `'global'`. When `project_id` is null the job must be treated as cross-project/global by workers.
+  - Foreign key constraint uses `ON DELETE SET NULL` so legacy rows with a project reference remain valid during refactors.
+  - Indexes: `(project_id, created_at DESC)`, `(status)`, `(tenant_id, created_at DESC)`, `(tenant_id, status)`, `(status, priority DESC, created_at ASC)`, plus new scope-focused indexes `idx_jobs_scope_status` and `idx_jobs_tenant_scope` to keep cross-project queries fast.
   - Status values: `queued`, `running`, `completed`, `failed`, `canceled`.
   - Progress: `progress_total` and `progress_done` are nullable; workers should set both (or leave null for indeterminate).
   - Payload: arbitrary JSON (stringified) for worker‑specific params.
-
   - Priority: higher `priority` values are claimed first; ties break on oldest `created_at`.
     The worker loop implements two lanes with separate capacity: a priority lane (claims with `priority >= threshold`) and a normal lane.
     See `pipeline.priority_lane_slots` and `pipeline.priority_threshold` in configuration.
@@ -161,7 +162,7 @@ Durable background jobs are stored in two tables: `jobs` and `job_items`.
   - Use when a job processes multiple files so you can report per‑item progress and summaries.
 
 - Source of truth: `server/services/db.js` (DDL), repositories in `server/services/repositories/jobsRepo.js`.
-- Worker loop: `server/services/workerLoop.js` dispatches by `job.type` to worker modules under `server/services/workers/`.
+- Worker loop: `server/services/workerLoop.js` dispatches by `job.type` to worker modules under `server/services/workers/`, using shared helpers in `server/services/workers/shared/photoSetUtils.js` to resolve targets based on scope.
 - Claiming: `jobsRepo.claimNext({ minPriority?, maxPriority? })` lets the worker select from a priority range (used by the two lanes).
 - Events/SSE: `server/services/events.js` provides `emitJobUpdate` and `onJobUpdate`; `server/routes/jobs.js` exposes `GET /api/jobs/stream`.
 
@@ -175,7 +176,7 @@ Durable background jobs are stored in two tables: `jobs` and `job_items`.
 
 #### Maintenance Jobs
 
-High‑priority, idempotent maintenance jobs operate per project:
+High‑priority, idempotent maintenance jobs still operate per project but are orchestrated via scope-aware tasks:
 
 - `trash_maintenance`: remove files in `.trash` older than 24h
 - `manifest_check`: reconcile DB availability flags with files on disk
@@ -183,7 +184,7 @@ High‑priority, idempotent maintenance jobs operate per project:
 - `manifest_cleaning`: delete photo rows with no JPG or RAW available
 - `project_scavenge`: single-step task that removes leftover on-disk folders for archived projects (`projects.status='canceled'`).
 
-Scheduling: `server/services/scheduler.js` triggers a unified hourly `maintenance` task for active (non-archived) projects only, and `project_scavenge` hourly for archived projects to clean up leftover project folders.
+Scheduling: `server/services/scheduler.js` now kicks off a single hourly `maintenance_global` task (scope `global`) that fans out to these steps inside the worker pipeline, plus an hourly `project_scavenge_global` task to purge archived project folders. See `JOBS_OVERVIEW.md` for canonical task definitions.
 
 #### Job Lifecycle
 
@@ -244,6 +245,41 @@ The jobs stream (`GET /api/jobs/stream`) emits item-level updates while derivati
     }
     ```
   - The client consumes these on the same `GET /api/jobs/stream` channel and updates source/destination collections incrementally without a full reload.
+
+### Pending Changes SSE Stream
+
+**Endpoint**: `GET /api/sse/pending-changes`
+
+**Purpose**: Real-time notification of pending changes (mismatches between availability and keep flags) across all projects.
+
+**Implementation**: `server/routes/sse.js`
+
+**Data Format**:
+```json
+{
+  "p15": true,
+  "p7": false
+}
+```
+
+**Behavior**:
+- Sends initial state on connection
+- Broadcasts updates when keep flags are modified via `PUT /api/projects/:folder/keep`
+- Sends keepalive messages every 30 seconds
+- Query checks for mismatches: `(jpg_available = 1 AND keep_jpg = 0) OR (raw_available = 1 AND keep_raw = 0)`
+- Joins `photos` with `projects` table to get `project_folder` names
+
+**Client Usage**:
+- Hook: `client/src/hooks/usePendingChangesSSE.js` maintains EventSource connection
+- Consumer: `client/src/hooks/usePendingDeletes.js` determines toolbar visibility
+- All Photos mode: Shows toolbar if ANY project has `true`
+- Project mode: Shows toolbar if current project has `true`
+
+**Benefits**:
+- Instant toolbar updates across all browser tabs
+- No polling overhead
+- Multi-tab synchronization
+- Simplified client state management
 
 #### Typical Queries
 
@@ -319,9 +355,9 @@ Deletions:
 - POST `/api/photos/commit-changes` — global commit across multiple projects (accepts optional `{ projects }` body)
 - POST `/api/photos/revert-changes` — global revert across multiple projects (accepts optional `{ projects }` body)
 
-See implementations in `server/routes/uploads.js` and `server/routes/assets.js`.
+### Payload Validation
 
-{{ ... }}
+- All cross-project photo endpoints enforce the shared `MAX_ITEMS_PER_JOB` guardrail (currently 2,000 items). Validation lives in `server/routes/photosActions.js`; when clients exceed the limit they receive a `400` with guidance to reduce batch size. Internal orchestrators may pass `autoChunk: true` to `jobsRepo.enqueueWithItems()` so large operations are split into compliant job batches.
 
 The SQLite database is located at `.projects/db/user_0.sqlite` and is automatically created on first run.
 
