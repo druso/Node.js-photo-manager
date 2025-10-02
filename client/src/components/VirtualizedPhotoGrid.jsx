@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { getSessionState, setSessionMainY } from '../utils/storage';
 import Thumbnail from './Thumbnail';
 import { computeAspectRatios, buildJustifiedRows, computeCumulativeHeights, getVisibleRowRange } from '../utils/gridVirtualization';
@@ -14,6 +14,7 @@ const VirtualizedPhotoGrid = ({
   onPhotoSelect,
   selectedPhotos,
   onToggleSelection,
+  onEnterSelectionMode,
   lazyLoadThreshold = 100,
   sizeLevel = 's',
   photos: externalPhotos,
@@ -44,6 +45,14 @@ const VirtualizedPhotoGrid = ({
   const pendingLoadRef = useRef(null); // Store pending load operation details
   const restoreTriedRef = useRef(false);
   const saveThrottleRef = useRef(0);
+
+  // Long-press handler for M2 selection mode
+  // We'll handle this manually since we need to pass photo data
+  const handleLongPress = useCallback((photo) => {
+    if (onEnterSelectionMode) {
+      onEnterSelectionMode(photo);
+    }
+  }, [onEnterSelectionMode]);
 
   // IO to lazily mark thumbnails visible after a dwell period
   const ioRef = useRef(null);
@@ -489,7 +498,7 @@ const VirtualizedPhotoGrid = ({
   const bottomSpacer = Math.max(0, totalHeight - topSpacer - renderedRows.reduce((s, r, i) => s + (r?.[0]?.h || 0) + (i < renderedRows.length - 1 ? gap : 0), 0));
 
   return (
-    <div ref={containerRef} className="w-full p-1" style={{ position: 'relative', minHeight: '40vh' }}>
+    <div ref={containerRef} className="w-full p-1 overflow-x-hidden" style={{ position: 'relative', minHeight: '40vh' }}>
       {isEmpty ? (
         <div className="flex flex-col items-center justify-center py-12 text-center text-gray-600">
           <div className="mb-3 text-gray-400" aria-hidden="true">
@@ -543,7 +552,7 @@ const VirtualizedPhotoGrid = ({
                 <div
                   key={startRow + i}
                   className="flex items-end mb-1"
-                  style={{ gap }}
+                  style={{ gap, maxWidth: '100%' }}
                 >
                   {rowItems.map(({ idx, w, h }, j) => {
                     const photo = photos[idx];
@@ -558,56 +567,95 @@ const VirtualizedPhotoGrid = ({
                         data-photo-key={key}
                         className={`relative bg-gray-200 overflow-hidden cursor-pointer group ${isSelected ? 'border-2 border-blue-600 ring-2 ring-blue-400' : 'border-0 ring-0'} transition-all flex-none`}
                         style={{ width: `${w}px`, height: `${Math.round(h)}px`, marginRight }}
-                        onClick={() => { onToggleSelection && onToggleSelection(photo); }}
+                        onClick={(e) => {
+                          // M2: If selections exist, tap toggles selection
+                          // Otherwise, tap opens viewer
+                          const hasSelections = selectedPhotos && selectedPhotos.size > 0;
+                          if (hasSelections) {
+                            onToggleSelection && onToggleSelection(photo);
+                          } else {
+                            // M1: Default click opens viewer
+                            if (onPhotoSelect) {
+                              onPhotoSelect(photo, photos);
+                            }
+                          }
+                        }}
+                        onTouchStart={(e) => {
+                          // M2: Long-press detection for mobile
+                          const timer = setTimeout(() => {
+                            handleLongPress(photo);
+                          }, 500);
+                          e.currentTarget.dataset.longPressTimer = timer;
+                        }}
+                        onContextMenu={(e) => {
+                          // Prevent context menu on long-press
+                          e.preventDefault();
+                          return false;
+                        }}
+                        onTouchEnd={(e) => {
+                          // Cancel long-press timer
+                          const timer = e.currentTarget.dataset.longPressTimer;
+                          if (timer) {
+                            clearTimeout(parseInt(timer));
+                            delete e.currentTarget.dataset.longPressTimer;
+                          }
+                        }}
+                        onTouchMove={(e) => {
+                          // Cancel long-press on movement
+                          const timer = e.currentTarget.dataset.longPressTimer;
+                          if (timer) {
+                            clearTimeout(parseInt(timer));
+                            delete e.currentTarget.dataset.longPressTimer;
+                          }
+                        }}
                         ref={(el) => observeCell(el, key)}
                       >
-                    {/* Selection toggle */}
-                    {(
+                      {/* Gradient overlay for desktop hover - top 25% */}
+                      <div className="absolute inset-x-0 top-0 h-1/4 bg-gradient-to-b from-black/50 to-transparent opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none hidden sm:block" />
+                      
+                      {/* Selection toggle in top-left within gradient area */}
                       <button
                         type="button"
                         aria-label={isSelected ? 'Deselect photo' : 'Select photo'}
-                        onClick={(e) => { e.stopPropagation(); onToggleSelection && onToggleSelection(photo); }}
-                        className={`absolute top-1 left-1 z-10 flex items-center justify-center h-6 w-6 rounded-full border transition shadow-sm
+                        onClick={(e) => { 
+                          e.stopPropagation(); 
+                          onToggleSelection && onToggleSelection(photo); 
+                        }}
+                        className={`absolute top-2 left-2 z-10 flex items-center justify-center h-10 w-10 rounded-full border transition shadow-md
                           ${isSelected
                             ? 'bg-blue-600 text-white border-blue-600 opacity-100'
-                            : 'bg-white/80 text-gray-600 border-gray-300 opacity-0 group-hover:opacity-100'}
+                            : 'bg-white/90 text-gray-600 border-gray-300 opacity-0 sm:group-hover:opacity-100'}
                         `}
                       >
                         {isSelected ? (
-                          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4">
+                          // Check icon
+                          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="h-5 w-5">
                             <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-7.25 7.25a1 1 0 01-1.414 0l-3-3a1 1 0 111.414-1.414L8.5 11.086l6.543-6.543a1 1 0 011.414 0z" clipRule="evenodd" />
                           </svg>
                         ) : (
-                          <span className="block h-3.5 w-3.5 rounded-full border border-gray-400" />
+                          // Empty circle (no check)
+                          <span className="block h-5 w-5 rounded-full border-2 border-gray-400" />
                         )}
                       </button>
-                    )}
 
-                    {visibleKeys.has(key) ? (
-                      <Thumbnail
-                        photo={photo}
-                        projectFolder={photo.project_folder || projectFolder}
-                        className="w-full h-full group-hover:opacity-75 transition-all duration-300"
-                        objectFit="cover"
-                        rounded={false}
-                      />
-                    ) : (
-                      <div className="w-full h-full bg-gray-300 animate-pulse" aria-hidden="true" />
-                    )}
-                    {isSelected && (<div className="absolute inset-0 bg-blue-500/25 pointer-events-none"></div>)}
-                    <div className={`absolute inset-0 bg-black/40 flex items-center justify-center transition-opacity p-2 ${isSelected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
-                      <button
-                        onClick={(e) => { 
-                          e.stopPropagation(); 
-                          onPhotoSelect && onPhotoSelect(photo, photos);
-                        }}
-                        className="px-4 py-2 text-base font-semibold text-white bg-gray-900/90 rounded-md hover:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-white cursor-pointer"
-                      >
-                        View
-                      </button>
+                      {visibleKeys.has(key) ? (
+                        <Thumbnail
+                          photo={photo}
+                          projectFolder={photo.project_folder || projectFolder}
+                          className="w-full h-full transition-opacity duration-200"
+                          objectFit="cover"
+                          rounded={false}
+                        />
+                      ) : (
+                        <div className="w-full h-full bg-gray-300 animate-pulse" aria-hidden="true" />
+                      )}
+                      
+                      {/* Selection overlay - subtle blue tint when selected */}
+                      {isSelected && (
+                        <div className="absolute inset-0 bg-blue-500/25 pointer-events-none"></div>
+                      )}
                     </div>
-                  </div>
-                );
+                  );
               })}
             </div>
           ))}

@@ -19,6 +19,7 @@ function AllPhotosPane({
   onPhotoSelect,
   onToggleSelection,
   selectedPhotos,
+  onEnterSelectionMode,
 }) {
   return (
     <PhotoDisplay
@@ -28,6 +29,7 @@ function AllPhotosPane({
       onPhotoSelect={onPhotoSelect}
       onToggleSelection={onToggleSelection}
       selectedPhotos={selectedPhotos}
+      onEnterSelectionMode={onEnterSelectionMode}
       lazyLoadThreshold={lazyLoadThreshold}
       dwellMs={dwellMs}
       sortKey={sortKey}

@@ -41,8 +41,8 @@ const PhotoViewer = ({
   });
   const containerRef = useRef(null);
   const [naturalSize, setNaturalSize] = useState({ w: 0, h: 0 });
-  const [usePreview, setUsePreview] = useState(true);
   const [imageLoading, setImageLoading] = useState(true);
+  const [usePreview, setUsePreview] = useState(true);
   const imgRef = useRef(null);
   const fallbackTriedRef = useRef(false);
   const [isPanning, setIsPanning] = useState(false);
@@ -51,12 +51,11 @@ const PhotoViewer = ({
   // Removed image transition animations per request
   const pointerRef = useRef({ x: 0, y: 0 });
   const positionRef = useRef(position);
-  const toast = useToast();
+  const swipeRef = useRef({ active: false, startX: 0, startY: 0, lastX: 0, lastY: 0, startTime: 0 });
+const toast = useToast();
 
-  const photos = projectData?.photos || [];
-  const currentPhoto = photos[currentIndex];
-
-  // Notify parent of current index and photo changes for persistence
+const photos = projectData?.photos || [];
+const currentPhoto = photos[currentIndex];
   useEffect(() => {
     if (typeof onCurrentIndexChange === 'function') {
       onCurrentIndexChange(currentIndex, currentPhoto);
@@ -292,14 +291,23 @@ const PhotoViewer = ({
   // Fit scale based on container and natural image size
   const getFitScale = () => {
     const el = containerRef.current;
-    if (!el || !naturalSize.w || !naturalSize.h) return 1;
+    const img = imgRef.current;
+    if (!el) return 1;
+    
+    // Use naturalWidth/Height from img element if available
+    const imgW = img?.naturalWidth || naturalSize.w;
+    const imgH = img?.naturalHeight || naturalSize.h;
+    
+    if (!imgW || !imgH) return 1;
+    
     const cw = el.clientWidth;
     const ch = el.clientHeight;
-    const scale = Math.min(cw / naturalSize.w, ch / naturalSize.h);
+    const scale = Math.min(cw / imgW, ch / imgH);
     return Number.isFinite(scale) && scale > 0 ? scale : 1;
   };
   const getEffectiveScale = () => {
     const fit = getFitScale();
+    if (zoomPercent === 0) return fit; // 0% = fit to screen
     // interpolate from fit (0%) to 2.0 (200%)
     return fit + (2 - fit) * (zoomPercent / 200);
   };
@@ -338,7 +346,12 @@ const PhotoViewer = ({
     const el = containerRef.current;
     if (!el) return;
     const distance = (t1, t2) => Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
+    const isControlTouch = (ev) => ev.target.closest('[data-viewer-control="true"]');
+
     const onTouchStart = (ev) => {
+      if (isControlTouch(ev)) {
+        return;
+      }
       ev.preventDefault();
       if (ev.touches.length === 2) {
         const cx = (ev.touches[0].clientX + ev.touches[1].clientX) / 2;
@@ -346,12 +359,30 @@ const PhotoViewer = ({
         const rect = el.getBoundingClientRect();
         pointerRef.current = { x: cx - rect.left, y: cy - rect.top };
         pinchRef.current = { active: true, startDist: distance(ev.touches[0], ev.touches[1]), startZoom: zoomPercent };
+        swipeRef.current.active = false;
       } else if (ev.touches.length === 1) {
-        setIsPanning(true);
-        panRef.current = { startX: ev.touches[0].clientX, startY: ev.touches[0].clientY, origX: position.x, origY: position.y };
+        const touch = ev.touches[0];
+        if (zoomPercent > 0) {
+          setIsPanning(true);
+          panRef.current = { startX: touch.clientX, startY: touch.clientY, origX: position.x, origY: position.y };
+          swipeRef.current.active = false;
+        } else {
+          setIsPanning(false);
+          swipeRef.current = {
+            active: true,
+            startX: touch.clientX,
+            startY: touch.clientY,
+            lastX: touch.clientX,
+            lastY: touch.clientY,
+            startTime: Date.now()
+          };
+        }
       }
     };
     const onTouchMove = (ev) => {
+      if (isControlTouch(ev)) {
+        return;
+      }
       ev.preventDefault();
       if (pinchRef.current.active && ev.touches.length === 2) {
         const scale = distance(ev.touches[0], ev.touches[1]) / (pinchRef.current.startDist || 1);
@@ -377,9 +408,29 @@ const PhotoViewer = ({
         const dy = ev.touches[0].clientY - panRef.current.startY;
         const { x, y } = clampPosition(panRef.current.origX + dx, panRef.current.origY + dy);
         setPosition({ x, y });
+      } else if (swipeRef.current.active && ev.touches.length === 1) {
+        swipeRef.current.lastX = ev.touches[0].clientX;
+        swipeRef.current.lastY = ev.touches[0].clientY;
       }
     };
-    const onTouchEnd = () => { pinchRef.current.active = false; setIsPanning(false); };
+    const onTouchEnd = () => {
+      if (swipeRef.current.active) {
+        const { startX, startY, lastX, lastY, startTime } = swipeRef.current;
+        const dx = lastX - startX;
+        const dy = lastY - startY;
+        const dt = Date.now() - startTime;
+        if (Math.abs(dx) > 60 && Math.abs(dy) < 80 && dt < 600) {
+          if (dx > 0) {
+            prevPhoto();
+          } else {
+            nextPhoto();
+          }
+        }
+      }
+      swipeRef.current.active = false;
+      pinchRef.current.active = false;
+      setIsPanning(false);
+    };
     el.addEventListener('touchstart', onTouchStart, { passive: false });
     el.addEventListener('touchmove', onTouchMove, { passive: false });
     el.addEventListener('touchend', onTouchEnd);
@@ -390,7 +441,7 @@ const PhotoViewer = ({
       el.removeEventListener('touchend', onTouchEnd);
       el.removeEventListener('touchcancel', onTouchEnd);
     };
-  }, [zoomPercent, position, isPanning]);
+  }, [zoomPercent, position, isPanning, nextPhoto, prevPhoto]);
 
   // Add a non-passive wheel listener so we can call preventDefault safely
   useEffect(() => {
@@ -496,7 +547,9 @@ const PhotoViewer = ({
   // RAW-only when we have a RAW but no JPG rendition available
   const isRawFile = !!currentPhoto?.raw_available && !currentPhoto?.jpg_available;
   const isSelected = !!selectedPhotos?.has && selectedPhotos.has(currentPhoto.filename);
-  const onImgLoad = (e) => setNaturalSize({ w: e.target.naturalWidth, h: e.target.naturalHeight });
+  const onImgLoad = (e) => {
+    setNaturalSize({ w: e.target.naturalWidth, h: e.target.naturalHeight });
+  };
   const effectiveScale = getEffectiveScale();
 
   const handleBackdropClick = () => {
@@ -515,12 +568,21 @@ const PhotoViewer = ({
 
 
   return (
-    <div className="fixed inset-0 bg-black/90 z-50 flex" onClick={handleBackdropClick} style={{ overscrollBehavior: 'contain', touchAction: 'none' }}>
-      {/* Toolbar (right-aligned) */}
-      <div className="absolute top-3 left-3 right-3 z-50 flex items-center justify-end pointer-events-none" onMouseDown={(e)=>e.stopPropagation()} onClick={(e)=>e.stopPropagation()}>
-        {/* Right section: details + close */}
+    <div className="fixed inset-0 bg-black/90 z-50 flex" onClick={handleBackdropClick} style={{ overscrollBehavior: 'contain' }}>
+      {/* Toolbar (right-aligned) - adjusted for mobile, ALWAYS on top */}
+      <div className="absolute top-3 left-3 right-3 z-[60] flex items-center justify-between sm:justify-end pointer-events-none" onMouseDown={(e)=>e.stopPropagation()} onClick={(e)=>e.stopPropagation()} style={{ touchAction: 'auto' }}>
+        {/* Left section: close button (mobile only) */}
+        <div className="flex sm:hidden pointer-events-auto">
+          <button onClick={onClose} className="h-9 w-9 inline-flex items-center justify-center rounded-md bg-red-600 text-white shadow hover:bg-red-700" title="Close">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5">
+              <path fillRule="evenodd" d="M5.47 5.47a.75.75 0 011.06 0L12 10.94l5.47-5.47a.75.75 0 111.06 1.06L13.06 12l5.47 5.47a.75.75 0 11-1.06 1.06L12 13.06l-5.47 5.47a.75.75 0 11-1.06-1.06L10.94 12 5.47 6.53a.75.75 0 010-1.06z" clipRule="evenodd" />
+            </svg>
+          </button>
+        </div>
+        
+        {/* Right section: details + close (desktop) */}
         <div className="flex items-center gap-2 pointer-events-auto">
-          {/* Detail toggle (same height as close) */}
+          {/* Detail toggle */}
           <button
             onClick={() => setShowInfo(v => !v)}
             title="Detail"
@@ -528,27 +590,37 @@ const PhotoViewer = ({
           >
             Detail
           </button>
-          {/* Close icon at far right. If details open, this closes details; otherwise closes viewer */}
-          {showInfo ? (
-            <button onClick={() => setShowInfo(false)} className="h-9 w-9 inline-flex items-center justify-center rounded-md bg-gray-200 text-gray-800 shadow hover:bg-gray-300" title="Close details">
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5">
-                <path fillRule="evenodd" d="M5.47 5.47a.75.75 0 011.06 0L12 10.94l5.47-5.47a.75.75 0 111.06 1.06L13.06 12l5.47 5.47a.75.75 0 11-1.06 1.06L12 13.06l-5.47 5.47a.75.75 0 11-1.06-1.06L10.94 12 5.47 6.53a.75.75 0 010-1.06z" clipRule="evenodd" />
-              </svg>
-            </button>
-          ) : (
-            <button onClick={onClose} className="h-9 w-9 inline-flex items-center justify-center rounded-md bg-red-600 text-white shadow hover:bg-red-700" title="Close">
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5">
-                <path fillRule="evenodd" d="M5.47 5.47a.75.75 0 011.06 0L12 10.94l5.47-5.47a.75.75 0 111.06 1.06L13.06 12l5.47 5.47a.75.75 0 11-1.06 1.06L12 13.06l-5.47 5.47a.75.75 0 11-1.06-1.06L10.94 12 5.47 6.53a.75.75 0 010-1.06z" clipRule="evenodd" />
-              </svg>
-            </button>
-          )}
+          {/* Close icon (desktop only) */}
+          <button onClick={showInfo ? () => setShowInfo(false) : onClose} className="hidden sm:inline-flex h-9 w-9 items-center justify-center rounded-md bg-red-600 text-white shadow hover:bg-red-700" title={showInfo ? "Close details" : "Close"}>
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5">
+              <path fillRule="evenodd" d="M5.47 5.47a.75.75 0 011.06 0L12 10.94l5.47-5.47a.75.75 0 111.06 1.06L13.06 12l5.47 5.47a.75.75 0 11-1.06 1.06L12 13.06l-5.47 5.47a.75.75 0 11-1.06-1.06L10.94 12 5.47 6.53a.75.75 0 010-1.06z" clipRule="evenodd" />
+            </svg>
+          </button>
         </div>
       </div>
 
-      <div ref={containerRef} className={`flex-1 h-full flex items-center justify-center overflow-hidden relative ${isPanning ? 'cursor-grabbing' : (zoomPercent > 0 ? 'cursor-grab' : '')}`} onMouseDown={onMouseDown} onMouseMove={onMouseMove} onMouseUp={onMouseUp} onMouseLeave={onMouseUp} onClick={(e)=>{ if (e.target === e.currentTarget) onClose(); }}>
-        {/* Prev/Next inside image container so they don't overlap right-side slider/sidebar */}
-        <button onClick={(e)=>{e.stopPropagation(); prevPhoto();}} className="absolute left-4 top-1/2 -translate-y-1/2 text-white text-4xl z-40 bg-black/40 p-2 rounded-full hover:bg-black/60">&#10094;</button>
-        <button onClick={(e)=>{e.stopPropagation(); nextPhoto();}} className="absolute right-4 top-1/2 -translate-y-1/2 text-white text-4xl z-40 bg-black/40 p-2 rounded-full hover:bg-black/60">&#10095;</button>
+      <div ref={containerRef} className={`flex-1 w-full h-full flex items-center justify-center relative ${isPanning ? 'cursor-grabbing' : (zoomPercent > 0 ? 'cursor-grab' : '')}`} onMouseDown={onMouseDown} onMouseMove={onMouseMove} onMouseUp={onMouseUp} onMouseLeave={onMouseUp} onClick={(e)=>{ if (e.target === e.currentTarget) onClose(); }} style={{ overflow: 'visible', touchAction: 'none' }}>
+        {/* Prev/Next inside image container */}
+        <button
+          type="button"
+          data-viewer-control="true"
+          onClick={(e)=>{e.stopPropagation(); prevPhoto();}}
+          onTouchEnd={(e)=>{ e.preventDefault(); e.stopPropagation(); prevPhoto(); }}
+          onPointerDown={(e)=>{e.stopPropagation();}}
+          onTouchStart={(e)=>{e.stopPropagation();}}
+          className="absolute left-2 sm:left-4 top-1/2 -translate-y-1/2 text-white text-3xl sm:text-4xl z-40 bg-black/40 p-2 rounded-full hover:bg-black/60"
+          style={{ touchAction: 'manipulation', pointerEvents: 'auto' }}
+        >&#10094;</button>
+        <button
+          type="button"
+          data-viewer-control="true"
+          onClick={(e)=>{e.stopPropagation(); nextPhoto();}}
+          onTouchEnd={(e)=>{ e.preventDefault(); e.stopPropagation(); nextPhoto(); }}
+          onPointerDown={(e)=>{e.stopPropagation();}}
+          onTouchStart={(e)=>{e.stopPropagation();}}
+          className="absolute right-2 sm:right-4 top-1/2 -translate-y-1/2 text-white text-3xl sm:text-4xl z-40 bg-black/40 p-2 rounded-full hover:bg-black/60"
+          style={{ touchAction: 'manipulation', pointerEvents: 'auto' }}
+        >&#10095;</button>
         {/* Loading overlay while preview/full image is fetching */}
         {!isRawFile && imageLoading && (
           <div className="absolute inset-0 z-30 flex items-center justify-center bg-black/25">
@@ -580,10 +652,20 @@ const PhotoViewer = ({
               src={imageSrc}
               alt={currentPhoto.filename}
               onLoad={(e)=>{ onImgLoad(e); setImageLoading(false); }}
-              className="max-w-none"
-              style={{ transform: `translate3d(${position.x}px, ${position.y}px, 0) scale(${effectiveScale})`, willChange: 'transform' }}
-              onMouseDown={(e)=>{ e.stopPropagation(); onMouseDown(e); }}
-              onClick={(e)=> e.stopPropagation()}
+              style={{ 
+                position: 'absolute',
+                top: '50%',
+                left: '50%',
+                width: naturalSize.w ? `${naturalSize.w}px` : 'auto',
+                height: naturalSize.h ? `${naturalSize.h}px` : 'auto',
+                transform: `translate(-50%, -50%) translate3d(${position.x}px, ${position.y}px, 0) scale(${effectiveScale})`, 
+                transformOrigin: 'center center',
+                willChange: 'transform',
+                maxWidth: 'none',
+                maxHeight: 'none',
+                pointerEvents: 'none',
+                userSelect: 'none'
+              }}
               onError={(e) => {
                 // If preview fails, fallback to full-resolution once
                 if (usePreview && !fallbackTriedRef.current) {
@@ -612,25 +694,37 @@ const PhotoViewer = ({
         )}
 
         {/* Bottom controls: moved inside image container so they stay centered over the image area */}
-        <div className="absolute bottom-4 inset-x-0 flex justify-center text-white" onMouseDown={(e)=>e.stopPropagation()} onClick={(e)=>e.stopPropagation()}>
-          <div className="bg-black/60 backdrop-blur px-3 py-2 rounded-md flex items-center gap-3 shadow-lg">
-          <button className="px-2 py-1 text-xs rounded bg-white/90 text-gray-800" onClick={() => { setZoomPercent(0); setPosition({x:0,y:0}); }} title="Fit to screen">Fit</button>
-          <input type="range" min={0} max={200} step={1} value={zoomPercent} onChange={(e) => setZoomPercent(parseInt(e.target.value, 10))} />
+        <div className="absolute bottom-4 inset-x-0 flex justify-center text-white" onMouseDown={(e)=>e.stopPropagation()} onClick={(e)=>e.stopPropagation()} onPointerDown={(e)=>e.stopPropagation()} onTouchStart={(e)=>e.stopPropagation()} style={{ touchAction: 'manipulation', pointerEvents: 'auto' }}>
+          <div className="bg-black/60 backdrop-blur px-3 py-2 rounded-md flex items-center gap-3 shadow-lg" style={{ pointerEvents: 'auto' }} data-viewer-control="true">
+          <button className="px-2 py-1 text-xs rounded bg-white/90 text-gray-800" type="button" data-viewer-control="true" onClick={() => { setZoomPercent(0); setPosition({x:0,y:0}); }} onTouchEnd={(e)=>{ e.preventDefault(); e.stopPropagation(); setZoomPercent(0); setPosition({x:0,y:0}); }} title="Fit to screen" style={{ touchAction: 'manipulation', pointerEvents: 'auto' }}>Fit</button>
+          <input
+            type="range"
+            min={0}
+            max={200}
+            step={1}
+            value={zoomPercent}
+            onChange={(e) => setZoomPercent(parseInt(e.target.value, 10))}
+            onInput={(e) => setZoomPercent(parseInt(e.currentTarget.value, 10))}
+            onPointerDown={(e)=>{ e.stopPropagation(); }}
+            onTouchStart={(e)=>{ e.stopPropagation(); }}
+            style={{ touchAction: 'manipulation', pointerEvents: 'auto' }}
+            data-viewer-control="true"
+          />
           <span className="text-xs">{zoomPercent}%</span>
           </div>
         </div>
       </div>
       {/* Toasts are rendered by the global ToastContainer */}
 
-      {/* Detail sidebar (mobile + desktop) */}
-      <div
-        className={
-          `h-full ${showInfo ? 'w-full sm:w-96 md:w-80 bg-white text-gray-800 px-4 shadow-xl translate-x-0 pointer-events-auto' : 'w-0 sm:w-0 md:w-0 bg-transparent text-transparent px-0 translate-x-full pointer-events-none'} pt-4 md:pt-16 pb-4 overflow-auto transform transition-all duration-100 ease-out`
-        }
-        aria-hidden={!showInfo}
-        onMouseDown={(e)=>e.stopPropagation()}
-        onClick={(e)=>e.stopPropagation()}
-      >
+      {/* Detail sidebar (mobile: full screen overlay, desktop: side panel in flex) */}
+      {showInfo && (
+        <div
+          className="fixed sm:relative inset-0 sm:inset-auto w-full sm:w-96 md:w-80 h-full bg-white text-gray-800 px-4 shadow-xl z-50 pt-16 pb-4 overflow-auto"
+          aria-hidden={false}
+          onMouseDown={(e)=>e.stopPropagation()}
+          onClick={(e)=>e.stopPropagation()}
+        >
+          {/* Content moved inside conditional render */}
           {/* Project context */}
           {(currentPhoto?.project_folder || projectFolder) && (
             <div className="mb-4">
@@ -839,25 +933,27 @@ const PhotoViewer = ({
               >Download All (ZIP)</button>
             </div>
           </details>
+          
+          {/* Filename area: chip + clickable filename badge (toggle selection) */}
+          <div className="absolute bottom-4 right-4 flex items-center gap-2" onMouseDown={(e)=>e.stopPropagation()} onClick={(e)=>e.stopPropagation()}>
+            {isSelected && (
+              <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-[10px] leading-none bg-blue-100 text-blue-800 border border-blue-200 select-none shadow">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-3.5 h-3.5">
+                  <path fillRule="evenodd" d="M2.25 12a9.75 9.75 0 1119.5 0 9.75 9.75 0 01-19.5 0zm14.03-2.28a.75.75 0 10-1.06-1.06l-4.72 4.72-1.69-1.69a.75.75 0 10-1.06 1.06l2.22 2.22c.3.3.79.3 1.06 0l5.25-5.25z" clipRule="evenodd" />
+                </svg>
+                Selected
+              </span>
+            )}
+            <button
+              className={`text-white bg-black/60 px-4 py-2 rounded-md text-xs select-none cursor-pointer border ${isSelected ? 'border-blue-500' : 'border-transparent'} shadow-lg`}
+              onClick={(e)=>{ e.stopPropagation(); if (onToggleSelect) onToggleSelect(currentPhoto); }}
+              title={isSelected ? 'Click to unselect' : 'Click to select'}
+            >
+              {currentPhoto.filename}
+            </button>
+          </div>
         </div>
-      {/* Filename area: chip + clickable filename badge (toggle selection) */}
-      <div className="absolute bottom-4 right-4 flex items-center gap-2" onMouseDown={(e)=>e.stopPropagation()} onClick={(e)=>e.stopPropagation()}>
-        {isSelected && (
-          <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-[10px] leading-none bg-blue-100 text-blue-800 border border-blue-200 select-none shadow">
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-3.5 h-3.5">
-              <path fillRule="evenodd" d="M2.25 12a9.75 9.75 0 1119.5 0 9.75 9.75 0 01-19.5 0zm14.03-2.28a.75.75 0 10-1.06-1.06l-4.72 4.72-1.69-1.69a.75.75 0 10-1.06 1.06l2.22 2.22c.3.3.79.3 1.06 0l5.25-5.25z" clipRule="evenodd" />
-            </svg>
-            Selected
-          </span>
-        )}
-        <button
-          className={`text-white bg-black/60 px-4 py-2 rounded-md text-xs select-none cursor-pointer border ${isSelected ? 'border-blue-500' : 'border-transparent'} shadow-lg`}
-          onClick={(e)=>{ e.stopPropagation(); if (onToggleSelect) onToggleSelect(currentPhoto); }}
-          title={isSelected ? 'Click to unselect' : 'Click to select'}
-        >
-          {currentPhoto.filename}
-        </button>
-      </div>
+      )}
     </div>
   );
 };

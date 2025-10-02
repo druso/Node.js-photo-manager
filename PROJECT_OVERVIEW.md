@@ -218,7 +218,8 @@ The main App.jsx component underwent extensive refactoring to improve maintainab
 ### User Interface
 *   **Drag & Drop Upload**: Intuitive file upload with progress tracking
 *   **Grid and Table Views**: Multiple viewing modes for photo browsing
-*   **Full-screen Viewer**: Detailed photo viewing with zoom and navigation. Backed by `useViewerSync()` so URLs remain the source of truth for deep links in All Photos and Project contexts.
+*   **Full-screen Viewer**: Detailed photo viewing with zoom and navigation. Backed by `useViewerSync()` so URLs remain the source of truth for deep links in All Photos and Project contexts. Mobile gestures include pinch-to-zoom, swipe navigation, and a touch-friendly zoom slider.
+*   **Long-Press Selection Mode (Mobile)**: Holding on any grid photo enters selection mode, auto-displaying a banner with live counts. Taps toggle selection while active, and clearing selections hides the banner.
 *   **Keyboard Shortcuts**: Comprehensive keyboard navigation (see configuration)
     - Viewer behavior: planning a delete (keep none) no longer auto-advances; the viewer stays on the current image and shows a toast. When filters change the visible list, the current index is clamped to a valid photo instead of closing.
 *   **Real-time Updates**: Live job progress via Server-Sent Events
@@ -229,7 +230,7 @@ The main App.jsx component underwent extensive refactoring to improve maintainab
 *   **Lazy Loading (IntersectionObserver)**: The photo grid uses a single `IntersectionObserver` with a slight positive `rootMargin` and a short dwell to avoid flicker. Observation is rebound if a cell's DOM node changes across re-renders, and a ref‑backed visibility set prevents stale-closure misses. This eliminates random blank thumbnails while scrolling and reduces request bursts.
 *   **Incremental Updates**: The grid updates incrementally to preserve context and avoid disruptive reloads.
 *   **Optimistic Updates**: Keep/Tag/Revert/Commit actions update the UI immediately without a full data refetch, preserving browsing context.
-*   **Scroll Preservation**: Grid/table and viewer preserve scroll position and context during incremental updates. Selection is maintained unless an action explicitly clears it.
+*   **Scroll Preservation**: Grid/table and viewer preserve scroll position and context during incremental updates. Selection is maintained unless an action explicitly clears it. Long-press selection mode respects this preservation by exiting automatically once all selections are cleared.
 *   **Layout Stability**: Thumbnail cells use constant border thickness; selection changes only color/ring, avoiding micro layout shifts that can nudge scroll.
  *   **Grid Lazy-Load Reset Policy**: The grid’s visible window only resets when changing projects (or lazy threshold), not on incremental data updates.
  *   **Scroll/Viewer Preservation**: Window/main scroll and open viewer are preserved across background refreshes and fallback refetches.

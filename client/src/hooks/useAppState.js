@@ -46,6 +46,7 @@ export function useAppState() {
   // Selection state
   const [selectedPhotos, setSelectedPhotos] = useState(new Set());
   const [allSelectedKeys, setAllSelectedKeys] = useState(new Set());
+  const [selectionMode, setSelectionMode] = useState(false); // M2: Long-press selection mode
   
   // Selection helpers
   const clearAllSelection = useMemo(() => () => {
@@ -203,6 +204,8 @@ export function useAppState() {
     setSelectedPhotos,
     allSelectedKeys,
     setAllSelectedKeys,
+    selectionMode,
+    setSelectionMode,
     clearAllSelection,
     toggleAllSelection,
     

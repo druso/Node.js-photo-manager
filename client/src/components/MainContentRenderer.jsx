@@ -40,6 +40,9 @@ const MainContentRenderer = ({
   handleToggleSelection,
   selectedPhotos,
   
+  // Selection mode (M2)
+  onEnterSelectionMode,
+  
   // Config
   config
 }) => {
@@ -64,6 +67,7 @@ const MainContentRenderer = ({
           onPhotoSelect={handleAllPhotoSelect}
           onToggleSelection={handleToggleSelectionAll}
           selectedPhotos={allSelectedKeys}
+          onEnterSelectionMode={onEnterSelectionMode}
         />
       </>
     );
@@ -78,6 +82,7 @@ const MainContentRenderer = ({
           projectFolder={selectedProject?.folder}
           onPhotoSelect={(photo) => handlePhotoSelect(photo, sortedPagedPhotos)}
           onToggleSelection={handleToggleSelection}
+          onEnterSelectionMode={onEnterSelectionMode}
           selectedPhotos={selectedPhotos}
           lazyLoadThreshold={config?.photo_grid?.lazy_load_threshold ?? 100}
           dwellMs={config?.photo_grid?.dwell_ms ?? 300}

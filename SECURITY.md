@@ -313,13 +313,7 @@ No functional changes were introduced by this documentation update; it reflects 
 - **Risk**: None identified. This is a pure architectural improvement that enhances code maintainability without changing security posture.
 - **Monitoring**: Server startup logs confirm successful module loading and delegation.
 
-## 2025-09-30: Real-time Pending Changes SSE
-
-- **Feature**: Implemented Server-Sent Events stream for real-time pending changes notifications
-- **Changes**:
-  - New endpoint: `GET /api/sse/pending-changes` broadcasts boolean flags per project
-  - Automatically triggers on keep flag updates via `PUT /api/projects/:folder/keep`
-  - Frontend hooks: `usePendingChangesSSE()` maintains connection, `usePendingDeletes()` consumes data
+## 2025-10-02 UTC — Mobile Selection Mode & Viewer Gestures
   - Drives commit/revert toolbar visibility in real-time across all browser tabs
 - **Security Assessment**:
   - ✅ **No authentication required**: Single-user application, consistent with existing SSE endpoints
@@ -331,3 +325,14 @@ No functional changes were introduced by this documentation update; it reflects 
 - **Risk**: Low. Minimal data exposure, efficient resource usage, consistent with existing SSE patterns.
 - **Future Consideration**: Add connection limits if multi-user deployment planned.
 - **Monitoring**: Server logs SSE connections, disconnections, and broadcast events.
+
+2025-10-02 UTC — Mobile Selection Mode & Viewer Gestures
+
+- **Feature**: Added long-press selection mode for mobile grids and enhanced viewer touch gestures (pinch zoom, swipe navigation, touch-ready zoom slider).
+- **Changes**: Client-side only (`client/src/App.jsx`, `client/src/components/VirtualizedPhotoGrid.jsx`, `client/src/components/PhotoViewer.jsx`); no new backend endpoints or state persisted outside the browser session.
+- **Security Assessment**:
+  - ✅ **No new data exposure**: All logic remains client-side; no additional API calls or identifiers transmitted.
+  - ✅ **Controls preserved**: Selection banner auto-hides when cleared, ensuring UI-state consistency and preventing stale selection indicators.
+  - ✅ **DoS posture unchanged**: Touch gesture handling relies on existing viewer state without increasing request volume.
+- **Risk**: None identified; enhancements strengthen mobile usability without altering trust boundaries.
+- **Monitoring**: Existing frontend logging remains sufficient; no new telemetry required.

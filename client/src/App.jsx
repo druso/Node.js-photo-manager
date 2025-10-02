@@ -48,6 +48,7 @@ import CommitModal from './components/CommitModal';
 import RevertModal from './components/RevertModal';
 import CreateProjectModal from './components/CreateProjectModal';
 import MainContentRenderer from './components/MainContentRenderer';
+import SelectionModeBanner from './components/SelectionModeBanner';
 
 // New hooks
 import { useCommitRevert } from './hooks/useCommitRevert';
@@ -84,6 +85,7 @@ function App() {
     viewerList, setViewerList,
     viewMode, setViewMode,
     selectedPhotos, setSelectedPhotos,
+    selectionMode, setSelectionMode,
     filtersCollapsed, setFiltersCollapsed,
     sizeLevel, setSizeLevel,
     taskDefs, setTaskDefs,
@@ -294,8 +296,6 @@ function App() {
   const handleShowInfoChange = useCallback((showInfo) => {
     setViewerState(prev => ({ ...prev, showInfo }));
   }, [setViewerState]);
-
-
 
 
   // Map UI sort to API sort fields
@@ -568,6 +568,40 @@ function App() {
     ALL_PROJECT_SENTINEL
   });
 
+  // Selection mode handlers for M2 (must be after useEventHandlers)
+  const enterSelectionMode = useCallback((photo) => {
+    // Close viewer if open
+    if (viewerState.isOpen) {
+      setViewerState({ isOpen: false, startIndex: -1 });
+    }
+    // Select the photo that was long-pressed
+    if (photo) {
+      const isAllMode = view?.project_filter === null;
+      if (isAllMode) {
+        handleToggleSelectionAll(photo);
+      } else {
+        handleToggleSelection(photo);
+      }
+    }
+  }, [view?.project_filter, viewerState.isOpen, handleToggleSelectionAll, handleToggleSelection, setViewerState]);
+
+  const clearAllSelections = useCallback(() => {
+    const isAllMode = view?.project_filter === null;
+    if (isAllMode) {
+      setAllSelectedKeys(new Set());
+    } else {
+      setSelectedPhotos(new Set());
+    }
+  }, [view?.project_filter, setAllSelectedKeys, setSelectedPhotos]);
+
+  // Clear selections when project changes (project mode only)
+  useEffect(() => {
+    const isAllMode = view?.project_filter === null;
+    if (!isAllMode && selectedPhotos.size > 0) {
+      setSelectedPhotos(new Set());
+    }
+  }, [selectedProject?.folder, selectedPhotos.size, setSelectedPhotos]);
+
   const {
     viewerPhotos,
     viewerKey,
@@ -628,6 +662,18 @@ function App() {
       projectFolder={view?.project_filter !== null && selectedProject?.folder ? selectedProject.folder : null}
       onCompleted={handlePhotosUploaded}
     >
+      {/* Selection Mode Banner (M2) - Show only when selections exist */}
+      {(() => {
+        const isAllMode = view?.project_filter === null;
+        const count = isAllMode ? allSelectedKeys.size : selectedPhotos.size;
+        return count > 0 ? (
+          <SelectionModeBanner
+            selectedCount={count}
+            onClearSelection={clearAllSelections}
+          />
+        ) : null;
+      })()}
+      
       <div className="bg-gray-50 overflow-x-hidden">
       {/* Sticky Header Container */}
       <div className="fixed top-0 left-0 right-0 z-20 bg-gray-50" ref={stickyHeaderRef}>
@@ -1012,6 +1058,7 @@ function App() {
             handlePhotoSelect={handlePhotoSelect}
             handleToggleSelection={handleToggleSelection}
             selectedPhotos={selectedPhotos}
+            onEnterSelectionMode={enterSelectionMode}
             config={config}
           />
         </div>
