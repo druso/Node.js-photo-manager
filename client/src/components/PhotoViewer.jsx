@@ -1,5 +1,10 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { updateKeep } from '../api/keepApi';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+import clsx from 'clsx';
+import { Transition } from '@headlessui/react';
+import { authFetch } from '../api/httpClient';
+import { usePublicHashContext } from '../contexts/PublicHashContext';
+import { isPublicPhoto } from '../utils/publicHash';
 import { useToast } from '../ui/toast/ToastContext';
 
 const PhotoViewer = ({
@@ -43,6 +48,7 @@ const PhotoViewer = ({
   const [naturalSize, setNaturalSize] = useState({ w: 0, h: 0 });
   const [imageLoading, setImageLoading] = useState(true);
   const [usePreview, setUsePreview] = useState(true);
+  const { ensurePublicAssets, getAssetUrl } = usePublicHashContext();
   const imgRef = useRef(null);
   const fallbackTriedRef = useRef(false);
   const [isPanning, setIsPanning] = useState(false);
@@ -560,10 +566,73 @@ const currentPhoto = photos[currentIndex];
 
   // Determine image source: preview by default, toggle to full-res
   const effectiveFolder = fromAllMode ? (currentPhoto?.project_folder || projectFolder) : projectFolder;
-  const cacheV = encodeURIComponent(String(currentPhoto?.updated_at || currentPhoto?.taken_at || currentPhoto?.id || currentIndex || '')); 
-  const imageSrc = usePreview
-    ? `/api/projects/${encodeURIComponent(effectiveFolder)}/preview/${encodeURIComponent(currentPhoto.filename)}?v=${cacheV}`
-    : `/api/projects/${encodeURIComponent(effectiveFolder)}/image/${encodeURIComponent(filenameWithExtForImage(currentPhoto))}?v=${cacheV}`;
+
+  const appendVersion = useCallback((url, versionToken) => {
+    if (!url) return null;
+    if (!versionToken) return url;
+    const separator = url.includes('?') ? '&' : '?';
+    return `${url}${separator}v=${encodeURIComponent(versionToken)}`;
+  }, []);
+
+  const buildLocalUrl = useCallback((folder, type, filename, versionToken) => {
+    if (!folder || !type || !filename) return null;
+    const base = `/api/projects/${encodeURIComponent(folder)}/${type}/${encodeURIComponent(filename)}`;
+    return appendVersion(base, versionToken);
+  }, [appendVersion]);
+
+  const resolveFolderForPhoto = useCallback((photo) => {
+    if (!photo) return null;
+    if (projectFolder && projectFolder !== '__all__') return projectFolder;
+    if (fromAllMode) return photo.project_folder || null;
+    return projectFolder || null;
+  }, [projectFolder, fromAllMode]);
+
+  const buildImageSrc = useCallback(async () => {
+    if (!currentPhoto) return null;
+    const folder = resolveFolderForPhoto(currentPhoto);
+    if (!folder) return null;
+    const versionToken = String(currentPhoto?.updated_at || currentPhoto?.taken_at || currentPhoto?.id || currentIndex || '');
+    const type = usePreview ? 'preview' : 'image';
+    const filename = usePreview ? currentPhoto.filename : filenameWithExtForImage(currentPhoto);
+
+    if (!isPublicPhoto(currentPhoto)) {
+      return buildLocalUrl(folder, type, filename, versionToken);
+    }
+
+    const ensureInput = { ...currentPhoto, project_folder: folder };
+    try {
+      const metadata = await ensurePublicAssets(ensureInput);
+      const hashedUrl = getAssetUrl({
+        photo: { ...currentPhoto, project_folder: folder },
+        type,
+        version: versionToken,
+      });
+      if (hashedUrl) return hashedUrl;
+      const metaUrl = type === 'preview' ? metadata?.assets?.preview_url : metadata?.assets?.image_url;
+      if (metaUrl) return appendVersion(metaUrl, versionToken);
+    } catch (error) {
+      // fall back below
+    }
+
+    return buildLocalUrl(folder, type, filename, versionToken);
+  }, [currentPhoto, currentIndex, usePreview, filenameWithExtForImage, resolveFolderForPhoto, buildLocalUrl, ensurePublicAssets, getAssetUrl, appendVersion]);
+
+  const [imageSrc, setImageSrc] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setImageSrc(null);
+    setImageLoading(true);
+    (async () => {
+      const src = await buildImageSrc();
+      if (!cancelled) {
+        setImageSrc(src);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [buildImageSrc]);
   // moved: preloading and recentering effects are defined above conditional returns
 
 
@@ -897,7 +966,7 @@ const currentPhoto = photos[currentIndex];
                 disabled={!currentPhoto.jpg_available}
                 title={currentPhoto.jpg_available ? 'Download JPG' : 'JPG not available'}
                 onClick={async () => {
-                const r = await fetch(`/api/projects/${encodeURIComponent(projectFolder)}/download-url`, {
+                const r = await authFetch(`/api/projects/${encodeURIComponent(projectFolder)}/download-url`, {
                   method: 'POST', headers: { 'Content-Type': 'application/json' },
                   body: JSON.stringify({ filename: currentPhoto.filename, type: 'jpg' })
                 });
@@ -910,7 +979,7 @@ const currentPhoto = photos[currentIndex];
                 disabled={!currentPhoto.raw_available}
                 title={currentPhoto.raw_available ? 'Download RAW' : 'RAW not available'}
                 onClick={async () => {
-                const r = await fetch(`/api/projects/${encodeURIComponent(projectFolder)}/download-url`, {
+                const r = await authFetch(`/api/projects/${encodeURIComponent(projectFolder)}/download-url`, {
                   method: 'POST', headers: { 'Content-Type': 'application/json' },
                   body: JSON.stringify({ filename: currentPhoto.filename, type: 'raw' })
                 });
@@ -923,7 +992,7 @@ const currentPhoto = photos[currentIndex];
                 disabled={!(currentPhoto.jpg_available || currentPhoto.raw_available)}
                 title={(currentPhoto.jpg_available || currentPhoto.raw_available) ? 'Download all available as ZIP' : 'No files available to download'}
                 onClick={async () => {
-                const r = await fetch(`/api/projects/${encodeURIComponent(projectFolder)}/download-url`, {
+                const r = await authFetch(`/api/projects/${encodeURIComponent(projectFolder)}/download-url`, {
                   method: 'POST', headers: { 'Content-Type': 'application/json' },
                   body: JSON.stringify({ filename: currentPhoto.filename, type: 'zip' })
                 });

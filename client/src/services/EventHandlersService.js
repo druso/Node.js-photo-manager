@@ -124,10 +124,17 @@ export class EventHandlersService {
   }
 
   handlePhotoSelect(photo, photoContext = null) {
-    if (!this.projectData?.photos) return;
-    
-    const photos = photoContext || this.filteredProjectData?.photos || this.projectData.photos;
-    const startIndex = photos.findIndex(p => p.filename === photo.filename);
+    const photos = Array.isArray(photoContext)
+      ? photoContext
+      : Array.isArray(this.filteredProjectData?.photos)
+        ? this.filteredProjectData.photos
+        : Array.isArray(this.projectData?.photos)
+          ? this.projectData.photos
+          : null;
+
+    if (!Array.isArray(photos) || !photo) return;
+
+    const startIndex = photos.findIndex(p => p?.filename === photo.filename);
     if (startIndex === -1) return;
     
     this.setViewerState({

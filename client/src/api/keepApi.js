@@ -1,5 +1,7 @@
+import { authFetch } from './httpClient';
+
 export async function updateKeep(folder, updates) {
-  const res = await fetch(`/api/projects/${encodeURIComponent(folder)}/keep`, {
+  const res = await authFetch(`/api/projects/${encodeURIComponent(folder)}/keep`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ updates })

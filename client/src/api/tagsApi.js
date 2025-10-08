@@ -1,5 +1,7 @@
+import { authFetch } from './httpClient';
+
 export async function updateTags(projectFolder, updates) {
-  const res = await fetch(`/api/projects/${projectFolder}/tags`, {
+  const res = await authFetch(`/api/projects/${encodeURIComponent(projectFolder)}/tags`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ updates }),

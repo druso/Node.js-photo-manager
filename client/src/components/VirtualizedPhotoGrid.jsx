@@ -561,6 +561,12 @@ const VirtualizedPhotoGrid = ({
                       : selectedPhotos?.has(photo.filename);
                     const marginRight = j < rowItems.length - 1 ? gap : 0;
                     const key = `${photo.project_folder || projectFolder || 'pf'}::${photo.filename || `${photo.id}-${idx}`}`;
+                    const visibility = (photo.visibility || 'private').toLowerCase();
+                    const visibilityLabel = visibility === 'public' ? 'Public' : 'Private';
+                    const visibilityStyles = visibility === 'public'
+                      ? 'bg-green-500/80 text-white'
+                      : 'bg-purple-600/85 text-white';
+
                     return (
                       <div
                         key={`${photo.project_folder || projectFolder || 'pf'}-${photo.id}-${photo.filename}`}
@@ -612,6 +618,22 @@ const VirtualizedPhotoGrid = ({
                       >
                       {/* Gradient overlay for desktop hover - top 25% */}
                       <div className="absolute inset-x-0 top-0 h-1/4 bg-gradient-to-b from-black/50 to-transparent opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none hidden sm:block" />
+
+                      <span
+                        className={`absolute top-2 right-2 z-10 px-2 py-0.5 text-xs font-semibold rounded-full shadow-sm flex items-center gap-1 ${visibilityStyles}`}
+                        title={`Visibility: ${visibilityLabel}`}
+                      >
+                        {visibility === 'public' ? (
+                          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="h-3.5 w-3.5">
+                            <path d="M12 4.5c-4.97 0-9 3.582-9 8s4.03 8 9 8 9-3.582 9-8-4.03-8-9-8Zm0 2c3.866 0 7 2.91 7 6s-3.134 6-7 6-7-2.91-7-6 3.134-6 7-6Zm0 2.25a3.75 3.75 0 1 0 0 7.5 3.75 3.75 0 0 0 0-7.5Z" />
+                          </svg>
+                        ) : (
+                          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="h-3.5 w-3.5">
+                            <path fillRule="evenodd" d="M3.53 2.47a.75.75 0 0 0-1.06 1.06l2.092 2.093C3.048 7.098 1.658 8.91 1.09 10.7a1.52 1.52 0 0 0 0 .6C2.163 14.228 6.322 18.5 12 18.5c1.53 0 2.973-.317 4.28-.882l4.19 4.192a.75.75 0 1 0 1.06-1.06l-18-18Zm9.164 10.224 2.612 2.611a3.75 3.75 0 0 1-2.35.695 3.75 3.75 0 0 1-3.75-3.75c0-.865.29-1.663.78-2.285l1.695 1.695a1.5 1.5 0 0 0 1.913 1.913Zm7.038-4.657-2.94 2.94a3.75 3.75 0 0 0-4.768-4.768l-2.533-2.533A10.47 10.47 0 0 1 12 5.5c5.678 0 9.837 4.272 10.91 7.2.085.236.085.364 0 .6a10.11 10.11 0 0 1-1.566 2.802l-2.612-2.612a3.73 3.73 0 0 0 .232-1.298 3.75 3.75 0 0 0-3.75-3.75c-.44 0-.865.077-1.255.218l2.49-2.49c.502.33.98.7 1.43 1.111Z" clipRule="evenodd" />
+                          </svg>
+                        )}
+                        {visibilityLabel}
+                      </span>
                       
                       {/* Selection toggle in top-left within gradient area */}
                       <button

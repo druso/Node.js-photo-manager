@@ -1,4 +1,6 @@
 // Jobs/Tasks API client for async pipeline
+import { authFetch, getAuthAccessToken } from './httpClient';
+import { EventSourcePolyfill } from 'event-source-polyfill';
 
 // Start a task for a project
 // Dev-only logger (Vite: import.meta.env.DEV)
@@ -7,7 +9,7 @@ try { __isDev = !!(import.meta && import.meta.env && import.meta.env.DEV); } cat
 const __devLog = (...args) => { try { if (__isDev) console.info(...args); } catch (_) {} };
 export async function startTask(folder, { task_type, source = 'client', items = null } = {}) {
   if (!task_type) throw new Error('startTask: task_type is required');
-  const res = await fetch(`/api/projects/${encodeURIComponent(folder)}/jobs`, {
+  const res = await authFetch(`/api/projects/${encodeURIComponent(folder)}/jobs`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ task_type, source, items }),
@@ -23,13 +25,13 @@ export async function listJobs(folder, { status, type, limit = 50, offset = 0 } 
   if (limit != null) params.set('limit', String(limit));
   if (offset != null) params.set('offset', String(offset));
   const qs = params.toString() ? `?${params.toString()}` : '';
-  const res = await fetch(`/api/projects/${encodeURIComponent(folder)}/jobs${qs}`);
+  const res = await authFetch(`/api/projects/${encodeURIComponent(folder)}/jobs${qs}`);
   if (!res.ok) throw new Error(`listJobs failed: ${res.status}`);
   return res.json(); // { jobs }
 }
 
 export async function getJob(id) {
-  const res = await fetch(`/api/jobs/${encodeURIComponent(id)}`);
+  const res = await authFetch(`/api/jobs/${encodeURIComponent(id)}`);
   if (!res.ok) throw new Error(`getJob failed: ${res.status}`);
   return res.json(); // { job, items_summary, total_items }
 }
@@ -51,7 +53,13 @@ export function openJobStream(onMessage) {
   // Establish the shared connection if needed
   if (!__jobEs) {
     try { if (__jobEsTeardownTimer) { clearTimeout(__jobEsTeardownTimer); __jobEsTeardownTimer = null; } } catch {}
-    __jobEs = new EventSource('/api/jobs/stream');
+    const token = getAuthAccessToken();
+    __jobEs = token
+      ? new EventSourcePolyfill('/api/jobs/stream', {
+          headers: { Authorization: `Bearer ${token}` },
+          withCredentials: true,
+        })
+      : new EventSource('/api/jobs/stream');
     __devLog('[SSE] connecting to /api/jobs/stream ...');
     __jobEs.onopen = () => {
       __devLog('[SSE] connected');
@@ -98,7 +106,7 @@ export function openJobStream(onMessage) {
 
 // Fetch task definitions (labels, user_relevant, steps)
 export async function fetchTaskDefinitions() {
-  const res = await fetch('/api/tasks/definitions');
+  const res = await authFetch('/api/tasks/definitions');
   if (!res.ok) throw new Error(`fetchTaskDefinitions failed: ${res.status}`);
   return res.json();
 }

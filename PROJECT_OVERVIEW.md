@@ -26,7 +26,8 @@ The application is built around a few key concepts:
 
 *   **Unified View Architecture**: There is NO conceptual distinction between "All Photos" and "Project" views. A Project view is simply the All Photos view with a project filter applied. This architectural principle is enforced throughout the codebase with a unified view context (`view.project_filter === null` for All Photos mode, or a project folder string for Project mode), unified selection model (`PhotoRef` objects), and unified modal states. The codebase has been fully refactored to use this single source of truth, eliminating duplicate code paths and ensuring consistent behavior across the application.
 
-*   **Unified Filtering System**: Both All Photos and Project views use identical server-side filtering with consistent "filtered of total" count displays. Filters include date ranges, file type availability (JPG/RAW), keep flags, and photo orientation. This ensures scalable performance and consistent user experience across views.
+*   **Unified Filtering System**: Both All Photos and Project views use identical server-side filtering with consistent "filtered of total" count displays. Filters include date ranges, file type availability (JPG/RAW), keep flags, photo orientation, tags, and the `visibility` flag (`public` vs `private`). This ensures scalable performance and consistent user experience across views while keeping public/private segregation consistent across listings, locate endpoints, and pagination.
+*   **Cross-Project Visibility Operations (2025-10-07)**: The actions menu now supports previewing and applying visibility changes across both Project and All Photos contexts using the unified selection model. Bulk updates route through `useVisibilityMutation()` (dry-run aware) and call `POST /api/photos/visibility`, clearing selections and refreshing caches optimistically. Anonymous access remains limited to public thumbnails/previews; all mutating operations still require an authenticated admin session.
 
 *   **Worker Pipeline**: To ensure the UI remains responsive, time-consuming tasks like generating thumbnails and previews are handled asynchronously by a background worker pipeline. Each job now carries an explicit `scope` (`project`, `photo_set`, or `global`) so workers can operate on single projects, arbitrary photo collections, or system-wide maintenance alike. Shared helpers in `server/services/workers/shared/photoSetUtils.js` resolve job targets and group photo sets per project, keeping filesystem access safe for cross-project operations. The system includes specialized workers for image moves between projects, which update database records, move files and derivatives, and emit real-time SSE events to keep the UI synchronized. This system is designed to be extensible for future processing needs and the canonical job catalog lives in `JOBS_OVERVIEW.md`.
 
@@ -75,7 +76,7 @@ The frontend is a modern single-page application (SPA) responsible for all user 
 *   **Entry Point**: The main HTML file is `client/index.html`.
 *   **Static Assets**: Public assets like fonts or icons are stored in `client/public/`.
 *   **Key Components**: 
-    *   `App.jsx`: Highly optimized main orchestrator (1021 lines, reduced from ~2350 lines via systematic extraction)
+    *   `App.jsx`: Highly optimized main orchestrator (~1.17k lines, reduced from ~2350 lines via systematic extraction)
     *   `hooks/`: Extensive collection of specialized React hooks for separation of concerns:
         - **State Management**: `useAppState.js`, `useFiltersAndSort.js`
         - **Business Logic**: `useProjectDataService.js`, `useEventHandlers.js`, `useProjectNavigation.js`
@@ -87,7 +88,7 @@ The frontend is a modern single-page application (SPA) responsible for all user 
         - **Layout**: `MainContentRenderer.jsx`, `CommitRevertBar.jsx`
         - **Controls**: `SortControls.jsx` (eliminates 4x code duplication)
         - **Modals**: `CommitModal.jsx`, `RevertModal.jsx`, `CreateProjectModal.jsx`
-        - **Core**: `PhotoGrid.jsx`, `PhotoViewer.jsx`, etc.
+        - **Core**: `VirtualizedPhotoGrid.jsx`, `PhotoViewer.jsx`, etc.
     *   `services/`: Business logic services (`ProjectDataService.js`, `EventHandlersService.js`)
         - `EventHandlersService.js` consumes the canonical `filteredProjectData` computed from server-filtered results to keep viewer selections and project modals in sync without placeholder state.
     *   `api/`: API client modules for backend communication
@@ -111,8 +112,46 @@ The backend is a Node.js application that exposes a RESTful API for the client.
     *   **Worker Loop**: Background job processor with crash recovery and configuration sanity warnings (e.g., zero normal-lane slots)
     *   `workers/`: Individual worker implementations (derivatives generation)
     *   `events.js`: Event emitter for real-time job updates
+    *   `auth/`: Authentication bootstrap helpers (`authConfig.js`, `initAuth.js`, `passwordUtils.js`, `tokenService.js`, `authCookieService.js`) enforce the fail-fast auth env contract and expose bcrypt/JWT/cookie utilities.
 *   **Utilities (`server/utils/`)**: Contains helper functions used across the backend.
     - File acceptance is centralized in `server/utils/acceptance.js` and driven by `config.json → uploader.accepted_files` (extensions, mime_prefixes).
+*   **Migrations (`server/services/migrations/`)**: Contains `runner.js` (ordered migration execution with dry-run support) and draft migration modules (`2025100401_add_photos_visibility.js`, `2025100402_create_public_links.js`, `2025100403_create_photo_public_links.js`) outlining upcoming visibility/shared-link schema changes.
+
+#### Authentication Bootstrap (2025-10-04)
+
+- **Fail-fast config**: `authConfig.js` validates `AUTH_ADMIN_BCRYPT_HASH`, `AUTH_JWT_SECRET_ACCESS`, `AUTH_JWT_SECRET_REFRESH`, and enforces `AUTH_BCRYPT_COST` bounds (8–14, default 12).
+- **Startup guard**: `initAuth.js` runs before Express initialisation in `server.js`; failures log `auth_config_invalid` and exit to prevent misconfigured deployments.
+- **Helper modules**:
+  - `passwordUtils.js` handles bcrypt verification/hash generation.
+  - `tokenService.js` issues/verifies 1 h access and 7 d refresh JWTs with issuer `photo-manager`, audience `photo-manager-admin`, and `role: 'admin'`.
+  - `authCookieService.js` encapsulates SameSite=Strict HTTP-only cookie defaults with secure flag derived from `AUTH_COOKIE_SECURE`/`NODE_ENV`.
+- **Testing**: Suites in `server/services/auth/__tests__/` (run via `npm test`) cover config success/error, password helpers, token lifecycle, and cookie behaviour.
+- **Operator guidance**: `.env.example` & `README.md` document sample bcrypt hash generation and 256-bit secret rotation plus notes on adjusting `AUTH_BCRYPT_COST`.
+
+#### Admin Authentication Rollout (2025-10-04)
+
+- **Server endpoints**: `server/routes/auth.js` exposes `POST /api/auth/login` (password verification with `passwordUtils.verifyAdminPassword()`), `POST /api/auth/refresh` (rotates access token, re-issues cookies), and `POST /api/auth/logout` (clears cookies).
+- **Middleware**: `server/middleware/authenticateAdmin.js` verifies access JWTs from `Authorization: Bearer` or the `pm_access_token` cookie via `tokenService.verifyAccessToken()` and blocks all `/api/*` routes except `/api/auth/*`. SSE entrypoints (`/api/sse/*`, `/api/jobs/stream`) chain through the same guard to prevent unauthenticated listeners.
+- **Cookie contract**: `authCookieService.js` writes `pm_access_token` (HTTP-only, SameSite=Strict, path `/`, ~1 h TTL) and `pm_refresh_token` (HTTP-only, SameSite=Strict, path `/api/auth/refresh`, 7 d TTL). `AUTH_COOKIE_SECURE` or `NODE_ENV` control the `secure` flag. Logout and refresh flows clear/rotate both cookies to avoid leakage.
+- **Frontend client**: `client/src/api/httpClient.js` centralises authenticated fetches (adds bearer token + `credentials: 'include'`). `client/src/api/authApi.js` wraps login/refresh/logout and synchronises the in-memory token cache.
+- **SPA gating**: `client/src/auth/AuthContext.jsx` manages session state, schedules silent refresh ~30 s before expiry, and exposes `useAuth()`. `client/src/auth/LoginPage.jsx` provides the admin password form. `client/src/App.jsx` renders `AdminApp` only when `useAuth()` reports `status === 'authenticated'`; otherwise the login screen is shown. `client/src/main.jsx` wraps the entire React tree with `<AuthProvider>` so every API client and hook can rely on the shared auth context.
+- **API integrations**: Core clients (`projectsApi`, `photosApi`, `allPhotosApi`, `keepApi`, `tagsApi`, `uploadsApi`) now import `authFetch()` so every administrative call automatically carries the access token and cookies.
+- **Environment readiness**: Local development requires the Milestone 0 sample secrets (see `.env.example`). Without them `npm start`/`npm test` will exit early with `auth_config_invalid` events.
+
+#### Migration Scaffolding (2025-10-04)
+
+- `server/services/migrations/runner.js` discovers migration modules, sorts by `id`, and wraps `up` executions in transactions (supports `{ dryRun: true }`).
+- Draft migrations (kept unapplied) implement `photos.visibility` (`TEXT NOT NULL DEFAULT 'private'`), `public_links` metadata, and `photo_public_links` join with supporting indexes.
+- **Dry-run recipe**:
+  ```js
+  const path = require('path');
+  const { getDb } = require('./server/services/db');
+  const { MigrationRunner } = require('./server/services/migrations/runner');
+  const db = getDb();
+  const runner = new MigrationRunner({ db, migrationsDir: path.join(__dirname, 'server/services/migrations/migrations') });
+  runner.runAll({ dryRun: false });
+  ```
+  Run from repo root once the base schema exists to validate drafts locally (leave unapplied in production until ready).
 
 #### Logging
 
@@ -219,6 +258,7 @@ The main App.jsx component underwent extensive refactoring to improve maintainab
 *   **Drag & Drop Upload**: Intuitive file upload with progress tracking
 *   **Grid and Table Views**: Multiple viewing modes for photo browsing
 *   **Full-screen Viewer**: Detailed photo viewing with zoom and navigation. Backed by `useViewerSync()` so URLs remain the source of truth for deep links in All Photos and Project contexts. Mobile gestures include pinch-to-zoom, swipe navigation, and a touch-friendly zoom slider.
+  - Public assets are fetched through `PublicHashContext` so preview/full-resolution images use cached hashes when fresh, refreshing metadata only when the hash expires. Private photos automatically use signed project endpoints.
 *   **Long-Press Selection Mode (Mobile)**: Holding on any grid photo enters selection mode, auto-displaying a banner with live counts. Taps toggle selection while active, and clearing selections hides the banner.
 *   **Keyboard Shortcuts**: Comprehensive keyboard navigation (see configuration)
     - Viewer behavior: planning a delete (keep none) no longer auto-advances; the viewer stays on the current image and shows a toast. When filters change the visible list, the current index is clamped to a valid photo instead of closing.
@@ -226,7 +266,9 @@ The main App.jsx component underwent extensive refactoring to improve maintainab
 *   **Incremental Thumbnails (SSE)**: Pending thumbnails update via item-level SSE events managed by `useProjectSse()`; no client-side probing of asset URLs
   - Client requests encode both `:folder` and `:filename` to avoid failures with spaces/special characters (see `client/src/components/Thumbnail.jsx`).
   - Resilience: the thumbnail image performs one retry with a short cache-busting param when a load error occurs. If debug is enabled, it logs load/retry/fail events to the console.
+  - Public photos resolve thumbnail URLs through `PublicHashContext` and `ensurePublicAssets()` so hashed asset URLs are reused across grid, table, and viewer surfaces without redundant metadata fetches. Private photos fall back to the authenticated thumbnail endpoint automatically.
   - Dev toggle for diagnostics: `localStorage.setItem('debugThumbs','1')` (or set `window.__DEBUG_THUMBS = true`) and reload to see `[thumb]` logs in DevTools.
+  - Option A lifecycle: `PublicHashProvider` relies on the backend `photo_public_hashes` table. Hashes have a default 28‑day TTL (`public_assets.hash_ttl_days`) and rotate every 21 days (`public_assets.hash_rotation_days`) via `scheduler.js`. Override cadence with `PUBLIC_HASH_TTL_DAYS` / `PUBLIC_HASH_ROTATION_DAYS` env vars. Admin visibility toggles (`photosRepo.updateVisibility()`) seed or clear hashes automatically.
 *   **Lazy Loading (IntersectionObserver)**: The photo grid uses a single `IntersectionObserver` with a slight positive `rootMargin` and a short dwell to avoid flicker. Observation is rebound if a cell's DOM node changes across re-renders, and a ref‑backed visibility set prevents stale-closure misses. This eliminates random blank thumbnails while scrolling and reduces request bursts.
 *   **Incremental Updates**: The grid updates incrementally to preserve context and avoid disruptive reloads.
 *   **Optimistic Updates**: Keep/Tag/Revert/Commit actions update the UI immediately without a full data refetch, preserving browsing context.
@@ -524,8 +566,8 @@ The backend exposes a comprehensive REST API for all frontend operations:
 *   **Processing**: `POST /api/projects/:folder/process` - Queue thumbnail/preview generation
 *   **Analysis**: `POST /api/projects/:folder/analyze-files` - Pre-upload file analysis
 *   **Assets**: 
-    *   `GET /api/projects/:folder/thumbnail/:filename` - Thumbnail serving (no token)
-    *   `GET /api/projects/:folder/preview/:filename` - Preview serving (no token)
+    *   `GET /api/projects/:folder/thumbnail/:filename` - Thumbnail serving (honors `photos.visibility`; public assets stream without auth, private assets require admin session)
+    *   `GET /api/projects/:folder/preview/:filename` - Preview serving (same visibility rules as thumbnails)
     *   `POST /api/projects/:folder/download-url` - Mint signed URLs for originals
     *   `GET /api/projects/:folder/file/:type/:filename` - Download originals (requires token)
     *   `GET /api/projects/:folder/files-zip/:filename` - Download ZIP (requires token)
@@ -592,6 +634,7 @@ Response shape:
 *   **Purpose**: Drives commit/revert toolbar visibility in real-time across all browser tabs
 *   **Architecture**: Server-Sent Events stream that broadcasts boolean flags per project indicating if pending changes exist (mismatches between availability and keep flags)
 *   **Data Format**: `{ "p15": true, "p7": false, ... }` where `true` indicates the project has photos marked for deletion
+*   **Auth Guard**: The route is protected by the shared `authenticateAdmin` middleware (`server.js`) so only authenticated admins can subscribe. The frontend opens the stream with `EventSourcePolyfill` (`client/src/hooks/usePendingChangesSSE.js`) which attaches the bearer token and `withCredentials` for cookie fallback, keeping behaviour consistent with the rest of the admin APIs.
 *   **Trigger**: Automatically broadcasts updates when keep flags are modified via `PUT /api/projects/:folder/keep`
 *   **Client Integration**: 
     - Frontend hook `usePendingChangesSSE()` maintains connection and state
@@ -671,13 +714,14 @@ These endpoints operate on photos by their unique `photo_id` regardless of which
 
 The grid is built for very large datasets with stable scroll and bidirectional pagination.
 
-- **Virtualized rows**: `client/src/components/PhotoGridView.jsx` computes justified rows based on measured container width and per-item aspect ratios derived from EXIF metadata. This eliminates layout shifts and minimizes overdraw. Cells are lazily hydrated using a single `IntersectionObserver` with a short dwell to avoid flicker.
+- **Virtualized rows**: `client/src/components/VirtualizedPhotoGrid.jsx` computes justified rows based on measured container width and per-item aspect ratios derived from EXIF metadata. This eliminates layout shifts and minimizes overdraw. Cells are lazily hydrated using a single `IntersectionObserver` with a short dwell to avoid flicker.
 - **Pagination strategy**: The client uses a windowed pager (`client/src/utils/pagedWindowManager.js`) that keeps a small number of pages in memory and evicts from head/tail as you scroll. It supports both forward (`cursor`) and backward (`before_cursor`) keyset pagination and automatically updates outer cursors when pages are added or evicted.
+- **Scroll anchoring & guards**: `VirtualizedPhotoGrid.jsx` captures a visible cell before pagination (`findScrollAnchor`) and restores it after new data renders, combining double `requestAnimationFrame` with `restoreScrollAnchor()` so the viewport stays stable. A lightweight state machine (`paginationStatus`, `pendingLoadRef`, guard refs) gates `onLoadPrev`/`onLoadMore`, while manual “Load Previous/More” buttons provide accessible fallbacks alongside the intersection-observed sentinel.
 - **Cursors**: The server returns base64 cursors encoding `{ taken_at, id }` in DESC order by `taken_at := coalesce(date_time_original, created_at), id`. Responses include both `nextCursor`/`prevCursor` (project) and `next_cursor`/`prev_cursor` (all-photos) depending on endpoint.
 - **Server-side filtering**: Both All Photos and Project views accept identical filters: `date_from`, `date_to`, `file_type`, `keep_type`, `orientation`. The backend returns both `total` (filtered) and `unfiltered_total` so the UI can render "X of Y" consistently.
 - **Shared pagination hooks**: `client/src/hooks/useProjectPagination.js` and `client/src/hooks/useAllPhotosPagination.js` turn UI state into API calls, stripping `"any"` sentinel values before sending filters. They expose `mutatePagedPhotos()` / `mutateAllPhotos()` so optimistic keep/move/commit flows stay in sync without full reloads.
 - **Deep links**: The All Photos locate API (`GET /api/photos/locate-page`) returns the exact page containing a target along with `idx_in_items`. The client opens the viewer at that index and centers the target row in the grid. When locate fails, the client falls back to sequential paging until the target enters the window.
-- **State preservation**: Scroll positions and open viewer are preserved across background updates and refetches. See “Session‑only UI State Persistence” for details.
+- **State preservation**: Scroll positions and open viewer are preserved across background updates and refetches. See “Session-only UI State Persistence” for details.
 
 ### Endpoint Notes (validation & CORS)
 
@@ -754,9 +798,9 @@ npm run dev 2>&1 | jq -r '.'
 ```
 client/
 ├── src/
-│   ├── App.jsx              # Optimized main component (1021 lines, 57% reduction)
+│   ├── App.jsx              # Optimized main component (~1175 lines, 57% reduction)
 │   ├── components/          # Modular UI components
-│   │   ├── PhotoGrid.jsx    # Grid view for photos
+│   │   ├── VirtualizedPhotoGrid.jsx # Custom virtualization + justified grid
 │   │   ├── PhotoViewer.jsx  # Full-screen photo viewer
 │   │   ├── MainContentRenderer.jsx # Centralized photo display logic
 │   │   ├── CommitRevertBar.jsx # Bottom persistent bar

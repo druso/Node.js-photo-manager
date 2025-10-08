@@ -1,4 +1,5 @@
 // API client for uploads-related operations
+import { authFetch } from './httpClient';
 
 export async function analyzeFiles(folder, files) {
   const fileMetadata = files.map(file => ({
@@ -6,7 +7,7 @@ export async function analyzeFiles(folder, files) {
     type: file.type
   }));
   
-  const res = await fetch(`/api/projects/${encodeURIComponent(folder)}/analyze-files`, {
+  const res = await authFetch(`/api/projects/${encodeURIComponent(folder)}/analyze-files`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ files: fileMetadata })
@@ -21,7 +22,7 @@ export async function analyzeFiles(folder, files) {
 export async function processPerImage(folder, { force, filenames } = {}) {
   const q = force ? '?force=true' : '';
   const hasSubset = Array.isArray(filenames) && filenames.length > 0;
-  const res = await fetch(`/api/projects/${encodeURIComponent(folder)}/process${q}`, {
+  const res = await authFetch(`/api/projects/${encodeURIComponent(folder)}/process${q}`, {
     method: 'POST',
     headers: hasSubset ? { 'Content-Type': 'application/json' } : undefined,
     body: hasSubset ? JSON.stringify({ filenames }) : undefined,

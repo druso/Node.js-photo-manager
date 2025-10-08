@@ -1,9 +1,16 @@
 const projectsRepo = require('./repositories/projectsRepo');
 const tasksOrchestrator = require('./tasksOrchestrator');
+const { rotateDueHashes } = require('./publicAssetHashes');
 const makeLogger = require('../utils/logger2');
 const log = makeLogger('scheduler');
 
 let timers = [];
+
+function schedule(fn, intervalMs) {
+  const timer = setInterval(fn, intervalMs);
+  timers.push(timer);
+  return timer;
+}
 
 function startMaintenanceForActiveProjects() {
   // Use global maintenance task instead of per-project loops
@@ -31,15 +38,35 @@ function startScheduler() {
 
   // Schedule maintenance task. It includes trash + reconciliation steps per definitions.
   // Hourly kickoff covers trash and regular reconciliation without enqueuing standalone jobs.
-  timers.push(setInterval(() => startMaintenanceForActiveProjects(), 60 * 60 * 1000));
+  schedule(() => startMaintenanceForActiveProjects(), 60 * 60 * 1000);
 
   // Schedule archived-project scavenging to clean leftover folders.
-  timers.push(setInterval(() => startScavengeForArchivedProjects(), 60 * 60 * 1000));
+  schedule(() => startScavengeForArchivedProjects(), 60 * 60 * 1000);
+
+  // Schedule hash rotation daily to keep public asset tokens fresh
+  schedule(() => {
+    try {
+      const rotated = rotateDueHashes();
+      if (rotated > 0) {
+        log.info('hash_rotation_cycle', { rotated });
+      }
+    } catch (err) {
+      log.warn('hash_rotation_cycle_failed', { error: err && err.message });
+    }
+  }, 24 * 60 * 60 * 1000);
 
   // Kick off initial runs shortly after start to seed queue
   setTimeout(() => {
     startMaintenanceForActiveProjects();
     startScavengeForArchivedProjects();
+    try {
+      const rotated = rotateDueHashes();
+      if (rotated > 0) {
+        log.info('hash_rotation_cycle_initial', { rotated });
+      }
+    } catch (err) {
+      log.warn('hash_rotation_cycle_initial_failed', { error: err && err.message });
+    }
   }, 5 * 1000);
 }
 

@@ -1,4 +1,6 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
+import { usePublicHashContext } from '../contexts/PublicHashContext';
+import { isPublicPhoto } from '../utils/publicHash';
 
 // Shared thumbnail renderer with consistent placeholder logic
 // Props:
@@ -12,23 +14,100 @@ export default function Thumbnail({ photo, projectFolder, className = '', rounde
 
   const hasThumbnail = photo.thumbnail_status === 'generated';
   const thumbnailPending = photo.thumbnail_status === 'pending' || (!photo.thumbnail_status && !hasThumbnail);
-  const thumbnailFailed = photo.thumbnail_status === 'failed';
 
   const commonClasses = `${className} ${rounded ? 'rounded-md' : ''}`.trim();
   const fitClass = objectFit === 'contain' ? 'object-contain' : 'object-cover';
   // Use DB-updated timestamp to break cache when a thumbnail/preview gets generated
-  const versionParam = encodeURIComponent(photo.updated_at || '0');
+  const versionToken = photo.updated_at || photo.taken_at || photo.id || '0';
   const debug = (typeof window !== 'undefined') && (window.__DEBUG_THUMBS || localStorage.getItem('debugThumbs') === '1');
-
-  const baseUrl = `/api/projects/${encodeURIComponent(projectFolder)}/thumbnail/${encodeURIComponent(photo.filename)}?v=${versionParam}`;
-  const [src, setSrc] = useState(baseUrl);
+  const resolvedFolder = photo.project_folder || projectFolder;
+  const baseUrl = resolvedFolder
+    ? `/api/projects/${encodeURIComponent(resolvedFolder)}/thumbnail/${encodeURIComponent(photo.filename)}?v=${encodeURIComponent(versionToken)}`
+    : '';
+  const { ensurePublicAssets, getAssetUrl } = usePublicHashContext();
+  const [src, setSrc] = useState(isPublicPhoto(photo) ? '' : baseUrl);
   const retriedRef = useRef(false);
+  useEffect(() => {
+    if (!isPublicPhoto(photo)) {
+      setSrc(baseUrl);
+    } else {
+      setSrc('');
+    }
+    retriedRef.current = false;
+  }, [baseUrl, photo]);
+
+  const addVersionParam = (url, version) => {
+    if (!url) return null;
+    if (!version) return url;
+    const separator = url.includes('?') ? '&' : '?';
+    return `${url}${separator}v=${encodeURIComponent(version)}`;
+  };
+
+  useEffect(() => {
+    let cancelled = false;
+    const folder = photo.project_folder || projectFolder;
+    if (!folder) {
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    const updateFromContext = () => {
+      const effectivePhoto = { ...photo, project_folder: folder };
+      const hashedUrl = getAssetUrl({
+        photo: effectivePhoto,
+        type: 'thumbnail',
+        version: versionToken,
+      });
+      if (hashedUrl) {
+        setSrc(hashedUrl);
+        return true;
+      }
+      return false;
+    };
+
+    const effectivePhoto = { ...photo, project_folder: folder };
+    if (!isPublicPhoto(effectivePhoto)) {
+      setSrc(baseUrl);
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    // Attempt immediate update from cached data
+    if (updateFromContext()) {
+      // still continue to ensure assets to refresh if needed
+    }
+
+    ensurePublicAssets(effectivePhoto)
+      .then((meta) => {
+        if (cancelled) return;
+        const assetUrl = addVersionParam(meta?.assets?.thumbnail_url, versionToken);
+        if (assetUrl) {
+          setSrc(assetUrl);
+          return;
+        }
+        if (updateFromContext()) return;
+        if (baseUrl) setSrc(baseUrl);
+      })
+      .catch((err) => {
+        if (debug) console.warn('[thumb] hash fetch failed', { filename: photo.filename, error: err?.message });
+        if (!cancelled) {
+          if (updateFromContext()) return;
+          if (baseUrl) setSrc(baseUrl);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [photo, projectFolder, versionToken, debug, ensurePublicAssets, getAssetUrl, baseUrl]);
 
   // If a thumbnail exists, always show it (even for RAW files)
   if (hasThumbnail) {
     return (
       <img
-        src={src}
+src={src}
         alt={alt || photo.filename}
         className={`${commonClasses} ${fitClass}`}
         loading="lazy"
@@ -36,10 +115,13 @@ export default function Thumbnail({ photo, projectFolder, className = '', rounde
         onError={(e) => {
           if (!retriedRef.current) {
             retriedRef.current = true;
-            const retryUrl = `${baseUrl}&r=${Date.now()}`;
-            if (debug) console.warn('[thumb] retrying', { filename: photo.filename, url: retryUrl });
-            setSrc(retryUrl);
-            return;
+            const candidate = src || baseUrl;
+            if (candidate) {
+              const retryUrl = `${candidate}${candidate.includes('?') ? '&' : '?'}r=${Date.now()}`;
+              if (debug) console.warn('[thumb] retrying', { filename: photo.filename, url: retryUrl });
+              setSrc(retryUrl);
+              return;
+            }
           }
           if (debug) console.warn('[thumb] failed after retry', { filename: photo.filename, url: src });
           // Let parent placeholder show by doing nothing; image remains broken but grid shows gray.

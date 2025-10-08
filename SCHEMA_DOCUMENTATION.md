@@ -53,10 +53,18 @@ Tables and relationships:
     `GET /api/photos` and `GET /api/photos/locate-page`.
   - Date filters `date_from`/`date_to` operate on `taken_at`.
 
+- `photo_public_hashes`
+  - Purpose: stores Option A public asset hashes for each `photos.id`
+  - Columns: `photo_id` (INTEGER PK/FK), `hash` (TEXT unique per row), `rotated_at` (TEXT ISO timestamp), `expires_at` (TEXT ISO timestamp)
+  - Relationships: `photo_id` references `photos.id`; row deleted when a photo is made private or removed.
+  - Generation: backend `publicAssetHashes.ensureHashForPhoto(photoId)` inserts/rotates hashes using defaults from `config.public_assets` (`hash_rotation_days` / `hash_ttl_days` with env overrides `PUBLIC_HASH_ROTATION_DAYS` / `PUBLIC_HASH_TTL_DAYS`).
+  - Rotation: daily scheduler (`server/services/scheduler.js`) invokes `publicAssetHashes.rotateDueHashes()` to refresh hashes before expiry.
+  - Consumption: asset routes validate the `hash` query parameter for anonymous requests; admins can stream assets without providing a hash.
+
 ### All Photos API (Cross-Project)
 
 - All photos (paginated): `GET /api/photos`
-  - Query params: `limit`, `cursor`, `before_cursor`, `date_from`, `date_to`, `file_type`, `keep_type`, `orientation`, `tags`, `include=tags`
+  - Query params: `limit`, `cursor`, `before_cursor`, `date_from`, `date_to`, `file_type`, `keep_type`, `orientation`, `tags`, `visibility`, `include=tags`
   - Returns: `{ items: [...], total: number, unfiltered_total: number, next_cursor: string|null, prev_cursor: string|null }`
   - Filter params: same as project photos API
   - Tag filtering: `tags=portrait,-rejected` includes photos with 'portrait' tag and excludes those with 'rejected' tag
@@ -103,6 +111,37 @@ Notes:
 - Foreign keys and WAL are enabled in `server/services/db.js`.
 - Routes (`projects.js`, `uploads.js`, `assets.js`, `tags.js`, `keep.js`) exclusively use repositories.
 
+### Authentication Configuration (2025-10-04 Update)
+
+- `server/services/auth/authConfig.js` defines the startup contract for authentication secrets:
+  - `AUTH_ADMIN_BCRYPT_HASH` — required bcrypt hash of the universal admin password (must match `/^\$2[aby]\$\d{2}\$[./A-Za-z0-9]{53}$/`).
+  - `AUTH_JWT_SECRET_ACCESS` and `AUTH_JWT_SECRET_REFRESH` — required 256-bit (32-byte) secrets for signing 1 h access and 7 d refresh JWTs respectively.
+  - `AUTH_BCRYPT_COST` — optional integer between 8 and 14 (default 12) allowing operators to tune bcrypt work factor.
+- `server/services/auth/initAuth.js` invokes `ensureAuthConfig()` during boot; misconfiguration logs `auth_config_invalid` via `logger2` and terminates the process to prevent running without secrets.
+- Supporting helpers:
+  - `passwordUtils.js` verifies plaintext passwords using the configured hash and can mint new hashes with the active cost.
+  - `tokenService.js` issues/verifies JWTs with issuer `photo-manager`, audience `photo-manager-admin`, and an embedded `role: 'admin'` claim; mismatched token types throw descriptive errors.
+  - `authCookieService.js` centralises HTTP-only cookie defaults (SameSite Strict, secure flag derived from `AUTH_COOKIE_SECURE`/`NODE_ENV`, scoped paths for refresh vs access tokens).
+- Tests under `server/services/auth/__tests__/` cover config parsing, password helpers, token lifecycle, and cookie behaviour (`npm test`).
+
+### Migration Scaffolding (Draft – Milestone 0)
+
+- `server/services/migrations/runner.js` loads migration modules from `server/services/migrations/migrations/`, sorts by `id`, and wraps each `up` execution in a transaction (`runner.runAll({ dryRun: true|false })`).
+- Draft migrations (not auto-applied yet) capture planned schema extensions:
+  - `2025100401_add_photos_visibility.js` adds `photos.visibility TEXT NOT NULL DEFAULT 'private'` for public/private filtering.
+  - `2025100402_create_public_links.js` creates `public_links` (`id`, `project_id`, `title`, `description`, `hashed_key`, `expires_at`, timestamps) with indexes on `project_id` and `hashed_key`.
+  - `2025100403_create_photo_public_links.js` adds the join table linking photos to shared links with composite primary key plus lookup indexes.
+- **Dry-run usage**:
+  ```js
+  const path = require('path');
+  const { getDb } = require('./server/services/db');
+  const { MigrationRunner } = require('./server/services/migrations/runner');
+  const db = getDb();
+  const runner = new MigrationRunner({ db, migrationsDir: path.join(__dirname, 'server/services/migrations/migrations') });
+  runner.runAll({ dryRun: false });
+  ```
+  Execute from repo root after the base schema is initialised to inspect migration effects locally; keep drafts unapplied in production until rollout plans are approved.
+
 ### Project API Response Shapes
 
 Project-related endpoints return consistent shapes including the immutable numeric `id` and canonical `project_folder`:
@@ -116,7 +155,7 @@ Project-related endpoints return consistent shapes including the immutable numer
   - The `photos` array contains the full photo objects as documented in this file.
 
 - Project photos (paginated): `GET /api/projects/:folder/photos`
-  - Query params: `limit`, `cursor`, `before_cursor`, `sort`, `dir`, `date_from`, `date_to`, `file_type`, `keep_type`, `orientation`, `tags`, `include=tags`
+  - Query params: `limit`, `cursor`, `before_cursor`, `sort`, `dir`, `date_from`, `date_to`, `file_type`, `keep_type`, `orientation`, `tags`, `visibility`, `include=tags`
   - Returns: `{ items: [...], total: number, unfiltered_total: number, nextCursor: string|null, prevCursor: string|null }`
   - Filter params: `file_type` (jpg_only|raw_only|both|any), `keep_type` (any_kept|jpg_only|raw_jpg|none|any), `orientation` (vertical|horizontal|any)
   - Tag filtering: `tags=portrait,-rejected` includes photos with 'portrait' tag and excludes those with 'rejected' tag (same semantics as All Photos)
@@ -347,14 +386,13 @@ Deletions:
 ### Related Backend Endpoints
 
 - POST `/api/projects/:folder/process` — queue thumbnail/preview generation (supports optional `{ force, filenames[] }` payload)
-- GET `/api/projects/:folder/thumbnail/:filename` → serves generated thumbnail JPG
-- GET `/api/projects/:folder/preview/:filename` → serves generated preview JPG
+- GET `/api/projects/:folder/thumbnail/:filename` → serves generated thumbnail JPG (streams without auth only when `photos.visibility === 'public'`; private assets require an authenticated admin session)
+- `GET /api/projects/:folder/preview/:filename` → serves generated preview JPG (same visibility gate as thumbnails)
 - `GET /api/photos` — keyset‑paginated list across all non‑archived projects (supports `limit`, `cursor`, `before_cursor`, `date_from`, `date_to`, `file_type`, `keep_type`, `orientation`, `tags`, `include=tags`)
 - `GET /api/photos/locate-page` — locate a specific photo and return its containing page (requires `project_folder` and `filename` or `name`; accepts the same optional filters as `/api/photos`, including `tags` and `include=tags`; returns `{ items, position, page_index, idx_in_items, next_cursor, prev_cursor, target }` and guarantees the target is within the filtered result set)
 - `GET /api/photos/pending-deletes` — aggregated pending deletion counts across all projects (supports date/file/orientation filters; returns `{ jpg, raw, total, byProject }`; ignores `keep_type` and always reports counts independent of the paginated grid filters)
 - POST `/api/photos/commit-changes` — global commit across multiple projects (accepts optional `{ projects }` body)
 - POST `/api/photos/revert-changes` — global revert across multiple projects (accepts optional `{ projects }` body)
-
 ### Payload Validation
 
 - All cross-project photo endpoints enforce the shared `MAX_ITEMS_PER_JOB` guardrail (currently 2,000 items). Validation lives in `server/routes/photosActions.js`; when clients exceed the limit they receive a `400` with guidance to reduce batch size. Internal orchestrators may pass `autoChunk: true` to `jobsRepo.enqueueWithItems()` so large operations are split into compliant job batches.

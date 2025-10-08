@@ -17,6 +17,48 @@
  *   target: any, date_from: string|null, date_to: string|null
  * }>}
  */
+import { authFetch } from './httpClient';
+
+export async function updatePhotosVisibility(items, options = {}) {
+  const payload = {
+    items,
+  };
+  if (options.dryRun) payload.dry_run = true;
+
+  const res = await authFetch('/api/photos/visibility', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    const err = new Error(data.error || `updatePhotosVisibility failed: ${res.status}`);
+    err.status = res.status;
+    err.errors = data.errors;
+    throw err;
+  }
+  return res.json();
+}
+
+export async function dryRunPhotosVisibility(items) {
+  return updatePhotosVisibility(items, { dryRun: true });
+}
+
+export async function fetchPublicImageMetadata(filename) {
+  if (!filename) {
+    throw new Error('filename is required');
+  }
+  const url = `/api/projects/image/${encodeURIComponent(filename)}`;
+  const res = await authFetch(url, { cache: 'no-store' });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    const err = new Error(data.error || `fetchPublicImageMetadata failed: ${res.status}`);
+    err.status = res.status;
+    throw err;
+  }
+  return res.json();
+}
+
 export async function locateProjectPhotosPage(folder, opts = {}) {
   if (!folder) throw new Error('project folder is required');
   const params = new URLSearchParams();
@@ -30,7 +72,7 @@ export async function locateProjectPhotosPage(folder, opts = {}) {
   if (opts.keep_type && opts.keep_type !== 'any') params.set('keep_type', String(opts.keep_type));
   if (opts.orientation && opts.orientation !== 'any') params.set('orientation', String(opts.orientation));
   const url = `/api/projects/${encodeURIComponent(folder)}/photos/locate-page${params.toString() ? `?${params.toString()}` : ''}`;
-  const res = await fetch(url, { cache: 'no-store' });
+  const res = await authFetch(url, { cache: 'no-store' });
   if (!res.ok) {
     const data = await res.json().catch(() => ({}));
     const err = new Error(data.error || `locateProjectPhotosPage failed: ${res.status}`);

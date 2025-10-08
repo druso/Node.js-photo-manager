@@ -17,9 +17,9 @@ This application helps photographers manage their photo collections by:
 - **Frontend**: React with Vite and Tailwind CSS
   - **URL-Based State Management**: Shareable and bookmarkable URLs with filters and viewer state in URL parameters
   - **Unified View Architecture**: Single source of truth using `view.project_filter` context (null for All Photos, project folder string for Project view)
-  - **Highly Optimized Architecture**: Main App.jsx reduced from ~2,350 to 1,021 lines (57% reduction) through systematic extraction
+  - **Highly Optimized Architecture**: Main `App.jsx` reduced from ~2,350 to ~1,175 lines (~57% reduction) through systematic extraction and ongoing incremental cleanup
   - **Modular Hook System**: 20+ specialized React hooks for separation of concerns and reusability
-  - **Component Extraction**: Modular UI components (MainContentRenderer, CommitRevertBar, SortControls, etc.)
+  - **Component Extraction**: Modular UI components (MainContentRenderer, CommitRevertBar, SortControls, `VirtualizedPhotoGrid`, etc.)
   - **Layout Stability**: Fixed header positioning and horizontal scroll prevention for optimal UX
 - Tailwind CSS v4 note: deprecated `bg-opacity-*` utilities have been migrated to the new alpha color syntax (e.g., `bg-black/40`). If you add new styles, prefer `color/opacity` notation over legacy opacity utilities.
 - **Backend**: Node.js with Express and SQLite
@@ -79,6 +79,7 @@ This application helps photographers manage their photo collections by:
     - Optional: `limit(1-300)`, `date_from`, `date_to`, `file_type`, `keep_type`, `orientation`, `tags`, `include=tags`
     - Returns: `{ items, position, page_index, idx_in_items, next_cursor, prev_cursor, target, limit, date_from?, date_to? }`
     - Notes: 404 if not found/filtered out; 409 if basename is ambiguous; Cache-Control: `no-store`; rate limit: 60 req/min per IP
+  - `POST /api/photos/visibility` — admin-only bulk update with dry-run preview support; used by the All Photos actions menu to toggle `visibility` across projects. Body: `{ items: [{ photo_id, visibility }], dry_run?: boolean }`
 
 - **Image-scoped Endpoints (Universal)**
   - `POST /api/photos/tags/add` — add tags to photos by photo_id
@@ -106,6 +107,13 @@ This application helps photographers manage their photo collections by:
 - **Node.js v22 LTS** (required)
 - **npm v10+**
 - Recommended: **nvm** (Node Version Manager). This repo includes `.nvmrc` set to `22`.
+- **Authentication secrets**: The server now requires admin auth secrets. Copy `.env.example` and export `AUTH_ADMIN_BCRYPT_HASH`, `AUTH_JWT_SECRET_ACCESS`, and `AUTH_JWT_SECRET_REFRESH` before running the backend or tests:
+  ```bash
+  export AUTH_ADMIN_BCRYPT_HASH="$(awk -F'="' '/AUTH_ADMIN_BCRYPT_HASH/ {print $2}' .env.example | tr -d '"')"
+  export AUTH_JWT_SECRET_ACCESS="$(awk -F'="' '/AUTH_JWT_SECRET_ACCESS/ {print $2}' .env.example | tr -d '"')"
+  export AUTH_JWT_SECRET_REFRESH="$(awk -F'="' '/AUTH_JWT_SECRET_REFRESH/ {print $2}' .env.example | tr -d '"')"
+  ```
+  Provide production secrets via your deployment platform; the server exits with `auth_config_invalid` if they are missing or invalid.
 
 ### Installation & Setup
 
@@ -147,6 +155,8 @@ This application helps photographers manage their photo collections by:
 
 5. **Open your browser** to `http://localhost:5173`
 
+6. **Log in as admin** using the password that matches `AUTH_ADMIN_BCRYPT_HASH`. The default sample hash corresponds to the string `password`. Change hashes/secrets before deploying.
+
 ### First Steps
 1. Create a new project
 2. Upload some photos (drag & drop or click to select)
@@ -170,6 +180,7 @@ Tip: In development, the Vite dev server runs on `5173`; the backend runs on `50
 - **Real-time Updates**: Live progress tracking for all background tasks
   - The client uses a singleton `EventSource` (see `client/src/api/jobsApi.js → openJobStream()`) shared across UI consumers to avoid multiple parallel connections and 429s from the server's per‑IP cap.
   - SSE events reconcile keep flag changes immediately. The client normalizes filenames (strips known photo extensions) so updates apply whether the DB stored filenames with or without extensions.
+  - **Visibility Controls**: The actions menu in both Project and All Photos views now supports dry-run previews and bulk apply for `public`/`private` using `POST /api/photos/visibility`. Operations require an authenticated admin session; successes clear selections and refresh cached listings via optimistic updates.
 - **Robust Lazy-loading Grid**: Smooth thumbnail loading with no random blanks
   - The photo grid uses a single `IntersectionObserver` with a small positive root margin and a short dwell to avoid flicker.
   - It rebinds observation when DOM nodes change across re-renders and uses a ref-backed visibility set to avoid stale-closure misses.
@@ -223,11 +234,22 @@ cd client && npm run dev
 
 ## Environment Variables
 
-- **`REQUIRE_SIGNED_DOWNLOADS`** (default: `true`) - Controls token verification for file downloads
-- File acceptance is centralized in `server/utils/acceptance.js` and driven by `config.json` → `uploader.accepted_files` (extensions, mime_prefixes)
-- **`DOWNLOAD_SECRET`** - HMAC secret for signed URLs (change in production)
-- **`ALLOWED_ORIGINS`** - Comma-separated list of allowed CORS origins (e.g. `http://localhost:3000,https://app.example.com`).
-- **`THUMBNAIL_RATELIMIT_MAX`**, **`PREVIEW_RATELIMIT_MAX`**, **`IMAGE_RATELIMIT_MAX`**, **`ZIP_RATELIMIT_MAX`** - Asset rate limits (per IP per minute); see `config.json` → `rate_limits` for defaults.
+- **`AUTH_ADMIN_BCRYPT_HASH`** – Required. Bcrypt hash representing the universal admin password. Generate with:
+  ```bash
+  AUTH_BCRYPT_COST=${AUTH_BCRYPT_COST:-12}
+  node -e "const bcrypt = require('bcrypt'); const cost = Number(process.env.AUTH_BCRYPT_COST || ${AUTH_BCRYPT_COST:-12}); bcrypt.hash(process.argv[1], cost).then(h => console.log(h));" "your-temp-password"
+  ```
+  (Install dev dependency `bcrypt` globally or run after project dependencies are installed; default cost is 12 if `AUTH_BCRYPT_COST` is unset.)
+- **`AUTH_JWT_SECRET_ACCESS`** – Required. Random 256-bit secret for signing 1h access tokens (e.g., `openssl rand -base64 32`).
+- **`AUTH_JWT_SECRET_REFRESH`** – Required. Separate secret for 7d refresh tokens. Rotate independently from access secret.
+- **`AUTH_BCRYPT_COST`** – Optional. Integer between 8 and 14 (default 12) controlling bcrypt work factor. Higher is slower but more resilient against brute force.
+- **`REQUIRE_SIGNED_DOWNLOADS`** (default: `true`) – Controls token verification for file downloads.
+- File acceptance is centralized in `server/utils/acceptance.js` and driven by `config.json` → `uploader.accepted_files` (extensions, mime_prefixes).
+- **`DOWNLOAD_SECRET`** – HMAC secret for signed URLs (change in production).
+- **`ALLOWED_ORIGINS`** – Comma-separated list of allowed CORS origins (e.g. `http://localhost:3000,https://app.example.com`).
+- **`THUMBNAIL_RATELIMIT_MAX`**, **`PREVIEW_RATELIMIT_MAX`**, **`IMAGE_RATELIMIT_MAX`**, **`ZIP_RATELIMIT_MAX`** – Asset rate limits (per IP per minute); see `config.json` → `rate_limits` for defaults.
+- **`PUBLIC_HASH_ROTATION_DAYS`** – Optional integer overriding `config.public_assets.hash_rotation_days` (default 21). Controls how often hashes are proactively rotated by `scheduler.js`.
+- **`PUBLIC_HASH_TTL_DAYS`** – Optional integer overriding `config.public_assets.hash_ttl_days` (default 28). Controls how long each hash remains valid before rotation.
 
 ### Logging
 

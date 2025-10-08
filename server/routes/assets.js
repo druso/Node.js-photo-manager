@@ -8,8 +8,11 @@ const { rateLimit } = require('../utils/rateLimit');
 const { signPayload, verifyToken } = require('../utils/signedUrl');
 const projectsRepo = require('../services/repositories/projectsRepo');
 const photosRepo = require('../services/repositories/photosRepo');
+const { ensureHashForPhoto, getActiveHash, validateHash } = require('../services/publicAssetHashes');
 const { baseFromParam, resolveOriginalPath, guessContentTypeFromExt } = require('../utils/assetPaths');
 const { getConfig } = require('../services/config');
+const { verifyAccessToken } = require('../services/auth/tokenService');
+const { ACCESS_COOKIE_NAME } = require('../services/auth/authCookieService');
 
 const router = express.Router();
 
@@ -41,6 +44,40 @@ function getFileType(filename) {
   return 'other';
 }
 
+function extractBearerToken(req) {
+  const header = req.headers?.authorization || req.headers?.Authorization;
+  if (!header || typeof header !== 'string') return null;
+  const [scheme, value] = header.split(' ');
+  if (!scheme || !value) return null;
+  if (scheme.toLowerCase() !== 'bearer') return null;
+  return value.trim() || null;
+}
+
+function extractCookieToken(req) {
+  const cookies = req.cookies || {};
+  const raw = cookies[ACCESS_COOKIE_NAME];
+  if (!raw || typeof raw !== 'string') return null;
+  return raw.trim() || null;
+}
+
+function getOptionalAdmin(req) {
+  try {
+    const headerToken = extractBearerToken(req);
+    const cookieToken = extractCookieToken(req);
+    const token = headerToken || cookieToken;
+    if (!token) return null;
+    const decoded = verifyAccessToken(token);
+    if (decoded.role !== 'admin') return null;
+    return {
+      id: decoded.sub || 'admin',
+      role: decoded.role,
+      tokenId: decoded.jti || null,
+    };
+  } catch (_err) {
+    return null;
+  }
+}
+
 // Signed URL config (kept simple for local use). To disable enforcement set env REQUIRE_SIGNED_DOWNLOADS=false
 const REQUIRE_SIGNED = process.env.REQUIRE_SIGNED_DOWNLOADS !== 'false';
 const DOWNLOAD_SECRET = process.env.DOWNLOAD_SECRET || 'dev-download-secret-change-me';
@@ -61,6 +98,7 @@ function requireValidToken(req, res, next) {
   const { folder } = req.params;
   const { token } = req.query;
   if (!token) return res.status(401).json({ error: 'Missing token' });
+
   const v = verifyToken(String(token), DOWNLOAD_SECRET);
   if (!v.ok) return res.status(401).json({ error: 'Invalid token', reason: v.reason });
   const { f, t, n } = v.payload || {};
@@ -71,6 +109,65 @@ function requireValidToken(req, res, next) {
   }
   return next();
 }
+
+router.get('/image/:filename', async (req, res) => {
+  try {
+    const rawName = req.params.filename;
+    if (!rawName) {
+      return res.status(404).json({ error: 'Photo not found' });
+    }
+
+    const normalized = String(rawName).trim();
+    const hasExtension = /\.[A-Za-z0-9]+$/.test(normalized);
+    const slug = hasExtension ? normalized : normalized.replace(/\.[^/.]+$/, '');
+
+    let record = photosRepo.getAnyVisibilityByFilename(normalized);
+    if (!record && !hasExtension) {
+      record = photosRepo.getAnyVisibilityByBasename(slug);
+    }
+
+    if (!record) {
+      setNegativeCacheHeaders(res);
+      return res.status(404).json({ error: 'Photo not found' });
+    }
+
+    if ((record.visibility || 'private') !== 'public') {
+      setNegativeCacheHeaders(res);
+      return res.status(401).json({ error: 'Authentication required', visibility: record.visibility || 'private' });
+    }
+
+    const hashRecord = ensureHashForPhoto(record.id);
+    const baseName = record.basename || record.filename;
+    const response = {
+      photo: {
+        id: record.id,
+        project_id: record.project_id,
+        project_folder: record.project_folder,
+        project_name: record.project_name,
+        filename: record.filename,
+        basename: record.basename || null,
+        visibility: record.visibility || 'private',
+        updated_at: record.updated_at,
+        date_time_original: record.date_time_original,
+        jpg_available: !!record.jpg_available,
+        preview_available: !!record.preview_status && record.preview_status !== 'missing',
+        hash: hashRecord.hash,
+        hash_expires_at: hashRecord.expires_at,
+      },
+      assets: {
+        thumbnail_url: `/api/projects/${encodeURIComponent(record.project_folder)}/thumbnail/${encodeURIComponent(baseName)}?hash=${encodeURIComponent(hashRecord.hash)}`,
+        preview_url: `/api/projects/${encodeURIComponent(record.project_folder)}/preview/${encodeURIComponent(record.filename)}?hash=${encodeURIComponent(hashRecord.hash)}`,
+        image_url: `/api/projects/${encodeURIComponent(record.project_folder)}/image/${encodeURIComponent(record.filename)}?hash=${encodeURIComponent(hashRecord.hash)}`,
+      },
+    };
+
+    res.setHeader('Cache-Control', 'no-store');
+    return res.json(response);
+  } catch (err) {
+    log.error('public_image_lookup_failed', { error: err && err.message, stack: err && err.stack });
+    return res.status(500).json({ error: 'Failed to resolve image link' });
+  }
+});
 
 function computeETagForFile(fp) {
   try {
@@ -108,7 +205,40 @@ router.get('/:folder/thumbnail/:filename', rateLimit({ windowMs: 60 * 1000, max:
   const base = baseFromParam(filename);
   const thumbPath = path.join(PROJECTS_DIR, folder, '.thumb', `${base}.jpg`);
   log.info('thumb_request', { folder, filename, base, thumbPath, exists: fs.existsSync(thumbPath) });
+  const admin = getOptionalAdmin(req);
   if (fs.existsSync(thumbPath)) {
+    const project = projectsRepo.getByFolder(folder);
+    if (!project) {
+      setNegativeCacheHeaders(res);
+      return res.status(404).json({ error: 'Project not found' });
+    }
+    let entry = photosRepo.getByProjectAndFilename(project.id, filename);
+    if (!entry && base && base !== filename) {
+      entry = photosRepo.getByProjectAndFilename(project.id, base);
+    }
+    if (!entry) {
+      setNegativeCacheHeaders(res);
+      return res.status(404).json({ error: 'Photo not found' });
+    }
+    const isPublic = (entry.visibility || 'private') === 'public';
+    let hashRecord = null;
+    if (!isPublic && !admin) {
+      setNegativeCacheHeaders(res);
+      return res.status(404).json({ error: 'Thumbnail not found' });
+    }
+    if (isPublic) {
+      if (admin) {
+        hashRecord = getActiveHash(entry.id) || ensureHashForPhoto(entry.id);
+      } else {
+        const providedHash = typeof req.query?.hash === 'string' ? req.query.hash : null;
+        const validation = validateHash(entry.id, providedHash);
+        if (!validation.ok) {
+          setNegativeCacheHeaders(res);
+          return res.status(401).json({ error: 'Public hash invalid', reason: validation.reason });
+        }
+        hashRecord = validation.record;
+      }
+    }
     const etag = computeETagForFile(thumbPath);
     if (etag && req.headers['if-none-match'] === etag) {
       setCacheHeadersOn200(req, res);
@@ -118,6 +248,10 @@ router.get('/:folder/thumbnail/:filename', rateLimit({ windowMs: 60 * 1000, max:
     if (etag) res.setHeader('ETag', etag);
     try {
       res.setHeader('Content-Type', 'image/jpeg');
+      if (hashRecord) {
+        res.setHeader('X-Public-Hash', hashRecord.hash);
+        res.setHeader('X-Public-Hash-Expires-At', hashRecord.expires_at);
+      }
       const stream = fs.createReadStream(thumbPath);
       stream.on('error', (err) => {
         log.error('thumb_stream_error', { folder, filename, resolved: path.resolve(thumbPath), error: err && err.message, stack: err && err.stack });
@@ -146,7 +280,40 @@ router.get('/:folder/preview/:filename', rateLimit({ windowMs: 60 * 1000, max: R
   const base = baseFromParam(filename);
   const prevPath = path.join(PROJECTS_DIR, folder, '.preview', `${base}.jpg`);
   log.info('preview_request', { folder, filename, base, prevPath, exists: fs.existsSync(prevPath) });
+  const admin = getOptionalAdmin(req);
   if (fs.existsSync(prevPath)) {
+    const project = projectsRepo.getByFolder(folder);
+    if (!project) {
+      setNegativeCacheHeaders(res);
+      return res.status(404).json({ error: 'Project not found' });
+    }
+    let entry = photosRepo.getByProjectAndFilename(project.id, filename);
+    if (!entry && base && base !== filename) {
+      entry = photosRepo.getByProjectAndFilename(project.id, base);
+    }
+    if (!entry) {
+      setNegativeCacheHeaders(res);
+      return res.status(404).json({ error: 'Photo not found' });
+    }
+    const isPublic = (entry.visibility || 'private') === 'public';
+    let hashRecord = null;
+    if (!isPublic && !admin) {
+      setNegativeCacheHeaders(res);
+      return res.status(404).json({ error: 'Preview not found' });
+    }
+    if (isPublic) {
+      if (admin) {
+        hashRecord = getActiveHash(entry.id) || ensureHashForPhoto(entry.id);
+      } else {
+        const providedHash = typeof req.query?.hash === 'string' ? req.query.hash : null;
+        const validation = validateHash(entry.id, providedHash);
+        if (!validation.ok) {
+          setNegativeCacheHeaders(res);
+          return res.status(401).json({ error: 'Public hash invalid', reason: validation.reason });
+        }
+        hashRecord = validation.record;
+      }
+    }
     const etag = computeETagForFile(prevPath);
     if (etag && req.headers['if-none-match'] === etag) {
       setCacheHeadersOn200(req, res);
@@ -156,6 +323,10 @@ router.get('/:folder/preview/:filename', rateLimit({ windowMs: 60 * 1000, max: R
     if (etag) res.setHeader('ETag', etag);
     try {
       res.setHeader('Content-Type', 'image/jpeg');
+      if (hashRecord) {
+        res.setHeader('X-Public-Hash', hashRecord.hash);
+        res.setHeader('X-Public-Hash-Expires-At', hashRecord.expires_at);
+      }
       const stream = fs.createReadStream(prevPath);
       stream.on('error', (err) => {
         log.error('preview_stream_error', { folder, filename, resolved: path.resolve(prevPath), error: err && err.message, stack: err && err.stack });
@@ -324,6 +495,27 @@ router.get('/:folder/image/:filename', rateLimit({ windowMs: 60 * 1000, max: RAT
     log.info('image_lookup', { project_folder: folder, filename, base, tried_exact: triedExact, found: !!entry });
     if (!entry) { setNegativeCacheHeaders(res); return res.status(404).json({ error: 'Photo not found' }); }
 
+    const admin = getOptionalAdmin(req);
+    const isPublic = (entry.visibility || 'private') === 'public';
+    let hashRecord = null;
+    if (!isPublic && !admin) {
+      setNegativeCacheHeaders(res);
+      return res.status(404).json({ error: 'JPG file not found on disk' });
+    }
+    if (isPublic) {
+      if (admin) {
+        hashRecord = getActiveHash(entry.id) || ensureHashForPhoto(entry.id);
+      } else {
+        const providedHash = typeof req.query?.hash === 'string' ? req.query.hash : null;
+        const validation = validateHash(entry.id, providedHash);
+        if (!validation.ok) {
+          setNegativeCacheHeaders(res);
+          return res.status(401).json({ error: 'Public hash invalid', reason: validation.reason });
+        }
+        hashRecord = validation.record;
+      }
+    }
+
     if (!entry.jpg_available) {
       // Do not attempt to stream RAW here; viewer should fallback to preview for RAW-only
       log.info('image_request_no_jpg', { folder, filename, base });
@@ -344,6 +536,10 @@ router.get('/:folder/image/:filename', rateLimit({ windowMs: 60 * 1000, max: RAT
     if (etag) res.setHeader('ETag', etag);
     try {
       res.setHeader('Content-Type', 'image/jpeg');
+      if (hashRecord) {
+        res.setHeader('X-Public-Hash', hashRecord.hash);
+        res.setHeader('X-Public-Hash-Expires-At', hashRecord.expires_at);
+      }
       const stream = fs.createReadStream(jpgPath);
       stream.on('error', (err) => {
         log.error('image_stream_error', { folder, filename, base, resolved: path.resolve(jpgPath), error: err && err.message, stack: err && err.stack });

@@ -1,3 +1,12 @@
+### Authentication Rollout (2025-10-04)
+
+- **Server Hardening**: Added `server/routes/auth.js` (login/refresh/logout) and `server/middleware/authenticateAdmin.js` to guard all `/api/*` routes and SSE endpoints using JWT access tokens in cookies/bearer headers. Tokens default to 1 h access and 7 d refresh lifetimes; cookies are HTTP-only, SameSite=Strict, and honour `AUTH_COOKIE_SECURE`.
+- **Frontend Gate**: `client/src/auth/AuthContext.jsx` enforces authenticated sessions, schedules silent refresh ~30 s before expiry, and exposes `useAuth()`; `client/src/App.jsx` now renders a dedicated login UI until authentication succeeds.
+- **Operational Guardrails**: `.env.example`, `README.md`, and `PROJECT_OVERVIEW.md` document required secrets, sample bcrypt hash commands, and startup failure behaviour (`auth_config_invalid`). Local/test instructions reference exporting Milestone 0 sample secrets before running `npm start`/`npm test`.
+- **Testing**: `npm test` exercises auth config success/error paths, token lifecycle, and cookie handling under the new guard; additional integration coverage planned for protected routes.
+- **Follow-up**: Monitor for brute force attempts once multi-user support lands; consider rate limiting login endpoint and lockout policies in future milestones.
+- **Visibility Controls (2025-10-07)**: Added `POST /api/photos/visibility` to allow admins to toggle `photos.visibility` in bulk (supports `dry_run=true`, enforces rate limiting, and emits SSE item updates). Frontend actions for both Project and All Photos selections run through `useVisibilityMutation()` so admins see dry-run previews and success/error toasts before state changes are applied. Asset routes (`GET /api/projects/:folder/thumbnail/:filename`, `/preview/:filename`, `/image/:filename`) now short-circuit to 404 for private photos unless a valid admin JWT is supplied; public thumbnails/previews remain streamable without authentication, while originals continue to require signed URLs.
+
 # Security Documentation
 
 ## Suggested Interventions
@@ -22,6 +31,14 @@
 **3. Batch Size Limits for Image Actions** 🔧 *4-6h*
 - **Risk**: Large `items` arrays on `/api/photos/keep`, `/api/photos/tags/*`, `/api/photos/move`, and `/api/photos/process` can exhaust memory/CPU (DoS vector)
 - **Action**: Enforce sane per-request caps (e.g., 200 items), reject oversized payloads early, and surface guidance in API docs
+
+**4. Pending Changes SSE Connection Caps** 🔧 *2-3h*
+- **Risk**: `/api/sse/pending-changes` has no per-IP connection limits; an attacker could open many EventSource connections and hold server resources
+- **Action**: Reuse `rateLimitSseConnections()` logic from `jobs.js` (per-IP counters + global cap) and log connection churn for monitoring
+
+**5. Auth Ops Checklist** 🔧 *2-4h*
+- **Status**: ✅ Completed as part of Milestone 1.
+- **Notes**: Runbook captured under **Authentication Rollout (2025-10-04)** including env provisioning order, hash rotation workflow, and emergency recovery steps.
 
 ### 🟢 **LOW PRIORITY** (Future)
 
@@ -91,6 +108,11 @@
 - Originals lookup tolerates filenames with or without extensions. For `/image/:filename`, `/file/:type/:filename`, and `/files-zip/:filename`, the server attempts an exact DB match and then falls back to the base name (extension stripped). On disk, resolution is case-insensitive with a constrained directory scan fallback limited to the project folder and allowed extension sets (JPG or RAW). This mitigates 404s caused by extension casing differences (e.g., `.JPG`) while keeping the search scope bounded.
 - Diagnostics added to `server/routes/assets.js` to improve forensics and abuse monitoring: `thumb_request`, `preview_request`, `image_lookup`/`image_resolve`, `file_lookup`/`file_resolve`, `zip_lookup`/`zip_resolve`, `download_url_lookup`, and stream error/exception events per endpoint.
 - Frontend load shaping: the photo grid now uses a buffered `IntersectionObserver` with short dwell, which smooths scrolling and reduces bursty thumbnail requests without impacting perceived performance. This complements server-side rate limits.
+- **Option A public hashing**:
+  - `GET /api/projects/image/:filename` is now unauthenticated for public photos only, returning `{ photo, assets }` metadata with hashed URLs. Private photos still respond `401` with `visibility` detail, ensuring no leakage of private assets.
+  - Hash issuance uses `publicAssetHashes.ensureHashForPhoto()` and persists to `photo_public_hashes` with defaults `hash_rotation_days=21`, `hash_ttl_days=28` (override via `config.public_assets` or `PUBLIC_HASH_ROTATION_DAYS` / `PUBLIC_HASH_TTL_DAYS`). Daily scheduler invokes `rotateDueHashes()`; monitor logs for `hashes_rotated` to confirm cadence.
+  - Hash validation on asset routes requires `hash` query params for anonymous callers. Failure responses (`reason: missing|expired|mismatch`) aid clients without revealing private state. Admin-authenticated requests bypass hash checks but receive `X-Public-Hash` headers so tooling can observe current tokens.
+  - Operational guidance: when toggling visibility via `POST /api/photos/visibility`, hashes are seeded or cleared automatically. If hashes appear stale (e.g., repeated `expired` reasons), trigger manual rotation with `PUBLIC_HASH_ROTATION_DAYS=1` temporarily or call `rotateDueHashes()` via REPL.
 
 **Commit/Revert Endpoints**:
 - Project-scoped: `POST /api/projects/:folder/commit-changes` and `POST /api/projects/:folder/revert-changes`
@@ -133,7 +155,7 @@
 ### ⚠️ **Current Gaps**
 
 **Access Control**:
-- No authentication on destructive endpoints
+- Admin authentication now required for all `/api/*` routes and SSE streams (login/refresh/logout remain public). Future multi-user work will extend role-based enforcement.
 
 **Resource Management**:
 - Unlimited job queue growth
@@ -144,6 +166,18 @@
 - Structured logging now in place across backend (see Security Overview). Next steps focus on surfacing security/audit events and alerting.
 
 ---
+
+## Weekly Security Review Summary (2025-10-02 UTC)
+
+- npm ci: succeeded
+- npm audit --audit-level=high: 0 vulnerabilities
+- npm outdated: no critical upgrades available
+- npm test: exercises auth configuration error handling (`auth_config_invalid` events) while verifying bcrypt/JWT helpers.
+- Verified pending-changes SSE:
+  - Confirmed `server/routes/sse.js` confines queries to project/project_id joins and returns only boolean flags per project; no filenames or PII leak.
+  - Observed lack of per-IP limits; tracked as Medium Priority item 4.
+- Mobile long-press gestures and viewer zoom remain client-only (`client/src/App.jsx`, `client/src/components/VirtualizedPhotoGrid.jsx`, `client/src/components/PhotoViewer.jsx`); no new backend surface area.
+- Overall posture: No regressions detected; prioritize new SSE connection caps alongside existing queue/logging work.
 
 ## Weekly Security Review Summary (2025-09-27 UTC)
 

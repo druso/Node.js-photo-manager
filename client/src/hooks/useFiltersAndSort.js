@@ -11,24 +11,23 @@ export function useFiltersAndSort() {
     dateRange: { start: '', end: '' }, // Only date_time_original field is used
     fileType: 'any', // any | jpg_only | raw_only | both
     orientation: 'any', // any | landscape | portrait | square
-    keepType: 'any' // any | none | jpg_only | raw_jpg
+    keepType: 'any', // any | none | jpg_only | raw_jpg
+    visibility: 'any', // any | public | private
   });
-
   // Sorting state: key: 'date' | 'name' | other (for table)
   const [sortKey, setSortKey] = useState('date');
   const [sortDir, setSortDir] = useState('desc'); // 'asc' | 'desc' (date newest first by default)
 
   // Helper function to check if any filters are active
-  const hasActiveFilters = () => {
-    return (
-      activeFilters.textSearch ||
-      activeFilters.dateRange.start ||
-      activeFilters.dateRange.end ||
-      (activeFilters.fileType && activeFilters.fileType !== 'any') ||
-      (activeFilters.orientation && activeFilters.orientation !== 'any') ||
-      (activeFilters.keepType && activeFilters.keepType !== 'any')
-    );
-  };
+  const hasActiveFilters = () => (
+    activeFilters.textSearch ||
+    activeFilters.dateRange.start ||
+    activeFilters.dateRange.end ||
+    (activeFilters.fileType && activeFilters.fileType !== 'any') ||
+    (activeFilters.orientation && activeFilters.orientation !== 'any') ||
+    (activeFilters.keepType && activeFilters.keepType !== 'any') ||
+    (activeFilters.visibility && activeFilters.visibility !== 'any')
+  );
 
   // Helper function to reset all filters
   const resetFilters = () => {
@@ -37,7 +36,8 @@ export function useFiltersAndSort() {
       dateRange: { start: '', end: '' },
       fileType: 'any',
       orientation: 'any',
-      keepType: 'any'
+      keepType: 'any',
+      visibility: 'any',
     });
   };
 
@@ -45,7 +45,7 @@ export function useFiltersAndSort() {
   const updateFilter = (filterKey, value) => {
     setActiveFilters(prev => ({
       ...prev,
-      [filterKey]: value
+      [filterKey]: value,
     }));
   };
 
@@ -53,7 +53,15 @@ export function useFiltersAndSort() {
   const updateDateRange = (start, end) => {
     setActiveFilters(prev => ({
       ...prev,
-      dateRange: { start, end }
+      dateRange: { start, end },
+    }));
+  };
+
+  const updateVisibility = (value) => {
+    const normalized = typeof value === 'string' ? value : 'any';
+    setActiveFilters(prev => ({
+      ...prev,
+      visibility: normalized && normalized !== '' ? normalized : 'any',
     }));
   };
 
@@ -73,18 +81,19 @@ export function useFiltersAndSort() {
     // Filter state
     activeFilters,
     setActiveFilters,
-    
+
     // Sort state
     sortKey,
     setSortKey,
     sortDir,
     setSortDir,
-    
+
     // Helper functions
     hasActiveFilters,
     resetFilters,
     updateFilter,
     updateDateRange,
+    updateVisibility,
     toggleSort,
   };
 }

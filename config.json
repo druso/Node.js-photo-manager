@@ -72,5 +72,9 @@
     "preview_per_minute": 600,
     "image_per_minute": 120,
     "zip_per_minute": 30
+  },
+  "public_assets": {
+    "hash_rotation_days": 21,
+    "hash_ttl_days": 28
   }
 }

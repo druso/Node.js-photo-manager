@@ -28,6 +28,9 @@ const DEFAULT_MAX_PAGES = 4;
 
 function buildFilterParams(activeFilters) {
   const range = activeFilters?.dateRange || {};
+  const visibility = typeof activeFilters?.visibility === 'string' && activeFilters.visibility !== 'any'
+    ? activeFilters.visibility
+    : undefined;
   return {
     date_from: range.start || undefined,
     date_to: range.end || undefined,
@@ -35,6 +38,7 @@ function buildFilterParams(activeFilters) {
     keep_type: activeFilters?.keepType && activeFilters.keepType !== 'any' ? activeFilters.keepType : undefined,
     orientation: activeFilters?.orientation && activeFilters.orientation !== 'any' ? activeFilters.orientation : undefined,
     tags: activeFilters?.tags,
+    visibility,
   };
 }
 
@@ -435,10 +439,14 @@ function usePhotoPagination({
     let canceled = false;
     (async () => {
       try {
-        console.log(`[UNIFIED] Initializing ${mode} mode pagination`);
+        if (DEBUG_PAGINATION || import.meta?.env?.DEV) {
+          console.log(`[UNIFIED] Initializing ${mode} mode pagination`);
+        }
         await loadInitial();
       } catch (error) {
-        console.error('[UNIFIED] Error in loadInitial:', error);
+        if (import.meta?.env?.DEV) {
+          console.error('[UNIFIED] Error in loadInitial:', error);
+        }
         if (!canceled) {
           resetState();
         }
@@ -609,7 +617,9 @@ const managerInstances = {
   project: {},
   // Helper method to reset a specific manager
   resetManager: function(mode, projectFolder) {
-    console.log(`[UNIFIED] Resetting manager for ${mode}${projectFolder ? ': ' + projectFolder : ''}`);
+    if (import.meta?.env?.DEV) {
+      console.log(`[UNIFIED] Resetting manager for ${mode}${projectFolder ? ': ' + projectFolder : ''}`);
+    }
     if (mode === 'all') {
       if (this.all && this.all.reset) {
         this.all.reset();

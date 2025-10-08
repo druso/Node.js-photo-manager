@@ -12,7 +12,8 @@ export function useFilterCalculations(activeFilters) {
     (activeFilters.dateRange?.end ? 1 : 0) +
     (activeFilters.fileType && activeFilters.fileType !== 'any' ? 1 : 0) +
     (activeFilters.keepType && activeFilters.keepType !== 'any' ? 1 : 0) +
-    (activeFilters.orientation && activeFilters.orientation !== 'any' ? 1 : 0)
+    (activeFilters.orientation && activeFilters.orientation !== 'any' ? 1 : 0) +
+    (activeFilters.visibility && activeFilters.visibility !== 'any' ? 1 : 0)
   ), [activeFilters]);
 
   const hasActiveFilters = useMemo(() => !!(
@@ -21,7 +22,8 @@ export function useFilterCalculations(activeFilters) {
     activeFilters.dateRange?.end ||
     (activeFilters.fileType && activeFilters.fileType !== 'any') ||
     (activeFilters.keepType && activeFilters.keepType !== 'any') ||
-    (activeFilters.orientation && activeFilters.orientation !== 'any')
+    (activeFilters.orientation && activeFilters.orientation !== 'any') ||
+    (activeFilters.visibility && activeFilters.visibility !== 'any')
   ), [activeFilters]);
 
   return {

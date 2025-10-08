@@ -35,6 +35,10 @@
     "thumbnail": { "maxDim": 200, "quality": 80 },
     "preview": { "maxDim": 6000, "quality": 80 }
   },
+  "public_assets": {
+    "hash_rotation_days": 21,
+    "hash_ttl_days": 28
+  },
   "rate_limits": {
     "thumbnail_per_minute": 600,
     "preview_per_minute": 600,

@@ -89,7 +89,7 @@ function upsertPhoto(project_id, photo) {
         jpg_available = ?, raw_available = ?, other_available = ?,
         keep_jpg = ?, keep_raw = ?,
         thumbnail_status = ?, preview_status = ?,
-        orientation = ?, meta_json = ?
+        orientation = ?, meta_json = ?, visibility = ?
       WHERE id = ?
     `);
     stmt.run(
@@ -99,6 +99,7 @@ function upsertPhoto(project_id, photo) {
       photo.keep_jpg ? 1 : 0, photo.keep_raw ? 1 : 0,
       photo.thumbnail_status || null, photo.preview_status || null,
       photo.orientation ?? null, photo.meta_json || null,
+      photo.visibility || 'private',
       existing.id
     );
     return getById(existing.id);
@@ -109,8 +110,8 @@ function upsertPhoto(project_id, photo) {
         created_at, updated_at, date_time_original,
         jpg_available, raw_available, other_available,
         keep_jpg, keep_raw, thumbnail_status, preview_status,
-        orientation, meta_json
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        orientation, meta_json, visibility
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     const info = stmt.run(
       project_id, (photo.manifest_id || `${project_id}:${photo.filename}`), photo.filename, photo.basename || null, photo.ext || null,
@@ -118,7 +119,8 @@ function upsertPhoto(project_id, photo) {
       photo.jpg_available ? 1 : 0, photo.raw_available ? 1 : 0, photo.other_available ? 1 : 0,
       photo.keep_jpg ? 1 : 0, photo.keep_raw ? 1 : 0,
       photo.thumbnail_status || null, photo.preview_status || null,
-      photo.orientation ?? null, photo.meta_json || null
+      photo.orientation ?? null, photo.meta_json || null,
+      photo.visibility || 'private'
     );
     return getById(info.lastInsertRowid);
   }
@@ -175,26 +177,42 @@ function updateKeepFlags(id, { keep_jpg, keep_raw }) {
  * @param {Object} options - Move options
  * @param {number} options.photo_id - Photo ID to move
  * @param {number} options.to_project_id - Target project ID
- * @returns {Object} Updated photo record
  */
 function moveToProject({ photo_id, to_project_id }) {
   if (!photo_id || !to_project_id) {
     throw new Error('moveToProject requires photo_id and to_project_id');
   }
-  
+
   const db = getDb();
   const row = getById(photo_id);
   if (!row) throw new Error('Photo not found');
-  
-  const ts = nowISO();
   const manifest_id = `${to_project_id}:${row.filename}`;
   const keep_jpg = row.jpg_available ? 1 : 0;
   const keep_raw = row.raw_available ? 1 : 0;
-  
+
   db.prepare(`UPDATE photos SET project_id = ?, manifest_id = ?, keep_jpg = ?, keep_raw = ?, updated_at = ? WHERE id = ?`)
     .run(to_project_id, manifest_id, keep_jpg, keep_raw, ts, photo_id);
-    
+
   return getById(photo_id);
+}
+
+/**
+ * Update visibility for a photo
+ * @param {number} id - Photo ID
+ * @param {string} visibility - New visibility value ('public' or 'private')
+ * @returns {Object} Updated photo record
+ */
+function updateVisibility(id, visibility) {
+  if (visibility !== 'public' && visibility !== 'private') {
+    const err = new Error('visibility must be "public" or "private"');
+    err.status = 400;
+    throw err;
+  }
+
+  const db = getDb();
+  const ts = nowISO();
+  db.prepare(`UPDATE photos SET visibility = ?, updated_at = ? WHERE id = ?`).run(visibility, ts, id);
+  return getById(id);
 }
 
 /**
@@ -216,16 +234,88 @@ function countByProject(project_id) {
   return db.prepare(`SELECT COUNT(*) as c FROM photos WHERE project_id = ?`).get(project_id).c;
 }
 
+function getPublicByFilename(filename) {
+  if (!filename) return null;
+  const db = getDb();
+  return db.prepare(`
+    SELECT ph.*, p.project_folder, p.project_name
+    FROM photos ph
+    JOIN projects p ON p.id = ph.project_id
+    WHERE ph.filename = ?
+      AND ph.visibility = 'public'
+      AND (p.status IS NULL OR p.status != 'canceled')
+    LIMIT 1
+  `).get(filename);
+}
+
+function getPublicByBasename(basename) {
+  if (!basename) return null;
+  const db = getDb();
+  const normalized = String(basename).toLowerCase();
+  return db.prepare(`
+    SELECT ph.*, p.project_folder, p.project_name
+    FROM photos ph
+    JOIN projects p ON p.id = ph.project_id
+    WHERE (
+        (ph.basename IS NOT NULL AND lower(ph.basename) = ?)
+        OR lower(ph.filename) = ?
+        OR lower(ph.filename) LIKE (? || '.%')
+      )
+      AND ph.visibility = 'public'
+      AND (p.status IS NULL OR p.status != 'canceled')
+    ORDER BY ph.id DESC
+    LIMIT 1
+  `).get(normalized, normalized, normalized);
+}
+
+function getAnyVisibilityByFilename(filename) {
+  if (!filename) return null;
+  const db = getDb();
+  return db.prepare(`
+    SELECT ph.*, p.project_folder, p.project_name
+    FROM photos ph
+    JOIN projects p ON p.id = ph.project_id
+    WHERE ph.filename = ?
+      AND (p.status IS NULL OR p.status != 'canceled')
+    ORDER BY ph.id DESC
+    LIMIT 1
+  `).get(filename);
+}
+
+function getAnyVisibilityByBasename(basename) {
+  if (!basename) return null;
+  const db = getDb();
+  const normalized = String(basename).toLowerCase();
+  return db.prepare(`
+    SELECT ph.*, p.project_folder, p.project_name
+    FROM photos ph
+    JOIN projects p ON p.id = ph.project_id
+    WHERE (
+        (ph.basename IS NOT NULL AND lower(ph.basename) = ?)
+        OR lower(ph.filename) = ?
+        OR lower(ph.filename) LIKE (? || '.%')
+      )
+      AND (p.status IS NULL OR p.status != 'canceled')
+    ORDER BY ph.id DESC
+    LIMIT 1
+  `).get(normalized, normalized, normalized);
+}
+
 module.exports = {
   getById,
   getByManifestId,
   getByFilename,
   getByProjectAndFilename,
   getGlobalByFilename,
+  getPublicByFilename,
+  getPublicByBasename,
+  getAnyVisibilityByFilename,
+  getAnyVisibilityByBasename,
   upsertPhoto,
   updateDerivativeStatus,
   updateKeepFlags,
   moveToProject,
+  updateVisibility,
   removeById,
   countByProject
 };

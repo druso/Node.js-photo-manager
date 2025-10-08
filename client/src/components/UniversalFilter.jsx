@@ -10,7 +10,8 @@ const UniversalFilter = ({
     dateRange: { start: '', end: '' }, // Only date_time_original field is used
     fileType: 'any', // any | jpg_only | raw_only | both
     orientation: 'any',
-    keepType: 'any' // any | none | jpg_only | raw_jpg
+    keepType: 'any', // any | none | jpg_only | raw_jpg
+    visibility: 'any', // any | public | private
   },
   onFilterChange, 
   disabled = false,
@@ -20,7 +21,7 @@ const UniversalFilter = ({
 
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [suggestions, setSuggestions] = useState([]);
-  const [openSelect, setOpenSelect] = useState(null); // 'orientation' | 'fileType' | 'keepType' | null
+  const [openSelect, setOpenSelect] = useState(null); // 'orientation' | 'fileType' | 'keepType' | 'visibility' | null
   const [isDateOpen, setIsDateOpen] = useState(false);
   const panelRef = useRef(null);
 
@@ -45,6 +46,11 @@ const UniversalFilter = ({
     { value: 'jpg_only', label: 'Keep JPG only' },
     { value: 'raw_jpg', label: 'Keep RAW + JPG' },
     { value: 'none', label: 'Keep none (planned delete)' },
+  ];
+  const visibilityOptions = [
+    { value: 'any', label: 'Any visibility' },
+    { value: 'public', label: 'Public only' },
+    { value: 'private', label: 'Private only' },
   ];
 
   // Generate suggestions from manifest data
@@ -118,7 +124,8 @@ const UniversalFilter = ({
       dateRange: { start: '', end: '' },
       fileType: 'any',
       orientation: 'any',
-      keepType: 'any'
+      keepType: 'any',
+      visibility: 'any'
     });
   };
 
@@ -127,7 +134,8 @@ const UniversalFilter = ({
     filters.dateRange.end || 
     (filters.fileType && filters.fileType !== 'any') || 
     (filters.keepType && filters.keepType !== 'any') ||
-    filters.orientation !== 'any';
+    filters.orientation !== 'any' ||
+    (filters.visibility && filters.visibility !== 'any');
   const resetEnabled = hasActiveFilters && !disabled;
 
   // Derive available dates (YYYY-MM-DD) from photos to highlight in date picker
@@ -253,7 +261,7 @@ const UniversalFilter = ({
             </button>
           </div>
 
-          {/* File types to keep (right on second row) */}
+          {/* File types to keep (center on second row) */}
           <div>
             <label id="keepType-label" className="block text-sm font-medium text-gray-700 mb-1">
               File types to keep
@@ -270,6 +278,26 @@ const UniversalFilter = ({
             >
               <span className="truncate">
                 {keepTypeOptions.find(o => o.value === filters.keepType)?.label || 'Show all (no filter)'}
+              </span>
+              <svg className="h-4 w-4 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+            </button>
+          </div>
+
+          {/* Visibility (right on second row) */}
+          <div>
+            <label id="visibility-label" className="block text-sm font-medium text-gray-700 mb-1">
+              Visibility
+            </label>
+            <button
+              type="button"
+              onClick={() => !disabled && setOpenSelect('visibility')}
+              disabled={disabled}
+              className={`w-full ${filterTriggerClass} justify-between ${disabled ? 'text-gray-400 border-gray-200 cursor-not-allowed' : ''}`}
+              name="visibility"
+              aria-labelledby="visibility-label"
+            >
+              <span className="truncate">
+                {visibilityOptions.find(o => o.value === filters.visibility)?.label || 'Any visibility'}
               </span>
               <svg className="h-4 w-4 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
             </button>
@@ -332,6 +360,15 @@ const UniversalFilter = ({
           options={keepTypeOptions}
           value={filters.keepType}
           onSelect={(val) => updateFilters({ ...filters, keepType: val })}
+          onClose={() => setOpenSelect(null)}
+        />
+      )}
+      {openSelect === 'visibility' && (
+        <SelectModal
+          title="Visibility"
+          options={visibilityOptions}
+          value={filters.visibility}
+          onSelect={(val) => updateFilters({ ...filters, visibility: val })}
           onClose={() => setOpenSelect(null)}
         />
       )}

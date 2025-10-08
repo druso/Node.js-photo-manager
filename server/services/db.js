@@ -74,6 +74,16 @@ function applySchema(db) {
     FOREIGN KEY(tag_id) REFERENCES tags(id) ON DELETE CASCADE
   );
 
+  CREATE TABLE IF NOT EXISTS photo_public_hashes (
+    photo_id INTEGER PRIMARY KEY,
+    hash TEXT NOT NULL,
+    rotated_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    FOREIGN KEY(photo_id) REFERENCES photos(id) ON DELETE CASCADE
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_photo_public_hashes_expires_at ON photo_public_hashes(expires_at);
+
   CREATE INDEX IF NOT EXISTS idx_photos_project_id ON photos(project_id);
   CREATE INDEX IF NOT EXISTS idx_photos_filename ON photos(project_id, filename);
   CREATE INDEX IF NOT EXISTS idx_photos_basename ON photos(project_id, basename);
@@ -140,6 +150,7 @@ function applySchema(db) {
   ensureColumn(db, 'jobs', 'priority', "ALTER TABLE jobs ADD COLUMN priority INTEGER NOT NULL DEFAULT 0");
   // Some code paths update jobs.updated_at (e.g., updating payload). Ensure the column exists for older DBs.
   ensureColumn(db, 'jobs', 'updated_at', "ALTER TABLE jobs ADD COLUMN updated_at TEXT");
+  ensureColumn(db, 'photos', 'visibility', "ALTER TABLE photos ADD COLUMN visibility TEXT NOT NULL DEFAULT 'private'");
   // Create composite index after ensuring the column exists (for existing DBs)
   try {
     db.exec(`CREATE INDEX IF NOT EXISTS idx_jobs_status_priority_created ON jobs(status, priority DESC, created_at ASC)`);

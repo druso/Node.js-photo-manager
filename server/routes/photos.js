@@ -7,6 +7,7 @@ const { rateLimit } = require('../utils/rateLimit');
 const photosRepo = require('../services/repositories/photosRepo');
 const photoTagsRepo = require('../services/repositories/photoTagsRepo');
 const projectsRepo = require('../services/repositories/projectsRepo');
+const { normalizeVisibilityParam } = require('../utils/visibility');
 
 // Apply rate limiting (60 requests per minute per IP)
 const apiRateLimit = rateLimit({
@@ -24,21 +25,20 @@ const apiRateLimit = rateLimit({
 router.get('/photos/locate-page', apiRateLimit, async (req, res) => {
   try {
     // Prevent caching to ensure fresh pagination data
-    res.set('Cache-Control', 'no-store');
     
     const q = req.query || {};
     const { project_folder, filename, name, limit, date_from, date_to, file_type, keep_type, orientation } = q;
     const includeTags = q.include === 'tags';
     const tags = typeof q.tags === 'string' && q.tags.length ? q.tags : null; // comma-separated list of tags, with optional - prefix for exclusion
-    
-    // Input validation
-    if (!project_folder) {
-      return res.status(400).json({ error: 'project_folder is required' });
+    const { value: visibility, error: visibilityError } = normalizeVisibilityParam(q.visibility);
+    if (visibilityError) {
+      return res.status(400).json({ error: visibilityError });
     }
+
     if (!filename && !name) {
       return res.status(400).json({ error: 'filename or name is required' });
     }
-    
+
     log.debug('locate_page_req', {
       project_folder,
       filename,
@@ -49,62 +49,57 @@ router.get('/photos/locate-page', apiRateLimit, async (req, res) => {
       file_type,
       keep_type,
       orientation,
-    });
-    
-    // Call repository to locate the photo and get its page
-    const result = await photosRepo.locateAllPage({
-      project_folder,
-      filename: filename || undefined,
-      name: name || undefined,
-      limit: limit ? parseInt(limit, 10) : undefined,
-      date_from: date_from || undefined,
-      date_to: date_to || undefined,
-      file_type: file_type || undefined,
-      keep_type: keep_type || undefined,
-      orientation: orientation || undefined,
       tags: tags || undefined,
+      visibility: visibility || undefined,
     });
-    
+
     // Map items to the same format as the /api/photos endpoint
-    const items = (result.items || []).map(r => ({
-      id: r.id,
-      project_id: r.project_id,
-      project_folder: r.project_folder,
-      project_name: r.project_name,
-      filename: r.filename,
-      basename: r.basename || undefined,
-      ext: r.ext || undefined,
-      created_at: r.created_at,
-      updated_at: r.updated_at,
-      date_time_original: r.date_time_original || undefined,
-      taken_at: r.taken_at,
-      jpg_available: !!r.jpg_available,
-      raw_available: !!r.raw_available,
-      other_available: !!r.other_available,
-      keep_jpg: !!r.keep_jpg,
-      keep_raw: !!r.keep_raw,
-      thumbnail_status: r.thumbnail_status || undefined,
-      preview_status: r.preview_status || undefined,
-      orientation: r.orientation ?? undefined,
-      metadata: (() => { try { return r.meta_json ? JSON.parse(r.meta_json) : undefined; } catch { return undefined; } })(),
-    }));
+    const items = (result.items || []).map((r) => {
+      let metadata;
+      try {
+        metadata = r.meta_json ? JSON.parse(r.meta_json) : undefined;
+      } catch (_) {
+        metadata = undefined;
+      }
+
+      return {
+        id: r.id,
+        project_id: r.project_id,
+        manifest_id: r.manifest_id,
+        filename: r.filename,
+        basename: r.basename || undefined,
+        ext: r.ext || undefined,
+        created_at: r.created_at,
+        updated_at: r.updated_at,
+        date_time_original: r.date_time_original || undefined,
+        jpg_available: !!r.jpg_available,
+        raw_available: !!r.raw_available,
+        other_available: !!r.other_available,
+        keep_jpg: !!r.keep_jpg,
+        keep_raw: !!r.keep_raw,
+        thumbnail_status: r.thumbnail_status || undefined,
+        preview_status: r.preview_status || undefined,
+        orientation: r.orientation ?? undefined,
+        metadata,
+        visibility: r.visibility || 'private',
+        public_hash: r.public_hash || null,
+        public_hash_expires_at: r.public_hash_expires_at || null,
+      };
+    });
     
     // Optionally include tags when requested
     if (includeTags && items.length > 0) {
       try {
-        // Fetch tags for all photos in the page in a single efficient query
-        const photoIds = items.map(item => item.id);
+        const photoIds = items.map((item) => item.id);
         const tagsMap = photoTagsRepo.listTagsForPhotos(photoIds);
-        
-        // Add tags to each item
-        items.forEach(item => {
+
+        items.forEach((item) => {
           item.tags = tagsMap[item.id] || [];
         });
-        
+
         log.debug('locate_page_tags_included', { count: photoIds.length });
       } catch (tagErr) {
         log.warn('locate_page_tags_fetch_failed', { error: tagErr?.message });
-        // Continue without tags rather than failing the whole request
       }
     }
     
@@ -208,29 +203,44 @@ router.get('/photos', async (req, res) => {
       projectId = project.id;
     }
 
-    const page = photosRepo.listAll({ limit, cursor, before_cursor, date_from, date_to, file_type, keep_type, orientation, tags, project_id: projectId });
-    const items = (page.items || []).map(r => ({
-      id: r.id,
-      project_id: r.project_id,
-      project_folder: r.project_folder,
-      project_name: r.project_name,
-      filename: r.filename,
-      basename: r.basename || undefined,
-      ext: r.ext || undefined,
-      created_at: r.created_at,
-      updated_at: r.updated_at,
-      date_time_original: r.date_time_original || undefined,
-      taken_at: r.taken_at,
-      jpg_available: !!r.jpg_available,
-      raw_available: !!r.raw_available,
-      other_available: !!r.other_available,
-      keep_jpg: !!r.keep_jpg,
-      keep_raw: !!r.keep_raw,
-      thumbnail_status: r.thumbnail_status || undefined,
-      preview_status: r.preview_status || undefined,
-      orientation: r.orientation ?? undefined,
-      metadata: (() => { try { return r.meta_json ? JSON.parse(r.meta_json) : undefined; } catch { return undefined; } })(),
-    }));
+    const { value: visibilityFilter, error: visibilityError } = normalizeVisibilityParam(q.visibility);
+    if (visibilityError) {
+      return res.status(400).json({ error: visibilityError });
+    }
+
+    const page = photosRepo.listAll({ limit, cursor, before_cursor, date_from, date_to, file_type, keep_type, orientation, tags, project_id: projectId, visibility: visibilityFilter });
+    const items = (page.items || []).map((r) => {
+      let metadata;
+      try {
+        metadata = r.meta_json ? JSON.parse(r.meta_json) : undefined;
+      } catch (_) {
+        metadata = undefined;
+      }
+
+      return {
+        id: r.id,
+        project_id: r.project_id,
+        project_folder: r.project_folder,
+        project_name: r.project_name,
+        filename: r.filename,
+        basename: r.basename || undefined,
+        ext: r.ext || undefined,
+        created_at: r.created_at,
+        updated_at: r.updated_at,
+        date_time_original: r.date_time_original || undefined,
+        taken_at: r.taken_at,
+        jpg_available: !!r.jpg_available,
+        raw_available: !!r.raw_available,
+        other_available: !!r.other_available,
+        keep_jpg: !!r.keep_jpg,
+        keep_raw: !!r.keep_raw,
+        thumbnail_status: r.thumbnail_status || undefined,
+        preview_status: r.preview_status || undefined,
+        orientation: r.orientation ?? undefined,
+        metadata,
+        visibility: r.visibility || 'private',
+      };
+    });
     
     // Optionally include tags when requested
     if (includeTags && items.length > 0) {

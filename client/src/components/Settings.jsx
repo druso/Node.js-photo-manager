@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { deleteProject, renameProjectById } from '../api/projectsApi';
 import { useUpload } from '../upload/UploadContext';
+import { authFetch } from '../api/httpClient';
 
 const Settings = ({ project, config, onConfigUpdate, onProjectDelete, onProjectRenamed, onClose, onOpenCreateProject, embedded = false }) => {
   const [deleteConfirmText, setDeleteConfirmText] = useState('');
@@ -97,7 +98,7 @@ const Settings = ({ project, config, onConfigUpdate, onProjectDelete, onProjectR
 
   const handleSaveConfig = async () => {
     try {
-      const response = await fetch('/api/config', {
+      const response = await authFetch('/api/config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(localConfig),
@@ -138,7 +139,7 @@ const Settings = ({ project, config, onConfigUpdate, onProjectDelete, onProjectR
   const handleRestoreDefaults = async () => {
     if (window.confirm('Are you sure you want to restore default settings? This will save immediately.')) {
       try {
-        const response = await fetch('/api/config/restore', { method: 'POST' });
+        const response = await authFetch('/api/config/restore', { method: 'POST' });
         if (response.ok) {
           const updatedConfig = await response.json();
           onConfigUpdate(updatedConfig);

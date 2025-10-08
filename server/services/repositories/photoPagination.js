@@ -26,7 +26,9 @@ function locateProjectPage({
   date_to = null, 
   file_type = null, 
   keep_type = null, 
-  orientation = null 
+  orientation = null,
+  tags = null,
+  visibility = null,
 } = {}) {
   const db = getDb();
   
@@ -59,16 +61,22 @@ function locateProjectPage({
   let target = null;
   if (filename) {
     target = db.prepare(`
-      SELECT ph.*, COALESCE(ph.date_time_original, ph.created_at) as taken_at
+      SELECT ph.*, COALESCE(ph.date_time_original, ph.created_at) as taken_at,
+        pph.hash AS public_hash,
+        pph.expires_at AS public_hash_expires_at
       FROM photos ph
+      LEFT JOIN photo_public_hashes pph ON pph.photo_id = ph.id
       WHERE ph.project_id = ? AND ph.filename = ?
       LIMIT 1
     `).get(project.id, filename);
   } else if (name) {
     const nm = String(name).toLowerCase();
     const candidates = db.prepare(`
-      SELECT ph.*, COALESCE(ph.date_time_original, ph.created_at) as taken_at
+      SELECT ph.*, COALESCE(ph.date_time_original, ph.created_at) as taken_at,
+        pph.hash AS public_hash,
+        pph.expires_at AS public_hash_expires_at
       FROM photos ph
+      LEFT JOIN photo_public_hashes pph ON pph.photo_id = ph.id
       WHERE ph.project_id = ? AND (
         (ph.basename IS NOT NULL AND lower(ph.basename) = ?) OR
         lower(ph.filename) = ? OR
@@ -107,7 +115,9 @@ function locateProjectPage({
     date_to, 
     file_type, 
     keep_type, 
-    orientation 
+    orientation,
+    tags,
+    visibility,
   });
 
   // Ensure target included
@@ -135,8 +145,11 @@ function locateProjectPage({
   // Fetch page slice
   const pageSql = `
     SELECT ph.*,
-      COALESCE(ph.date_time_original, ph.created_at) as taken_at
+      COALESCE(ph.date_time_original, ph.created_at) as taken_at,
+      pph.hash AS public_hash,
+      pph.expires_at AS public_hash_expires_at
     FROM photos ph
+    LEFT JOIN photo_public_hashes pph ON pph.photo_id = ph.id
     ${whereSql}
     ORDER BY taken_at DESC, ph.id DESC
     LIMIT ? OFFSET ?
@@ -150,7 +163,12 @@ function locateProjectPage({
     : null;
   const prevCursor = pageStart > 0 ? String(Math.max(0, pageStart - capLimit)) : null;
 
-  const items = rows || [];
+  const items = (rows || []).map((r) => ({
+    ...r,
+    visibility: r.visibility || 'private',
+    public_hash: r.public_hash || null,
+    public_hash_expires_at: r.public_hash_expires_at || null,
+  }));
   const idxInItems = items.findIndex(r => r.id === target.id);
   const pageIndex = Math.floor(rank / capLimit);
 
@@ -167,7 +185,10 @@ function locateProjectPage({
       project_id: target.project_id, 
       project_folder: project_folder, 
       filename: target.filename, 
-      taken_at: target.taken_at 
+      taken_at: target.taken_at,
+      visibility: target.visibility || 'private',
+      public_hash: target.public_hash || null,
+      public_hash_expires_at: target.public_hash_expires_at || null,
     },
   };
 }
@@ -195,7 +216,9 @@ function locateAllPage({
   date_to = null, 
   file_type = null, 
   keep_type = null, 
-  orientation = null 
+  orientation = null,
+  tags = null,
+  visibility = null,
 } = {}) {
   const db = getDb();
   
@@ -272,7 +295,9 @@ function locateAllPage({
           file_type, 
           keep_type, 
           orientation, 
-          project_id: project.id 
+          tags,
+          project_id: project.id,
+          visibility,
         });
         const checkSql = `
           SELECT 1
@@ -326,7 +351,9 @@ function locateAllPage({
     file_type, 
     keep_type, 
     orientation, 
-    project_id: project.id 
+    tags,
+    project_id: project.id,
+    visibility,
   });
 
   // Ensure target is included in filtered set by checking it matches filters and non-archived project constraint
@@ -361,9 +388,12 @@ function locateAllPage({
   const pageSql = `
     SELECT
       ph.*, p.project_folder, p.project_name,
-      COALESCE(ph.date_time_original, ph.created_at) as taken_at
+      COALESCE(ph.date_time_original, ph.created_at) as taken_at,
+      pph.hash AS public_hash,
+      pph.expires_at AS public_hash_expires_at
     FROM photos ph
     JOIN projects p ON p.id = ph.project_id
+    LEFT JOIN photo_public_hashes pph ON pph.photo_id = ph.id
     ${whereSql}
     ORDER BY taken_at DESC, ph.id DESC
     LIMIT ? OFFSET ?
@@ -393,27 +423,22 @@ function locateAllPage({
     }
   }
 
-  const items = rows || [];
+  const items = (rows || []).map((r) => ({
+    ...r,
+    project_folder: r.project_folder,
+    project_name: r.project_name,
+    visibility: r.visibility || 'private',
+    public_hash: r.public_hash || null,
+    public_hash_expires_at: r.public_hash_expires_at || null,
+  }));
   const idxInItems = items.findIndex(r => r.id === target.id);
   const pageIndex = Math.floor(rank / capLimit);
 
-  log.debug('locateAllPage', { 
-    project_folder, 
-    filename, 
-    name, 
-    rank, 
-    pageStart, 
-    pageIndex, 
-    count: items.length, 
-    idxInItems 
-  });
-  
   return {
     items,
     position: rank,
     page_index: pageIndex,
     limit: capLimit,
-    nextCursor,
     prevCursor,
     idx_in_items: idxInItems >= 0 ? idxInItems : null,
     target: { 
@@ -421,7 +446,8 @@ function locateAllPage({
       project_id: target.project_id, 
       project_folder: project_folder, 
       filename: target.filename, 
-      taken_at: target.taken_at 
+      taken_at: target.taken_at,
+      visibility: target.visibility || 'private',
     },
   };
 }

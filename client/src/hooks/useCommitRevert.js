@@ -1,4 +1,5 @@
 import { useState, useRef, useCallback } from 'react';
+import { authFetch } from '../api/httpClient';
 
 /**
  * Hook to handle commit and revert operations for both All Photos and Project views
@@ -106,7 +107,7 @@ export const useCommitRevert = ({
           const targetProjects = Array.from(pendingDeleteTotals.byProject || []);
           const endpoint = inAllPhotosMode ? '/api/photos/commit-changes' : `/api/projects/${encodeURIComponent(selectedProject.folder)}/commit-changes`;
           const body = (inAllPhotosMode && targetProjects.length) ? { projects: targetProjects } : undefined;
-          const res = await fetch(endpoint, {
+          const res = await authFetch(endpoint, {
             method: 'POST',
             headers: body ? { 'Content-Type': 'application/json' } : undefined,
             body: body ? JSON.stringify(body) : undefined,
@@ -170,7 +171,7 @@ export const useCommitRevert = ({
           const targetProjects = Array.from(pendingDeleteTotals.byProject || []);
           const endpoint = inAllPhotosMode ? '/api/photos/revert-changes' : `/api/projects/${encodeURIComponent(selectedProject.folder)}/revert-changes`;
           const body = (inAllPhotosMode && targetProjects.length) ? { projects: targetProjects } : undefined;
-          const res = await fetch(endpoint, {
+          const res = await authFetch(endpoint, {
             method: 'POST',
             headers: body ? { 'Content-Type': 'application/json' } : undefined,
             body: body ? JSON.stringify(body) : undefined,

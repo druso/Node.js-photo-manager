@@ -80,6 +80,12 @@ export function usePhotoFiltering({
       if (activeFilters.keepType === 'jpg_only' && (keepJpg !== true || keepRaw !== false)) return false;
       if (activeFilters.keepType === 'raw_jpg' && (keepJpg !== true || keepRaw !== true)) return false;
     }
+
+    // Visibility filter
+    if (activeFilters.visibility && activeFilters.visibility !== 'any') {
+      const visibility = (photo.visibility || 'private').toLowerCase();
+      if (visibility !== activeFilters.visibility) return false;
+    }
     
     return true;
   }, [activeFilters]);

@@ -1,4 +1,5 @@
 // API client for All Photos (cross-project) keyset pagination
+import { authFetch } from './httpClient';
 
 /**
  * Locate a specific photo in All Photos and return its page with surrounding items.
@@ -45,7 +46,7 @@ export async function locateAllPhotosPage(opts = {}) {
   if (opts.orientation && opts.orientation !== 'any') params.set('orientation', String(opts.orientation));
   
   const url = `/api/photos/locate-page?${params.toString()}`;
-  const res = await fetch(url, { cache: 'no-store' });
+  const res = await authFetch(url, { cache: 'no-store' });
   
   if (!res.ok) {
     const errorData = await res.json().catch(() => ({}));
@@ -84,8 +85,9 @@ export async function listAllPhotos(opts = {}) {
   if (opts.keep_type && opts.keep_type !== 'any') params.set('keep_type', String(opts.keep_type));
   if (opts.orientation && opts.orientation !== 'any') params.set('orientation', String(opts.orientation));
   if (opts.project_folder) params.set('project_folder', String(opts.project_folder));
+  if (opts.visibility && opts.visibility !== 'any') params.set('visibility', String(opts.visibility));
   const url = `/api/photos${params.toString() ? `?${params.toString()}` : ''}`;
-  const res = await fetch(url, { cache: 'no-store' });
+  const res = await authFetch(url, { cache: 'no-store' });
   if (!res.ok) throw new Error(`listAllPhotos failed: ${res.status}`);
   return res.json();
 }
@@ -107,7 +109,7 @@ export async function listAllPendingDeletes(opts = {}) {
   if (opts.file_type && opts.file_type !== 'any') params.set('file_type', String(opts.file_type));
   if (opts.orientation && opts.orientation !== 'any') params.set('orientation', String(opts.orientation));
   const url = `/api/photos/pending-deletes${params.toString() ? `?${params.toString()}` : ''}`;
-  const res = await fetch(url, { cache: 'no-store' });
+  const res = await authFetch(url, { cache: 'no-store' });
   if (!res.ok) throw new Error(`listAllPendingDeletes failed: ${res.status}`);
   return res.json();
 }

@@ -50,6 +50,9 @@ const PhotoTableView = ({ projectData, projectFolder, onPhotoSelect, selectedPho
               <th scope="col" className="px-6 py-3 text-left">
                 <HeaderButton label="File Types Available" k="filetypes" />
               </th>
+              <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                Visibility
+              </th>
               <th scope="col" className="px-6 py-3 text-left">
                 <HeaderButton label="Date Taken" k="date" />
               </th>
@@ -122,6 +125,30 @@ const PhotoTableView = ({ projectData, projectFolder, onPhotoSelect, selectedPho
                     {photo.jpg_available && <span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800">JPG</span>}
                     {photo.raw_available && <span className="mt-1 px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-purple-100 text-purple-800">RAW</span>}
                   </div>
+                </td>
+                <td className={`${tcfg.cellPadX} ${tcfg.cellPadY} whitespace-nowrap text-sm`}>
+                  {(() => {
+                    const visibility = (photo.visibility || 'private').toLowerCase();
+                    const isPublic = visibility === 'public';
+                    const label = isPublic ? 'Public' : 'Private';
+                    const badgeClass = isPublic
+                      ? 'bg-green-100 text-green-800 border border-green-300'
+                      : 'bg-purple-100 text-purple-800 border border-purple-300';
+                    return (
+                      <span className={`inline-flex items-center gap-1 px-2 py-0.5 text-xs font-semibold rounded-full ${badgeClass}`} title={`Visibility: ${label}`}>
+                        {isPublic ? (
+                          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="h-3.5 w-3.5">
+                            <path d="M12 4.5c-4.97 0-9 3.582-9 8s4.03 8 9 8 9-3.582 9-8-4.03-8-9-8Zm0 2c3.866 0 7 2.91 7 6s-3.134 6-7 6-7-2.91-7-6 3.134-6 7-6Zm0 2.25a3.75 3.75 0 1 0 0 7.5 3.75 3.75 0 0 0 0-7.5Z" />
+                          </svg>
+                        ) : (
+                          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="h-3.5 w-3.5">
+                            <path fillRule="evenodd" d="M3.53 2.47a.75.75 0 0 0-1.06 1.06l2.092 2.093C3.048 7.098 1.658 8.91 1.09 10.7a1.52 1.52 0 0 0 0 .6C2.163 14.228 6.322 18.5 12 18.5c1.53 0 2.973-.317 4.28-.882l4.19 4.192a.75.75 0 1 0 1.06-1.06l-18-18Zm9.164 10.224 2.612 2.611a3.75 3.75 0 0 1-2.35.695 3.75 3.75 0 0 1-3.75-3.75c0-.865.29-1.663.78-2.285l1.695 1.695a1.5 1.5 0 0 0 1.913 1.913Zm7.038-4.657-2.94 2.94a3.75 3.75 0 0 0-4.768-4.768l-2.533-2.533A10.47 10.47 0 0 1 12 5.5c5.678 0 9.837 4.272 10.91 7.2.085.236.085.364 0 .6a10.11 10.11 0 0 1-1.566 2.802l-2.612-2.612a3.73 3.73 0 0 0 .232-1.298 3.75 3.75 0 0 0-3.75-3.75c-.44 0-.865.077-1.255.218l2.49-2.49c.502.33.98.7 1.43 1.111Z" clipRule="evenodd" />
+                          </svg>
+                        )}
+                        {label}
+                      </span>
+                    );
+                  })()}
                 </td>
                 <td className={`${tcfg.cellPadX} ${tcfg.cellPadY} whitespace-nowrap text-sm text-gray-500`}>
                   {photo.metadata?.date_time_original ? new Date(photo.metadata.date_time_original).toLocaleDateString() : 'N/A'}

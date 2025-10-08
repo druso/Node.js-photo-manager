@@ -16,6 +16,7 @@ const photoCrud = require('./photoCrud');
 const photoFiltering = require('./photoFiltering');
 const photoPagination = require('./photoPagination');
 const photoPendingOps = require('./photoPendingOps');
+const { ensureHashForPhoto, invalidateHash } = require('../publicAssetHashes');
 
 const makeLogger = require('../../utils/logger2');
 const log = makeLogger('photosRepo');
@@ -33,6 +34,39 @@ const getGlobalByFilename = photoCrud.getGlobalByFilename;
 const moveToProject = photoCrud.moveToProject;
 const removeById = photoCrud.removeById;
 const countByProject = photoCrud.countByProject;
+const getPublicByFilename = photoCrud.getPublicByFilename;
+const getPublicByBasename = photoCrud.getPublicByBasename;
+const getAnyVisibilityByFilename = photoCrud.getAnyVisibilityByFilename;
+const getAnyVisibilityByBasename = photoCrud.getAnyVisibilityByBasename;
+
+function updateVisibility(id, visibility) {
+  const before = (() => {
+    try {
+      return photoCrud.getById(id);
+    } catch (err) {
+      log.warn('updateVisibility_lookup_failed', { photo_id: id, error: err?.message });
+      return null;
+    }
+  })();
+
+  const updated = photoCrud.updateVisibility(id, visibility);
+
+  try {
+    const prevVisibility = before ? (before.visibility || 'private') : null;
+    const nextVisibility = updated.visibility || 'private';
+    if (prevVisibility !== nextVisibility) {
+      if (nextVisibility === 'public') {
+        ensureHashForPhoto(updated.id);
+      } else {
+        invalidateHash(updated.id);
+      }
+    }
+  } catch (err) {
+    log.warn('updateVisibility_hash_side_effect_failed', { photo_id: id, error: err?.message });
+  }
+
+  return updated;
+}
 
 // ===== FILTERING & LISTING =====
 // Delegate to photoFiltering module
@@ -63,9 +97,14 @@ module.exports = {
   getByFilename,
   getByProjectAndFilename,
   getGlobalByFilename,
+  getPublicByFilename,
+  getPublicByBasename,
+  getAnyVisibilityByFilename,
+  getAnyVisibilityByBasename,
   moveToProject,
   removeById,
   countByProject,
+  updateVisibility,
   
   // Filtering & listing
   listAll,

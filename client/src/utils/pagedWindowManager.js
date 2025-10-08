@@ -2,6 +2,9 @@
 // Supports keyset-based pagination (cursor, before_cursor) and classic offset cursors.
 // Intended to be used by both All Photos and Project Photos views.
 
+const IS_DEV = Boolean(import.meta?.env?.DEV);
+const devLog = (...args) => { if (IS_DEV) console.log(...args); };
+
 /**
  * @template T
  * @typedef {Object} Page
@@ -146,7 +149,7 @@ export default class PagedWindowManager {
         const res = await this.fetchPage({ limit: this.limit, cursor: this.tailNextCursor, extra });
         const page = this.#makePage(res);
         // TEMP DEBUG: received cursors for next page
-        console.log('[PagedWindow] Received next page with cursors:', {
+        devLog('[PagedWindow] Received next page with cursors:', {
           prevCursor: page.prevCursor || null,
           nextCursor: page.nextCursor || null,
           total: res?.total ?? undefined,
@@ -160,7 +163,7 @@ export default class PagedWindowManager {
           this.tailNextCursor = page.nextCursor || null;
           page._pageNumber = this.nextPageNumber++;
           this.pages.push(page);
-          console.log(`[PagedWindow] Loaded page ${page._pageNumber}. Current window: [${this.#getCurrentWindowNumbers().join(', ')}]`);
+          devLog(`[PagedWindow] Loaded page ${page._pageNumber}. Current window: [${this.#getCurrentWindowNumbers().join(', ')}]`);
           this.#evictIfNeeded('head');
           return page;
         } else {
@@ -168,11 +171,11 @@ export default class PagedWindowManager {
           // Only set to null if the server explicitly says there's no next cursor
           if (page.nextCursor) {
             this.tailNextCursor = page.nextCursor;
-            console.log('[PagedWindowManager] Empty page, advancing cursor and retrying');
+            devLog('[PagedWindowManager] Empty page, advancing cursor and retrying');
           } else {
             // Server says no more pages available
             this.tailNextCursor = null;
-            console.log('[PagedWindowManager] No more pages available (server returned no nextCursor)');
+            devLog('[PagedWindowManager] No more pages available (server returned no nextCursor)');
             break;
           }
         }
@@ -200,7 +203,7 @@ export default class PagedWindowManager {
         const res = await this.fetchPage({ limit: this.limit, before_cursor: this.headPrevCursor, extra });
         const page = this.#makePage(res);
         // TEMP DEBUG: received cursors for prev page
-        console.log('[PagedWindow] Received prev page with cursors:', {
+        devLog('[PagedWindow] Received prev page with cursors:', {
           prevCursor: page.prevCursor || null,
           nextCursor: page.nextCursor || null,
           total: res?.total ?? undefined,
@@ -222,7 +225,7 @@ export default class PagedWindowManager {
           }
           
           this.pages.unshift(page);
-          console.log(`[PagedWindow] Loaded page ${page._pageNumber}. Current window: [${this.#getCurrentWindowNumbers().join(', ')}]`);
+          devLog(`[PagedWindow] Loaded page ${page._pageNumber}. Current window: [${this.#getCurrentWindowNumbers().join(', ')}]`);
           this.#evictIfNeeded('tail');
           
           // CRITICAL FIX: Update tailNextCursor after backward pagination
@@ -230,7 +233,7 @@ export default class PagedWindowManager {
           if (this.pages.length > 0) {
             const lastPage = this.pages[this.pages.length - 1];
             this.tailNextCursor = lastPage.nextCursor || null;
-            console.log('[PagedWindow] Updated tailNextCursor after loadPrev:', this.tailNextCursor);
+            devLog('[PagedWindow] Updated tailNextCursor after loadPrev:', this.tailNextCursor);
           }
           
           return page;
@@ -239,11 +242,11 @@ export default class PagedWindowManager {
           // Only set to null if the server explicitly says there's no prev cursor
           if (page.prevCursor) {
             this.headPrevCursor = page.prevCursor;
-            console.log('[PagedWindowManager] Empty page, advancing prev cursor and retrying');
+            devLog('[PagedWindowManager] Empty page, advancing prev cursor and retrying');
           } else {
             // Server says no more previous pages available
             this.headPrevCursor = null;
-            console.log('[PagedWindowManager] No more previous pages available (server returned no prevCursor)');
+            devLog('[PagedWindowManager] No more previous pages available (server returned no prevCursor)');
             break;
           }
         }
@@ -311,7 +314,7 @@ export default class PagedWindowManager {
     while (this.pages.length > this.maxPages) {
       // Check if we should avoid eviction due to small page sizes
       if (this.#shouldAvoidEviction(side)) {
-        console.log('[PagedWindowManager] Avoiding eviction - insufficient content for navigation');
+        devLog('[PagedWindowManager] Avoiding eviction - insufficient content for navigation');
         break;
       }
       
@@ -320,15 +323,15 @@ export default class PagedWindowManager {
         this.#forgetKeys(removed);
         // Update headPrevCursor to the remaining first page's prev
         this.headPrevCursor = this.pages.length ? (this.pages[0].prevCursor || null) : null;
-        console.log(`[PagedWindow] Evicted page ${removed?._pageNumber || '?'}. Current window: [${this.#getCurrentWindowNumbers().join(', ')}]`);
+        devLog(`[PagedWindow] Evicted page ${removed?._pageNumber || '?'}. Current window: [${this.#getCurrentWindowNumbers().join(', ')}]`);
         // TEMP DEBUG: headPrevCursor after head eviction
-        console.log('[PagedWindow] After head eviction, headPrevCursor =', this.headPrevCursor);
+        devLog('[PagedWindow] After head eviction, headPrevCursor =', this.headPrevCursor);
       } else {
         const removed = this.pages.pop();
         this.#forgetKeys(removed);
         // Update tailNextCursor to the remaining last page's next
         this.tailNextCursor = this.pages.length ? (this.pages[this.pages.length - 1].nextCursor || null) : null;
-        console.log(`[PagedWindow] Evicted page ${removed?._pageNumber || '?'}. Current window: [${this.#getCurrentWindowNumbers().join(', ')}]`);
+        devLog(`[PagedWindow] Evicted page ${removed?._pageNumber || '?'}. Current window: [${this.#getCurrentWindowNumbers().join(', ')}]`);
       }
     }
   }

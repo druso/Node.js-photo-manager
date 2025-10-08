@@ -20,7 +20,8 @@ function buildProjectPhotosWhere({
   file_type = null, 
   keep_type = null, 
   orientation = null, 
-  tags = null 
+  tags = null,
+  visibility = null 
 } = {}) {
   const params = [project_id];
   const where = ['ph.project_id = ?'];
@@ -104,6 +105,11 @@ function buildProjectPhotosWhere({
     }
   }
   
+  if (visibility && typeof visibility === 'string' && visibility !== 'any') {
+    where.push(`ph.visibility = ?`);
+    params.push(visibility);
+  }
+
   const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
   return { whereSql, params };
 }
@@ -131,7 +137,8 @@ function buildAllPhotosWhere({
   cursor = null, 
   before_cursor = null, 
   tags = null, 
-  project_id = null 
+  project_id = null,
+  visibility = null 
 } = {}) {
   const params = [];
   const where = [];
@@ -245,6 +252,11 @@ function buildAllPhotosWhere({
     }
   }
   
+  if (visibility && typeof visibility === 'string' && visibility !== 'any') {
+    where.push(`ph.visibility = ?`);
+    params.push(visibility);
+  }
+
   // Note: before_cursor is handled separately in listAll() with flipped query approach
   const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
   return { whereSql, params };

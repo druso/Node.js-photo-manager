@@ -4,12 +4,13 @@ const fs = require('fs-extra');
 const makeLogger = require('../utils/logger2');
 const log = makeLogger('projects');
 const router = express.Router();
-
 // DB repositories
 const projectsRepo = require('../services/repositories/projectsRepo');
 const photosRepo = require('../services/repositories/photosRepo');
 const photoTagsRepo = require('../services/repositories/photoTagsRepo');
 const jobsRepo = require('../services/repositories/jobsRepo');
+const { emitJobUpdate } = require('../services/events');
+const { normalizeVisibilityParam } = require('../utils/visibility');
 const tasksOrchestrator = require('../services/tasksOrchestrator');
 const { isCanonicalProjectFolder } = require('../utils/projects');
 const { rateLimit } = require('../utils/rateLimit');
@@ -193,6 +194,7 @@ router.get('/:folder/photos/locate-page', apiRateLimit, async (req, res) => {
     const q = req.query || {};
     const { filename, name, limit, date_from, date_to, file_type, keep_type, orientation } = q;
     const tags = typeof q.tags === 'string' && q.tags.length ? q.tags : null; // comma-separated list of tags, with optional - prefix for exclusion
+    const visibility = typeof q.visibility === 'string' && q.visibility.length ? q.visibility : null;
 
     if (!filename && !name) {
       return res.status(400).json({ error: 'filename or name is required' });
@@ -209,6 +211,7 @@ router.get('/:folder/photos/locate-page', apiRateLimit, async (req, res) => {
       keep_type: keep_type || undefined,
       orientation: orientation || undefined,
       tags: tags || undefined,
+      visibility: visibility || undefined,
     });
 
     const items = (result.items || []).map(r => ({
@@ -229,6 +232,7 @@ router.get('/:folder/photos/locate-page', apiRateLimit, async (req, res) => {
       preview_status: r.preview_status || undefined,
       orientation: r.orientation ?? undefined,
       metadata: r.meta_json ? JSON.parse(r.meta_json) : undefined,
+      visibility: r.visibility || 'private',
     }));
 
     return res.json({
@@ -291,6 +295,10 @@ router.get('/:folder/photos', async (req, res) => {
     const orientation = q.orientation || null;
     const includeTags = q.include === 'tags';
     const tags = typeof q.tags === 'string' && q.tags.length ? q.tags : null; // comma-separated list of tags, with optional - prefix for exclusion
+    const { value: visibility, error: visibilityError } = normalizeVisibilityParam(q.visibility);
+    if (visibilityError) {
+      return res.status(400).json({ error: visibilityError });
+    }
 
     const page = photosRepo.listProjectFiltered({ 
       project_id: project.id, 
@@ -302,7 +310,8 @@ router.get('/:folder/photos', async (req, res) => {
       file_type,
       keep_type,
       orientation,
-      tags
+      tags,
+      visibility,
     });
 
     const items = (page.items || []).map(r => ({
@@ -323,6 +332,9 @@ router.get('/:folder/photos', async (req, res) => {
       preview_status: r.preview_status || undefined,
       orientation: r.orientation ?? undefined,
       metadata: r.meta_json ? JSON.parse(r.meta_json) : undefined,
+      visibility: r.visibility || 'private',
+      public_hash: r.public_hash || null,
+      public_hash_expires_at: r.public_hash_expires_at || null,
     }));
     
     // Optionally include tags when requested

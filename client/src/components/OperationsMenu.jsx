@@ -6,6 +6,7 @@ import { updateKeep } from '../api/keepApi';
 import { useUpload } from '../upload/UploadContext';
 import { useToast } from '../ui/toast/ToastContext';
 import { processPerImage } from '../api/uploadsApi';
+import useVisibilityMutation from '../hooks/useVisibilityMutation';
 
 export default function OperationsMenu({
   projectFolder,
@@ -15,6 +16,7 @@ export default function OperationsMenu({
   onTagsUpdated,
   onKeepBulkUpdated,
   onTagsBulkUpdated,
+  onVisibilityBulkUpdated,
   config,
   trigger = 'label', // 'label' | 'hamburger'
   onRequestMove,
@@ -22,6 +24,9 @@ export default function OperationsMenu({
   allMode = false,
   allSelectedKeys, // Set of 'project_folder::filename'
   setAllSelectedKeys,
+  allPhotos,
+  selection,
+  setSelection,
 }) {
   const [open, setOpen] = useState(false);
   const [tagInput, setTagInput] = useState('');
@@ -34,15 +39,126 @@ export default function OperationsMenu({
   const selectionCount = allMode ? (allSelectedKeys?.size || 0) : projectSelected.size;
   const selectionIsEmpty = selectionCount === 0;
 
+  const visibilityMutation = useVisibilityMutation();
+
   // Close when clicking outside the menu
   useEffect(() => {
     const handleDocClick = (e) => {
       if (!rootRef.current) return;
       if (!rootRef.current.contains(e.target)) setOpen(false);
     };
+
     document.addEventListener('click', handleDocClick);
     return () => document.removeEventListener('click', handleDocClick);
   }, []);
+
+  const collectProjectSelection = () => {
+    const photos = Array.isArray(projectData?.photos) ? projectData.photos : [];
+    const resolved = Array.from(projectSelected)
+      .map(filename => {
+        const entry = photos.find(p => p.filename === filename);
+        if (!entry) return null;
+        return {
+          ...entry,
+          project_folder: entry.project_folder || projectFolder || entry.folder || null,
+        };
+      })
+      .filter(Boolean);
+    return resolved.map(item => ({
+      ...item,
+      project_folder: item.project_folder || projectFolder || null,
+    }));
+  };
+
+  const collectAllSelection = () => {
+    const keys = Array.from(allSelectedKeys || []);
+    if (!keys.length) return [];
+    const photosList = Array.isArray(allPhotos) ? allPhotos : [];
+    const map = new Map(photosList.map(photo => {
+      const key = `${photo.project_folder || ''}::${photo.filename}`;
+      return [key, photo];
+    }));
+    const resolved = [];
+    const missing = [];
+    keys.forEach(key => {
+      const photo = map.get(key);
+      if (photo) {
+        resolved.push(photo);
+      } else {
+        missing.push(key);
+      }
+    });
+    if (missing.length && toast?.show) {
+      toast.show({
+        emoji: '⚠️',
+        message: `Some selections are unavailable in the current page (${missing.length}).`,
+        variant: 'warning',
+      });
+    }
+    return resolved;
+  };
+
+  const collectSelectedItems = () => {
+    if (allMode) {
+      return collectAllSelection();
+    }
+    return collectProjectSelection();
+  };
+
+  const handleVisibilityChange = async (visibility, { dryRun = false } = {}) => {
+    if (selectionIsEmpty) return;
+    const selectedItems = collectSelectedItems();
+    if (!selectedItems.length) {
+      if (toast?.show) {
+        toast.show({ emoji: '⚠️', message: 'Unable to resolve selected photos.', variant: 'warning' });
+      }
+      return;
+    }
+
+    try {
+      setBusy(true);
+      if (dryRun) {
+        const preview = await visibilityMutation.preview(selectedItems, visibility);
+        const count = preview?.changedItems?.length || 0;
+        if (count > 0) {
+          toast?.show({
+            emoji: '👀',
+            message: `${count} photo${count === 1 ? '' : 's'} would switch to ${visibility}.`,
+            variant: 'notification',
+          });
+        } else {
+          toast?.show?.({ emoji: 'ℹ️', message: 'No visibility changes needed.', variant: 'info' });
+        }
+        return;
+      }
+
+      const result = await visibilityMutation.apply(selectedItems, visibility);
+      const changed = Array.isArray(result?.changedItems) ? result.changedItems : [];
+      if (changed.length && typeof onVisibilityBulkUpdated === 'function') {
+        onVisibilityBulkUpdated(changed);
+      }
+
+      if (allMode) {
+        if (typeof setAllSelectedKeys === 'function') setAllSelectedKeys(new Set());
+      } else if (typeof setSelectedPhotos === 'function') {
+        setSelectedPhotos(new Set());
+      }
+
+      if (Array.isArray(selection) && typeof setSelection === 'function') {
+        const clearedIds = new Set(changed.map(item => `${item.project_folder || ''}::${item.filename}`));
+        setSelection(prev => Array.isArray(prev)
+          ? prev.filter(ref => !clearedIds.has(`${ref.project_folder || ''}::${ref.filename}`))
+          : prev);
+      }
+    } catch (err) {
+      console.error('Visibility update failed', err);
+      if (toast?.show) {
+        toast.show({ emoji: '⚠️', message: err?.message || 'Failed to update visibility.', variant: 'error' });
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
 
   // Keep menu open regardless of selection size so Project actions remain accessible
 
@@ -254,6 +370,28 @@ export default function OperationsMenu({
             >
               Move to…
             </button>
+            <div className="mt-3 grid grid-cols-2 gap-2">
+              <button
+                onClick={() => handleVisibilityChange('public', { dryRun: true })}
+                disabled={busy || selectionIsEmpty}
+                className="px-2 py-1.5 text-sm rounded-md border border-blue-200 bg-blue-50 text-blue-700 disabled:bg-gray-200 disabled:text-gray-500"
+              >Preview → Public</button>
+              <button
+                onClick={() => handleVisibilityChange('private', { dryRun: true })}
+                disabled={busy || selectionIsEmpty}
+                className="px-2 py-1.5 text-sm rounded-md border border-purple-200 bg-purple-50 text-purple-700 disabled:bg-gray-200 disabled:text-gray-500"
+              >Preview → Private</button>
+              <button
+                onClick={() => handleVisibilityChange('public')}
+                disabled={busy || selectionIsEmpty}
+                className="px-2 py-1.5 text-sm rounded-md border border-green-500 bg-green-500 text-white disabled:bg-gray-200 disabled:text-gray-500"
+              >Apply Public</button>
+              <button
+                onClick={() => handleVisibilityChange('private')}
+                disabled={busy || selectionIsEmpty}
+                className="px-2 py-1.5 text-sm rounded-md border border-purple-600 bg-purple-600 text-white disabled:bg-gray-200 disabled:text-gray-500"
+              >Apply Private</button>
+            </div>
           </div>
 
           <div className="mb-2">

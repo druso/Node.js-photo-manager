@@ -1,8 +1,13 @@
+require('dotenv').config();
 const express = require('express');
+const cookieParser = require('cookie-parser');
 // Remove global console timestamp prefixer to avoid duplicate timestamps with structured logger
 // require('./server/utils/logger');
 const makeLogger = require('./server/utils/logger2');
 const log = makeLogger('server');
+const { initAuth } = require('./server/services/auth/initAuth');
+
+initAuth({ log });
 // Upload handling and image processing are implemented in route/services modules
 const cors = require('cors');
 const path = require('path');
@@ -20,6 +25,7 @@ app.use(requestId());
 // Access log as early as possible to capture static file requests
 app.use(accessLog());
 app.use(express.json());
+app.use(cookieParser());
 // Explicit static mounts to serve built frontend
 // Serve hashed assets with no fallthrough to avoid route interference
 app.use('/assets', express.static('public/assets', { fallthrough: false }));
@@ -48,10 +54,26 @@ app.use(cors({
     if (allowedOrigins.includes(origin)) return cb(null, true);
     return cb(new Error('CORS: Origin not allowed'));
   },
-  credentials: false
+  credentials: true
 }));
 
 // Routers
+const authRouter = require('./server/routes/auth');
+app.use('/api/auth', authRouter);
+
+const authenticateAdmin = require('./server/middleware/authenticateAdmin');
+const PUBLIC_ASSET_PATH = /^\/projects\/[^/]+\/(thumbnail|preview|image)\//;
+const PUBLIC_HASH_METADATA_PATH = /^\/projects\/image\/[^/]+$/;
+app.use('/api', (req, res, next) => {
+  if (req.path.startsWith('/auth/')) {
+    return next();
+  }
+  if (req.method === 'GET' && (PUBLIC_ASSET_PATH.test(req.path) || PUBLIC_HASH_METADATA_PATH.test(req.path))) {
+    return next();
+  }
+  return authenticateAdmin(req, res, next);
+});
+
 const projectsRouter = require('./server/routes/projects');
 app.use('/api/projects', projectsRouter);
 const uploadsRouter = require('./server/routes/uploads');

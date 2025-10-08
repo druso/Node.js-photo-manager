@@ -252,14 +252,20 @@ export function useAppInitialization({
     if (projects.length > 0 && !selectedProject) {
       // First check if we have a project filter from the URL
       if (view.project_filter) {
-        console.log('Looking for project from URL filter:', view.project_filter);
+        if (import.meta?.env?.DEV) {
+          console.log('Looking for project from URL filter:', view.project_filter);
+        }
         const projectFromUrl = projects.find(p => p.folder === view.project_filter);
         if (projectFromUrl) {
-          console.log('Found project from URL:', projectFromUrl.folder);
+          if (import.meta?.env?.DEV) {
+            console.log('Found project from URL:', projectFromUrl.folder);
+          }
           setSelectedProject(projectFromUrl);
           return;
         } else {
-          console.log('Project from URL not found in projects list');
+          if (import.meta?.env?.DEV) {
+            console.log('Project from URL not found in projects list');
+          }
         }
       }
       
