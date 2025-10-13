@@ -680,19 +680,17 @@ function App({ sharedLinkHash = null }) {
   const clearAllSelections = useCallback(() => {
     const isAllMode = view?.project_filter === null;
     if (isAllMode) {
-      setAllSelectedKeys(new Set());
+      clearAllSelection();
     } else {
       setSelectedPhotos(new Set());
     }
-  }, [view?.project_filter, setAllSelectedKeys, setSelectedPhotos]);
+  }, [view?.project_filter, clearAllSelection, setSelectedPhotos]);
 
-  // Clear selections when project changes (project mode only)
+  // Clear project selections when switching to a different project view
   useEffect(() => {
-    const isAllMode = view?.project_filter === null;
-    if (!isAllMode && selectedPhotos.size > 0) {
-      setSelectedPhotos(new Set());
-    }
-  }, [selectedProject?.folder, selectedPhotos.size, setSelectedPhotos]);
+    if (view?.project_filter === null) return;
+    setSelectedPhotos(new Set());
+  }, [view?.project_filter, selectedProject?.folder, setSelectedPhotos]);
 
   const {
     viewerPhotos,
@@ -1194,8 +1192,10 @@ function App({ sharedLinkHash = null }) {
             currentLinkIds={currentPhotoLinks}
           />
 
+          <div className="flex-shrink-0" style={{ height: headerHeight || 0 }} aria-hidden="true" />
+
           {!filtersCollapsed && (
-            <div className="bg-white border-t-0 animate-slideDownFade">
+            <div id="filters-panel" className="bg-white border-t-0 animate-slideDownFade">
               <UniversalFilter
                 projectData={projectData}
                 filters={activeFilters}
@@ -1206,8 +1206,6 @@ function App({ sharedLinkHash = null }) {
               />
             </div>
           )}
-
-          <div className="flex-shrink-0" style={{ height: headerHeight || 0 }} aria-hidden="true" />
 
           {projects.length === 0 && (
             <div className="w-full px-4 sm:px-6 lg:px-8">

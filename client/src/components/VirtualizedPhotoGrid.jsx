@@ -64,6 +64,21 @@ const VirtualizedPhotoGrid = ({
   const visibleKeysRef = useRef(visibleKeys);
   useEffect(() => { visibleKeysRef.current = visibleKeys; }, [visibleKeys]);
 
+  const selectionIncludes = useCallback((collection, candidate) => {
+    if (!collection || candidate == null) return false;
+    if (typeof collection.has === 'function') {
+      try {
+        return collection.has(candidate);
+      } catch {
+        return false;
+      }
+    }
+    if (Array.isArray(collection)) {
+      return collection.includes(candidate);
+    }
+    return false;
+  }, []);
+
   // Observe container width (responsive)
   useEffect(() => {
     const el = containerRef.current;
@@ -581,9 +596,12 @@ const VirtualizedPhotoGrid = ({
                 >
                   {rowItems.map(({ idx, w, h }, j) => {
                     const photo = photos[idx];
-                    const isSelected = simplifiedMode
-                      ? selectedPhotos?.has(`${photo.project_folder || projectFolder || 'pf'}::${photo.filename}`)
-                      : selectedPhotos?.has(photo.filename);
+                    const selectionCandidates = Array.from(new Set([
+                      `${photo.project_folder || projectFolder || 'pf'}::${photo.filename}`,
+                      photo.filename,
+                      photo?.id != null ? String(photo.id) : null,
+                    ].filter(Boolean)));
+                    const isSelected = selectionCandidates.some((candidate) => selectionIncludes(selectedPhotos, candidate));
                     const marginRight = j < rowItems.length - 1 ? gap : 0;
                     const key = `${photo.project_folder || projectFolder || 'pf'}::${photo.filename || `${photo.id}-${idx}`}`;
                     const visibility = (photo.visibility || 'private').toLowerCase();
