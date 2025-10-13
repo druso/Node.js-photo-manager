@@ -53,5 +53,9 @@
     "max_attempts_default": 3,
     "priority_lane_slots": 1,
     "priority_threshold": 90
+  },
+  "folder_discovery": {
+    "interval_minutes": 5,
+    "enabled": true
   }
 }

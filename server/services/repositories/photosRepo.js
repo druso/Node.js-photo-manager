@@ -72,6 +72,7 @@ function updateVisibility(id, visibility) {
 // Delegate to photoFiltering module
 const listAll = photoFiltering.listAll;
 const listProjectFiltered = photoFiltering.listProjectFiltered;
+const listSharedLinkPhotos = photoFiltering.listSharedLinkPhotos;
 
 // ===== PAGINATION =====
 // Delegate to photoPagination module
@@ -109,6 +110,7 @@ module.exports = {
   // Filtering & listing
   listAll,
   listProjectFiltered,
+  listSharedLinkPhotos,
   
   // Pagination
   locateProjectPage,

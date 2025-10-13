@@ -10,7 +10,8 @@ This application helps photographers manage their photo collections by:
 - **Automatic processing** (thumbnail and preview generation)
 - **Tagging system** for easy organization and searching
 - **Keep/discard workflow** for managing RAW+JPG pairs
-- **Real-time progress tracking** for background
+- **Real-time progress tracking** for background tasks
+- **Public/private visibility** with shared links for curated galleries
 
 ## Technology
 
@@ -52,11 +53,14 @@ This application helps photographers manage their photo collections by:
       - `reloadConflictsIntoThisProject` — detect cross‑project conflicts and enqueue `image_move` into `:folder`
   - `POST /api/projects/:folder/process` — queue derivative generation
 - **Assets**
-  - `GET /api/projects/:folder/thumbnail/:filename` — thumbnail (public)
-  - `GET /api/projects/:folder/preview/:filename` — preview (public)
+  - `GET /api/projects/:folder/thumbnail/:filename` — thumbnail (public photos require `?hash=<hash>` param; admins bypass)
+  - `GET /api/projects/:folder/preview/:filename` — preview (public photos require `?hash=<hash>` param; admins bypass)
+  - `GET /api/projects/:folder/image/:filename` — full-res JPG (public photos require `?hash=<hash>` param; admins bypass)
+  - `GET /api/projects/image/:filename` — direct image metadata lookup (returns JSON with hash for public, 401 for private)
   - `POST /api/projects/:folder/download-url` — mint signed URL
   - `GET /api/projects/:folder/file/:type/:filename` — download original (token)
   - `GET /api/projects/:folder/files-zip/:filename` — download ZIP (token)
+  - **Hash Lifecycle**: Public photos auto-generate rotating hashes (32-char base64url, 28-day TTL by default). Daily scheduler rotates expiring hashes. Hashes cleared when visibility toggled to private.
 - **Realtime Jobs**
   - `GET /api/jobs/stream` — SSE stream
   - `GET /api/jobs` — list jobs (admin/dev)
@@ -100,6 +104,26 @@ This application helps photographers manage their photo collections by:
     - Body: `{ items: [{ photo_id: number }], dest_folder: string, dry_run?: boolean }`
     - Returns: `{ message: 'Move queued', job_count: number, job_ids: [...], destination_project: {...}, errors?: [...] }`
     - Status: 202 Accepted
+
+- **Shared Links (Public Galleries)**
+  - **Admin endpoints** (require authentication):
+    - `GET /api/public-links` — list all shared links with photo counts
+    - `POST /api/public-links` — create new shared link (rate limited: 10 req/5min)
+      - Body: `{ title: string, description?: string }`
+      - Returns: Link with auto-generated UUID and 32-char hashed key
+    - `GET /api/public-links/:id` — get link details
+    - `PATCH /api/public-links/:id` — update title/description
+    - `POST /api/public-links/:id/regenerate` — regenerate hashed key (rate limited: 5 req/5min)
+    - `DELETE /api/public-links/:id` — delete link (cascade removes photo associations)
+    - `POST /api/public-links/:id/photos` — associate photos with link
+      - Body: `{ photo_ids: number[] }`
+    - `DELETE /api/public-links/:id/photos/:photoId` — remove photo from link
+  - **Public endpoints** (no authentication):
+    - `GET /shared/api/:hashedKey` — get shared link with public photos (rate limited: 30 req/min)
+      - Query: `?limit&cursor&before_cursor` for pagination
+      - Returns: `{ id, title, description, photos: [...], total, next_cursor, prev_cursor }`
+      - Only returns photos with `visibility = 'public'`
+    - Frontend route: `/shared/:hashedKey` — public gallery page
 
 ## Quick Start
 

@@ -11,7 +11,7 @@ Your task is to conduct a comprehensive review of the entire codebase to identif
 
 ### Phase 1: Assessment and Documentation
 
-Begin by analyzing the project's documentation to establish a baseline understanding of its intended structure and functionality. Review the following files to identify any inconsistencies with the codebase:
+Begin by analyzing the project's documentation to establish a baseline understanding of its intended structure and functionality. Review the document files in project_docs to identify any inconsistencies with the codebase:
 
 * **`PROJECT_OVERVIEW.md`**
 * **`SCHEMA_DOCUMENTATION.md`**

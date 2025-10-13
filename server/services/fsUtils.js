@@ -4,9 +4,28 @@ const { getConfig } = require('./config');
 
 const PROJECT_ROOT = path.join(__dirname, '..', '..');
 const PROJECTS_DIR = path.join(PROJECT_ROOT, '.projects');
+const DEFAULT_USER = 'user_0';
+
+/**
+ * Get the absolute path to a project folder
+ * Centralized function to ensure consistent path resolution
+ * @param {string|object} projectOrFolder - Project object or folder name
+ * @returns {string} Absolute path to project folder
+ */
+function getProjectPath(projectOrFolder, user = DEFAULT_USER) {
+  const projectFolder = typeof projectOrFolder === 'string' 
+    ? projectOrFolder 
+    : projectOrFolder?.project_folder;
+  
+  if (!projectFolder) {
+    throw new Error('Invalid project or folder name');
+  }
+  
+  return path.join(PROJECTS_DIR, user, projectFolder);
+}
 
 function ensureProjectDirs(projectFolder) {
-  const projectPath = path.join(PROJECTS_DIR, projectFolder);
+  const projectPath = getProjectPath(projectFolder);
   fs.ensureDirSync(projectPath);
   fs.ensureDirSync(path.join(projectPath, '.thumb'));
   fs.ensureDirSync(path.join(projectPath, '.preview'));
@@ -80,16 +99,16 @@ function statMtimeSafe(fullPath) {
     const st = fs.statSync(fullPath);
     return st.mtime;
   } catch (_) {
-    return null;
   }
 }
 
 module.exports = {
   PROJECTS_DIR,
+  DEFAULT_USER,
+  getProjectPath,
   ensureProjectDirs,
   moveToTrash,
   removeDerivatives,
-  listAcceptedFiles,
   statMtimeSafe,
   buildAcceptPredicate,
 };

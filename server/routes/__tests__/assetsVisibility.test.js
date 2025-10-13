@@ -10,7 +10,7 @@ const { withAuthEnv, loadFresh } = require('../../services/auth/__tests__/testUt
 const { getDb } = require('../../services/db');
 const tokenService = require('../../services/auth/tokenService');
 
-const PROJECTS_ROOT = path.join(__dirname, '../../..', '.projects');
+const PROJECTS_ROOT = path.join(__dirname, '../../..', '.projects', 'user_0');
 const JPEG_BYTES = Buffer.from([0xff, 0xd8, 0xff, 0xd9]);
 
 const publicAssetHashes = loadRel('../../services/publicAssetHashes');
@@ -55,6 +55,7 @@ function seedVisibilityFixtures() {
   const projectFolder = `pvis_${Date.now()}`;
   const projectName = `Visibility Test ${projectFolder}`;
 
+  fs.ensureDirSync(path.join(__dirname, '../../..', '.projects'));
   fs.ensureDirSync(PROJECTS_ROOT);
 
   const projectInfo = db.prepare(`

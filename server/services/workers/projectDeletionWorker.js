@@ -1,10 +1,10 @@
 const path = require('path');
 const fs = require('fs-extra');
 const makeLogger = require('../../utils/logger2');
-const log = makeLogger('projectDeletion');
+const { getProjectPath } = require('../fsUtils');
 const projectsRepo = require('../repositories/projectsRepo');
-const photosRepo = require('../repositories/photosRepo');
 const jobsRepo = require('../repositories/jobsRepo');
+const log = makeLogger('projectDeletion');
 
 async function runProjectStopProcesses(job) {
   log.info('stop_processes_start', { job_id: job.id, project_id: job.project_id });
@@ -46,7 +46,7 @@ async function runProjectDeleteFiles(job) {
     log.warn('delete_files_not_canceled', { project_id: project.id, project_folder: project.project_folder, project_name: project.project_name || project.name, status: project.status });
     return;
   }
-  const projectPath = path.join(__dirname, '..', '..', '..', '.projects', project.project_folder);
+  const projectPath = getProjectPath(project);
   try {
     const exists = await fs.pathExists(projectPath);
     if (exists) {

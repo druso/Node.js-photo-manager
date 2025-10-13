@@ -4,19 +4,18 @@ const fs = require('fs-extra');
 const makeLogger = require('../utils/logger2');
 const log = makeLogger('keep');
 const { rateLimit } = require('../utils/rateLimit');
-
 const projectsRepo = require('../services/repositories/projectsRepo');
 const photosRepo = require('../services/repositories/photosRepo');
 const { emitJobUpdate } = require('../services/events');
 const { broadcastPendingChanges } = require('./sse');
+const { normalizeVisibilityParam } = require('../utils/visibility');
+const { PROJECTS_DIR, DEFAULT_USER, getProjectPath } = require('../services/fsUtils');
 
 const router = express.Router();
-// Ensure JSON parsing for this router
-router.use(express.json());
 
-const PROJECT_ROOT = path.join(__dirname, '..', '..');
-const PROJECTS_DIR = path.join(PROJECT_ROOT, '.projects');
-fs.ensureDirSync(PROJECTS_DIR);
+// Ensure user directory exists
+const userDir = path.join(PROJECTS_DIR, DEFAULT_USER);
+fs.ensureDirSync(userDir);
 
 // PUT /api/projects/:folder/keep
 // Body: { updates: [{ filename, keep_jpg, keep_raw }] }
@@ -30,7 +29,7 @@ router.put('/:folder/keep', rateLimit({ windowMs: 60 * 1000, max: 120 }), async 
       return res.status(400).json({ error: 'updates must be an array' });
     }
 
-    const projectPath = path.join(PROJECTS_DIR, folder);
+    const projectPath = getProjectPath(folder);
     if (!await fs.pathExists(projectPath)) {
       return res.status(404).json({ error: 'Project not found' });
     }

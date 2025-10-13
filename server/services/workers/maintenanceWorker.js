@@ -56,6 +56,53 @@ async function runManifestCheck(job) {
   const project = projectsRepo.getById(job.project_id);
   if (!project) throw new Error('Project not found');
   const projectPath = ensureProjectDirs(project.project_folder);
+  
+  // NEW: Verify manifest exists and is valid
+  const { readManifest, writeManifest } = require('../projectManifest');
+  const manifestPath = path.join(projectPath, '.project.yaml');
+  
+  if (!fs.existsSync(manifestPath)) {
+    log.warn('manifest_missing', { 
+      project_id: project.id, 
+      project_folder: project.project_folder 
+    });
+    
+    // Regenerate manifest
+    writeManifest(project.project_folder, {
+      name: project.project_name,
+      id: project.id,
+      created_at: project.created_at
+    });
+    
+    log.info('manifest_regenerated', {
+      project_id: project.id,
+      project_folder: project.project_folder
+    });
+  } else {
+    // Validate manifest matches DB
+    const manifest = readManifest(project.project_folder);
+    if (manifest && manifest.id !== project.id) {
+      log.warn('manifest_id_mismatch', {
+        project_id: project.id,
+        manifest_id: manifest.id,
+        project_folder: project.project_folder
+      });
+      
+      // Regenerate with correct ID
+      writeManifest(project.project_folder, {
+        name: project.project_name,
+        id: project.id,
+        created_at: project.created_at
+      });
+      
+      log.info('manifest_corrected', {
+        project_id: project.id,
+        project_folder: project.project_folder
+      });
+    }
+  }
+  
+  // Continue with existing photo availability checks
   const { jpg, raw, other } = splitExtSets();
   const page = photosRepo.listPaged({ project_id: project.id, limit: 100000 });
   let changed = 0;
@@ -96,6 +143,24 @@ async function runFolderCheck(job) {
   const project = projectsRepo.getById(job.project_id);
   if (!project) throw new Error('Project not found');
   const projectPath = ensureProjectDirs(project.project_folder);
+  
+  // NEW: Ensure manifest exists
+  const { readManifest, writeManifest } = require('../projectManifest');
+  const manifestPath = path.join(projectPath, '.project.yaml');
+  
+  if (!fs.existsSync(manifestPath)) {
+    writeManifest(project.project_folder, {
+      name: project.project_name,
+      id: project.id,
+      created_at: project.created_at
+    });
+    
+    log.info('manifest_created_by_folder_check', {
+      project_id: project.id,
+      project_folder: project.project_folder
+    });
+  }
+  
   const { isAccepted, acceptedExtensions } = buildAcceptPredicate();
   const { jpg, raw } = splitExtSets();
   const entries = await fs.readdir(projectPath);

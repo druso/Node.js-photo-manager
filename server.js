@@ -18,6 +18,8 @@ const errorHandler = require('./server/middleware/errorHandler');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
+const CLIENT_DIST_DIR = path.join(__dirname, 'client', 'dist');
+const CLIENT_ASSETS_DIR = path.join(CLIENT_DIST_DIR, 'assets');
 
 // Middleware
 // Correlate requests early
@@ -28,9 +30,9 @@ app.use(express.json());
 app.use(cookieParser());
 // Explicit static mounts to serve built frontend
 // Serve hashed assets with no fallthrough to avoid route interference
-app.use('/assets', express.static('public/assets', { fallthrough: false }));
+app.use('/assets', express.static(CLIENT_ASSETS_DIR, { fallthrough: false }));
 // Serve other static files (index.html, icons, manifest). Allow fallthrough to API routes.
-app.use(express.static('public'));
+app.use(express.static(CLIENT_DIST_DIR));
 
 // Apply CORS to API routes only (after static)
 // Production CORS allowlist (configurable via ALLOWED_ORIGINS comma-separated).
@@ -62,6 +64,7 @@ const authRouter = require('./server/routes/auth');
 app.use('/api/auth', authRouter);
 
 const authenticateAdmin = require('./server/middleware/authenticateAdmin');
+const { attachAdminToRequest } = authenticateAdmin;
 const PUBLIC_ASSET_PATH = /^\/projects\/[^/]+\/(thumbnail|preview|image)\//;
 const PUBLIC_HASH_METADATA_PATH = /^\/projects\/image\/[^/]+$/;
 app.use('/api', (req, res, next) => {
@@ -70,6 +73,19 @@ app.use('/api', (req, res, next) => {
   }
   if (req.method === 'GET' && (PUBLIC_ASSET_PATH.test(req.path) || PUBLIC_HASH_METADATA_PATH.test(req.path))) {
     return next();
+  }
+  if (req.method === 'GET' && req.path === '/photos') {
+    const publicLinkHash = typeof req.query?.public_link_id === 'string' && req.query.public_link_id.length > 0;
+    if (publicLinkHash) {
+      const attachResult = attachAdminToRequest(req);
+      if (attachResult?.attached) {
+        return next();
+      }
+      if (attachResult?.reason && attachResult.reason !== 'missing') {
+        return res.status(401).json({ error: 'Authentication required' });
+      }
+      return next();
+    }
   }
   return authenticateAdmin(req, res, next);
 });
@@ -96,9 +112,21 @@ app.use('/api', photosRouter);
 // Image-scoped actions (tags/keep, future process/move)
 const photosActionsRouter = require('./server/routes/photosActions');
 app.use('/api', photosActionsRouter);
+// Public links (admin endpoints - require authentication)
+const publicLinksRouter = require('./server/routes/publicLinks');
+app.use('/api/public-links', authenticateAdmin, publicLinksRouter);
+// Shared links (public endpoints - no authentication)
+const sharedLinksRouter = require('./server/routes/sharedLinks');
+app.use('/shared/api', sharedLinksRouter);
 // SSE (Server-Sent Events) for real-time updates
 const { router: sseRouter } = require('./server/routes/sse');
 app.use('/api/sse', sseRouter);
+
+// SPA fallback: send index.html for non-API routes so React Router can handle them
+app.get(/^\/(?!api\b|shared\/api\b|assets\b).*/, (req, res, next) => {
+  if (req.method !== 'GET') return next();
+  res.sendFile(path.join(CLIENT_DIST_DIR, 'index.html'));
+});
 
 // Centralized error handler (must be after routes)
 app.use(errorHandler);

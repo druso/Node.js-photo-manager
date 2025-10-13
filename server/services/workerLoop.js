@@ -6,6 +6,7 @@ const { runProjectScavenge } = require('./workers/projectScavengeWorker');
 const { runImageMoveFiles } = require('./workers/imageMoveWorker');
 const { runTrashMaintenance, runManifestCheck, runFolderCheck, runManifestCleaning } = require('./workers/maintenanceWorker');
 const { runFileRemoval } = require('./workers/fileRemovalWorker');
+const { runFolderDiscovery } = require('./workers/folderDiscoveryWorker');
 const { emitJobUpdate } = require('./events');
 const tasksOrchestrator = require('./tasksOrchestrator');
 const makeLogger = require('../utils/logger2');
@@ -157,6 +158,19 @@ async function handleJob(job, { heartbeatMs, maxAttemptsDefault, workerId }) {
     // Image move job type
     if (job.type === 'image_move_files') {
       await runImageMoveFiles(job);
+      stopHeartbeat();
+      jobsRepo.complete(job.id);
+      {
+        const p = job.payload_json || {};
+        emitJobUpdate({ id: job.id, status: 'completed', task_id: p.task_id, task_type: p.task_type, source: p.source });
+      }
+      try { tasksOrchestrator.onJobCompleted(job); } catch {}
+      return;
+    }
+
+    // Folder discovery job type
+    if (job.type === 'folder_discovery') {
+      await runFolderDiscovery(job);
       stopHeartbeat();
       jobsRepo.complete(job.id);
       {

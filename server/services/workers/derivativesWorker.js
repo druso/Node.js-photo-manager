@@ -1,6 +1,7 @@
 const path = require('path');
 const fs = require('fs-extra');
 const { getConfig } = require('../config');
+const { getProjectPath } = require('../fsUtils');
 const projectsRepo = require('../repositories/projectsRepo');
 const photosRepo = require('../repositories/photosRepo');
 const jobsRepo = require('../repositories/jobsRepo');
@@ -27,7 +28,7 @@ async function runGenerateDerivatives({ job, onProgress }) {
     // Project has been archived/canceled – do not process derivatives
     return;
   }
-  const projectPath = path.join(__dirname, '..', '..', '..', '.projects', project.project_folder);
+  const projectPath = getProjectPath(project);
 
   const cfg = getConfig();
   const thumbCfg = (cfg.processing && cfg.processing.thumbnail) || { maxDim: 200, quality: 80 };

@@ -160,8 +160,9 @@ function chunkPhotoIds(photoIds, chunkSize = 2000) {
  */
 function getProjectPath(project) {
   if (!project || !project.project_folder) return null;
-  const path = require('path');
-  return path.join(__dirname, '..', '..', '..', '..', '.projects', project.project_folder);
+  // Use centralized function from fsUtils
+  const { getProjectPath: getPath } = require('../../fsUtils');
+  return getPath(project);
 }
 
 module.exports = {

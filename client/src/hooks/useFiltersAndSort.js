@@ -13,6 +13,7 @@ export function useFiltersAndSort() {
     orientation: 'any', // any | landscape | portrait | square
     keepType: 'any', // any | none | jpg_only | raw_jpg
     visibility: 'any', // any | public | private
+    publicLinkId: null,
   });
   // Sorting state: key: 'date' | 'name' | other (for table)
   const [sortKey, setSortKey] = useState('date');
@@ -26,7 +27,8 @@ export function useFiltersAndSort() {
     (activeFilters.fileType && activeFilters.fileType !== 'any') ||
     (activeFilters.orientation && activeFilters.orientation !== 'any') ||
     (activeFilters.keepType && activeFilters.keepType !== 'any') ||
-    (activeFilters.visibility && activeFilters.visibility !== 'any')
+    (activeFilters.visibility && activeFilters.visibility !== 'any') ||
+    (activeFilters.publicLinkId && activeFilters.publicLinkId.length > 0)
   );
 
   // Helper function to reset all filters
@@ -38,6 +40,7 @@ export function useFiltersAndSort() {
       orientation: 'any',
       keepType: 'any',
       visibility: 'any',
+      publicLinkId: null,
     });
   };
 

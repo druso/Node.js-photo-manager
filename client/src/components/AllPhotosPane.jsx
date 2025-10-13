@@ -28,8 +28,8 @@ function AllPhotosPane({
       projectFolder={undefined}
       onPhotoSelect={onPhotoSelect}
       onToggleSelection={onToggleSelection}
-      selectedPhotos={selectedPhotos}
       onEnterSelectionMode={onEnterSelectionMode}
+      selectedPhotos={selectedPhotos}
       lazyLoadThreshold={lazyLoadThreshold}
       dwellMs={dwellMs}
       sortKey={sortKey}
@@ -41,7 +41,6 @@ function AllPhotosPane({
       onLoadMore={onLoadMore}
       hasPrev={hasPrev}
       onLoadPrev={onLoadPrev}
-      simplifiedMode={true}
       anchorIndex={anchorIndex}
       onAnchored={onAnchored}
     />

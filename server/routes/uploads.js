@@ -8,7 +8,6 @@ const multer = require('multer');
 const { buildAcceptPredicate } = require('../utils/acceptance');
 const jobsRepo = require('../services/repositories/jobsRepo');
 const tasksOrchestrator = require('../services/tasksOrchestrator');
-
 // SQLite repositories (migration from manifest.json)
 const projectsRepo = require('../services/repositories/projectsRepo');
 const photosRepo = require('../services/repositories/photosRepo');
@@ -18,9 +17,13 @@ const router = express.Router();
 router.use(express.json());
 
 // Resolve project directories relative to project root
-const PROJECT_ROOT = path.join(__dirname, '..', '..');
-const PROJECTS_DIR = path.join(PROJECT_ROOT, '.projects');
-fs.ensureDirSync(PROJECTS_DIR);
+const { baseFromParam, resolveOriginalPath } = require('../utils/assetPaths');
+const { getConfig } = require('../services/config');
+const { PROJECTS_DIR, DEFAULT_USER, getProjectPath } = require('../services/fsUtils');
+
+// Ensure user directory exists
+const userDir = path.join(PROJECTS_DIR, DEFAULT_USER);
+fs.ensureDirSync(userDir);
 
 // Multer setup using configurable accept list (single-source in server/utils/acceptance.js)
 const storage = multer.memoryStorage();
@@ -48,7 +51,7 @@ router.post('/:folder/process', async (req, res) => {
   try {
     const { folder } = req.params;
     const force = String(req.query.force || '').toLowerCase() === 'true';
-    const projectPath = path.join(PROJECTS_DIR, folder);
+    const projectPath = getProjectPath(folder);
     if (!await fs.pathExists(projectPath)) return res.status(404).json({ error: 'Project not found' });
     const project = projectsRepo.getByFolder(folder);
     if (!project) return res.status(404).json({ error: 'Project not found' });
@@ -76,7 +79,7 @@ router.post('/:folder/upload', async (req, res) => {
     }
     try {
       const { folder } = req.params;
-      const projectPath = path.join(PROJECTS_DIR, folder);
+      const projectPath = getProjectPath(folder);
       if (!await fs.pathExists(projectPath)) return res.status(404).json({ error: 'Project not found' });
       const project = projectsRepo.getByFolder(folder);
       if (!project) return res.status(404).json({ error: 'Project not found' });
@@ -311,7 +314,7 @@ router.post('/:folder/analyze-files', async (req, res) => {
     if (!Array.isArray(files)) {
       return res.status(400).json({ error: 'files must be an array of { name, type }' });
     }
-    const projectPath = path.join(PROJECTS_DIR, folder);
+    const projectPath = getProjectPath(folder);
     if (!await fs.pathExists(projectPath)) return res.status(404).json({ error: 'Project not found' });
     const project = projectsRepo.getByFolder(folder);
     if (!project) return res.status(404).json({ error: 'Project not found' });

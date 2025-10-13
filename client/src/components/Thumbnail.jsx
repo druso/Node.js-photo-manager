@@ -105,9 +105,18 @@ export default function Thumbnail({ photo, projectFolder, className = '', rounde
 
   // If a thumbnail exists, always show it (even for RAW files)
   if (hasThumbnail) {
+    // Don't render img if src is empty - prevents browser from downloading whole page
+    if (!src) {
+      return (
+        <div className={`${commonClasses} ${fitClass} flex items-center justify-center bg-gray-200`}>
+          <span className="text-xs text-gray-500">Loading...</span>
+        </div>
+      );
+    }
+    
     return (
       <img
-src={src}
+        src={src}
         alt={alt || photo.filename}
         className={`${commonClasses} ${fitClass}`}
         loading="lazy"

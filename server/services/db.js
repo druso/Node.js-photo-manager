@@ -8,7 +8,7 @@ const makeLogger = require('../utils/logger2');
 const log = makeLogger('db');
 
 // For now we use a single default user DB. Later this can be parameterized.
-const DB_DIR = path.join(__dirname, '../../.projects/db');
+const DB_DIR = path.join(__dirname, '../../.db');
 const DEFAULT_DB_FILE = path.join(DB_DIR, 'user_0.sqlite');
 
 let dbInstance = null;
@@ -19,6 +19,8 @@ function getDb() {
   const db = new Database(DEFAULT_DB_FILE);
   db.pragma('journal_mode = WAL'); // better concurrency for readers+writes
   db.pragma('foreign_keys = ON');
+  db.pragma('busy_timeout = 30000'); // Wait up to 30 seconds for locks
+  db.pragma('wal_autocheckpoint = 100'); // Checkpoint more frequently
 
   applySchema(db);
   dbInstance = db;
@@ -83,6 +85,29 @@ function applySchema(db) {
   );
 
   CREATE INDEX IF NOT EXISTS idx_photo_public_hashes_expires_at ON photo_public_hashes(expires_at);
+
+  CREATE TABLE IF NOT EXISTS public_links (
+    id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    description TEXT,
+    hashed_key TEXT NOT NULL UNIQUE,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_public_links_hashed_key ON public_links(hashed_key);
+
+  CREATE TABLE IF NOT EXISTS photo_public_links (
+    photo_id INTEGER NOT NULL,
+    public_link_id TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (photo_id, public_link_id),
+    FOREIGN KEY(photo_id) REFERENCES photos(id) ON DELETE CASCADE,
+    FOREIGN KEY(public_link_id) REFERENCES public_links(id) ON DELETE CASCADE
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_photo_public_links_photo_id ON photo_public_links(photo_id);
+  CREATE INDEX IF NOT EXISTS idx_photo_public_links_link_id ON photo_public_links(public_link_id);
 
   CREATE INDEX IF NOT EXISTS idx_photos_project_id ON photos(project_id);
   CREATE INDEX IF NOT EXISTS idx_photos_filename ON photos(project_id, filename);
@@ -175,6 +200,16 @@ function applySchema(db) {
     db.exec(`CREATE INDEX IF NOT EXISTS idx_photos_taken_created_id ON photos(date_time_original DESC, created_at DESC, id DESC)`);
   } catch (e) {
     try { log.warn('index_create_failed', { index: 'idx_photos_taken_created_id', error: e && e.message }); } catch {}
+  }
+
+  // Add manifest_version column for new folder management system
+  ensureColumn(db, 'projects', 'manifest_version', "ALTER TABLE projects ADD COLUMN manifest_version TEXT DEFAULT '1.0'");
+  
+  // Add index on project_folder for fast lookups during folder discovery
+  try {
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_projects_folder ON projects(project_folder)`);
+  } catch (e) {
+    try { log.warn('index_create_failed', { index: 'idx_projects_folder', error: e && e.message }); } catch {}
   }
 
 }

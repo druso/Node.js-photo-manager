@@ -15,24 +15,11 @@ const tasksOrchestrator = require('../services/tasksOrchestrator');
 const { isCanonicalProjectFolder } = require('../utils/projects');
 const { rateLimit } = require('../utils/rateLimit');
 const { getConfig } = require('../services/config');
-
-// Resolve project directories relative to project root
-// __dirname => <projectRoot>/server/routes
-// project root => path.join(__dirname, '..', '..')
-const PROJECT_ROOT = path.join(__dirname, '..', '..');
-const PROJECTS_DIR = path.join(PROJECT_ROOT, '.projects');
+const { ensureProjectDirs, PROJECTS_DIR, DEFAULT_USER } = require('../services/fsUtils');
 
 // Ensure base directories exist when router loads
-fs.ensureDirSync(PROJECTS_DIR);
-
-async function ensureProjectDirs(folderName) {
-  const projectPath = path.join(PROJECTS_DIR, folderName);
-  await fs.ensureDir(projectPath);
-  await fs.ensureDir(path.join(projectPath, '.thumb'));
-  await fs.ensureDir(path.join(projectPath, '.preview'));
-  await fs.ensureDir(path.join(projectPath, '.trash'));
-  return projectPath;
-}
+const userDir = path.join(PROJECTS_DIR, DEFAULT_USER);
+fs.ensureDirSync(userDir);
 
 // Apply rate limiting (60 requests per minute per IP) for locate endpoints
 const apiRateLimit = rateLimit({
@@ -61,7 +48,7 @@ router.get('/', async (req, res) => {
   }
 });
 
-// PATCH /api/projects/:id - rename display name only
+// PATCH /api/projects/:id - rename display name only (legacy - name only, no folder change)
 // Limit: 10 requests per 5 minutes per IP
 router.patch('/:id', rateLimit({ windowMs: 5 * 60 * 1000, max: 10 }), async (req, res) => {
   try {
@@ -90,6 +77,115 @@ router.patch('/:id', rateLimit({ windowMs: 5 * 60 * 1000, max: 10 }), async (req
   } catch (err) {
     log.error('project_rename_failed', { error: err && err.message, stack: err && err.stack, project_id: req.params && req.params.id });
     res.status(500).json({ error: 'Failed to rename project' });
+  }
+});
+
+// PATCH /api/projects/:folder/rename - rename project (updates both name and folder)
+// Limit: 10 requests per 5 minutes per IP
+router.patch('/:folder/rename', rateLimit({ windowMs: 5 * 60 * 1000, max: 10 }), async (req, res) => {
+  try {
+    const { folder } = req.params;
+    const { new_name } = req.body || {};
+    
+    if (!new_name || String(new_name).trim() === '') {
+      return res.status(400).json({ error: 'New project name is required' });
+    }
+    
+    // Get current project
+    const project = projectsRepo.getByFolder(folder);
+    if (!project || project.status === 'canceled') {
+      return res.status(404).json({ error: 'Project not found' });
+    }
+    
+    // Import utilities
+    const { generateUniqueFolderName } = require('../utils/projects');
+    const { writeManifest } = require('../services/projectManifest');
+    
+    // Generate new unique folder name
+    const newFolder = generateUniqueFolderName(new_name);
+    
+    // If folder name hasn't changed, just update the name
+    if (newFolder === folder) {
+      const updated = projectsRepo.updateName(project.id, String(new_name));
+      
+      // Update manifest with new name
+      writeManifest(folder, {
+        name: new_name,
+        id: project.id,
+        created_at: project.created_at
+      });
+      
+      return res.json({
+        message: 'Project name updated successfully',
+        project: {
+          id: updated.id,
+          name: updated.project_name,
+          folder: updated.project_folder,
+          created_at: updated.created_at,
+          updated_at: updated.updated_at,
+        }
+      });
+    }
+    
+    // Rename filesystem folder
+    const oldPath = path.join(PROJECTS_DIR, folder);
+    const newPath = path.join(PROJECTS_DIR, newFolder);
+    
+    if (!fs.existsSync(oldPath)) {
+      return res.status(404).json({ error: 'Project folder not found on filesystem' });
+    }
+    
+    if (fs.existsSync(newPath)) {
+      return res.status(409).json({ error: 'Target folder already exists' });
+    }
+    
+    // Perform atomic rename
+    await fs.rename(oldPath, newPath);
+    
+    // Update manifest in new location
+    writeManifest(newFolder, {
+      name: new_name,
+      id: project.id,
+      created_at: project.created_at
+    });
+    
+    // Update database
+    const updated = projectsRepo.updateFolderAndName(project.id, newFolder, new_name);
+    
+    // Emit SSE event for UI update
+    emitJobUpdate({
+      type: 'project_renamed',
+      old_folder: folder,
+      new_folder: newFolder,
+      new_name: new_name,
+      project_id: project.id
+    });
+    
+    log.info('project_renamed', {
+      project_id: project.id,
+      old_folder: folder,
+      new_folder: newFolder,
+      new_name: new_name
+    });
+    
+    return res.json({
+      message: 'Project renamed successfully',
+      project: {
+        id: updated.id,
+        name: updated.project_name,
+        folder: updated.project_folder,
+        created_at: updated.created_at,
+        updated_at: updated.updated_at,
+      },
+      old_folder: folder
+    });
+  } catch (err) {
+    log.error('project_rename_failed', { 
+      error: err && err.message, 
+      stack: err && err.stack, 
+      folder: req.params && req.params.folder 
+    });
+    res.status(500).json({ error: 'Failed to rename project: ' + (err.message || 'Unknown error') });
   }
 });
 
@@ -374,16 +470,16 @@ router.get('/:folder/photos', async (req, res) => {
   }
 });
 
-// DELETE /api/projects/:folder - delete project
+// DELETE /api/projects/:id - delete project
 // Limit: 10 requests per 5 minutes per IP
-router.delete('/:folder', rateLimit({ windowMs: 5 * 60 * 1000, max: 10 }), async (req, res) => {
+router.delete('/:id', rateLimit({ windowMs: 5 * 60 * 1000, max: 10 }), async (req, res) => {
   try {
-    const { folder } = req.params;
-    if (!isCanonicalProjectFolder(folder)) {
-      return res.status(400).json({ error: 'Invalid project folder format' });
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) {
+      return res.status(400).json({ error: 'Invalid project id' });
     }
-    const project = projectsRepo.getByFolder(folder);
-    if (!project) {
+    const project = projectsRepo.getById(id);
+    if (!project || project.status === 'canceled') {
       return res.status(404).json({ error: 'Project not found' });
     }
     // Soft-delete: mark as canceled (archived), cancel related jobs, enqueue deletion task
@@ -396,9 +492,9 @@ router.delete('/:folder', rateLimit({ windowMs: 5 * 60 * 1000, max: 10 }), async
       // If orchestration fails, still return archived so UI removes project; background cleanup might be missing.
       log.error('enqueue_project_delete_failed', { project_id: project.id, project_folder: project.project_folder, project_name: project.project_name, error: e && e.message, stack: e && e.stack });
     }
-    res.json({ message: 'Project deletion queued', folder });
+    res.json({ message: 'Project deletion queued', folder: project.project_folder });
   } catch (err) {
-    log.error('project_delete_failed', { error: err && err.message, stack: err && err.stack, project_folder: req.params && req.params.folder });
+    log.error('project_delete_failed', { error: err && err.message, stack: err && err.stack, project_id: req.params && req.params.id });
     res.status(500).json({ error: 'Failed to delete project' });
   }
 });

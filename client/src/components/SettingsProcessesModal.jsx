@@ -46,6 +46,13 @@ export default function SettingsProcessesModal({
             >
               Processes
             </button>
+            <button
+              className="px-3 py-1.5 rounded text-sm bg-gray-100 text-gray-800 hover:bg-gray-200"
+              onClick={() => window.location.href = '/sharedlinks'}
+              title="Manage shared links"
+            >
+              Shared Links
+            </button>
           </div>
           <div className="ml-auto flex items-center gap-2">
             <button

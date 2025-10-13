@@ -5,7 +5,7 @@ auto_execution_mode: 1
 
 ### Task: Weekly Security Review and Documentation Update
 
-Your role is to perform a weekly security assessment of the application and update the **`security.md`** document. This is a critical process to maintain the security posture of the application, ensuring that new developments are reviewed and that security principles are consistently upheld.
+Your role is to perform a weekly security assessment of the application and update the **`security.md`** document located in the project_docs folder. This is a critical process to maintain the security posture of the application, ensuring that new developments are reviewed and that security principles are consistently upheld.
 
 ---
 

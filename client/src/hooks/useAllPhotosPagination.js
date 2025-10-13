@@ -31,6 +31,7 @@ function buildFilterParams(activeFilters) {
   const visibility = typeof activeFilters?.visibility === 'string' && activeFilters.visibility !== 'any'
     ? activeFilters.visibility
     : undefined;
+  const publicLinkId = activeFilters?.publicLinkId;
   return {
     date_from: range.start || undefined,
     date_to: range.end || undefined,
@@ -39,6 +40,7 @@ function buildFilterParams(activeFilters) {
     orientation: activeFilters?.orientation && activeFilters.orientation !== 'any' ? activeFilters.orientation : undefined,
     tags: activeFilters?.tags,
     visibility,
+    public_link_id: typeof publicLinkId === 'string' && publicLinkId.length ? publicLinkId : undefined,
   };
 }
 
@@ -227,8 +229,15 @@ function usePhotoPagination({
   const loadInitial = useCallback(async () => {
     debugLog(`[UNIFIED] loadInitial called for mode: ${mode}`, { 
       isEnabled, 
-      projectFolder: mode === 'project' ? folderRef.current : 'N/A' 
+      projectFolder: mode === 'project' ? folderRef.current : 'N/A',
+      loadingLock: loadingLockRef.current
     });
+    
+    // Prevent concurrent loadInitial calls
+    if (loadingLockRef.current) {
+      debugLog('[UNIFIED] loadInitial already in progress, skipping');
+      return;
+    }
     
     if (!isEnabled) return;
     if (mode === 'project' && !folderRef.current) {
@@ -237,40 +246,45 @@ function usePhotoPagination({
       return;
     }
     
-    const filters = buildFilterParams(activeFilters);
-    const manager = ensureWindow();
-    debugLog('[UNIFIED] Calling manager.loadInitial');
-    
-    const page = await manager.loadInitial({ filters, sort: sortRef.current });
-    debugLog('[UNIFIED] manager.loadInitial returned:', { 
-      hasItems: Array.isArray(page?.items), 
-      itemCount: page?.items?.length || 0,
-      nextCursor: page?.nextCursor,
-      prevCursor: page?.prevCursor
-    });
-    
-    const snap = manager.snapshot();
-    seenKeysRef.current = new Set();
-    seenCursorsRef.current = new Set();
-    lastCursorRef.current = null;
-    
-    for (const it of page.items || []) {
-      seenKeysRef.current.add(makeItemKey(it));
+    loadingLockRef.current = true;
+    try {
+      const filters = buildFilterParams(activeFilters);
+      const manager = ensureWindow();
+      debugLog('[UNIFIED] Calling manager.loadInitial');
+      
+      const page = await manager.loadInitial({ filters, sort: sortRef.current });
+      debugLog('[UNIFIED] manager.loadInitial returned:', { 
+        hasItems: Array.isArray(page?.items), 
+        itemCount: page?.items?.length || 0,
+        nextCursor: page?.nextCursor,
+        prevCursor: page?.prevCursor
+      });
+      
+      const snap = manager.snapshot();
+      seenKeysRef.current = new Set();
+      seenCursorsRef.current = new Set();
+      lastCursorRef.current = null;
+      
+      for (const it of page.items || []) {
+        seenKeysRef.current.add(makeItemKey(it));
+      }
+      
+      const flattened = snap.pages.flatMap(p => p.items);
+      setPhotos(flattened);
+      setTotal(Number.isFinite(page?.total) ? Number(page.total) : flattened.length);
+      setUnfilteredTotal(Number.isFinite(page?.unfiltered_total) ? Number(page.unfiltered_total) : Number(page?.total) || flattened.length);
+      setNextCursor(snap.tailNextCursor);
+      setHasPrev(!!snap.headPrevCursor);
+      
+      debugLog('[UNIFIED] Updated state after loadInitial:', { 
+        photoCount: flattened.length,
+        nextCursor: snap.tailNextCursor,
+        hasPrev: !!snap.headPrevCursor,
+        total: Number.isFinite(page?.total) ? Number(page.total) : flattened.length
+      });
+    } finally {
+      loadingLockRef.current = false;
     }
-    
-    const flattened = snap.pages.flatMap(p => p.items);
-    setPhotos(flattened);
-    setTotal(Number.isFinite(page?.total) ? Number(page.total) : flattened.length);
-    setUnfilteredTotal(Number.isFinite(page?.unfiltered_total) ? Number(page.unfiltered_total) : Number(page?.total) || flattened.length);
-    setNextCursor(snap.tailNextCursor);
-    setHasPrev(!!snap.headPrevCursor);
-    
-    debugLog('[UNIFIED] Updated state after loadInitial:', { 
-      photoCount: flattened.length,
-      nextCursor: snap.tailNextCursor,
-      hasPrev: !!snap.headPrevCursor,
-      total: Number.isFinite(page?.total) ? Number(page.total) : flattened.length
-    });
   }, [activeFilters, ensureWindow, isEnabled, makeItemKey, mode, resetState]);
 
   const loadMore = useCallback(async () => {
@@ -466,6 +480,7 @@ function usePhotoPagination({
     activeFilters?.fileType, 
     activeFilters?.keepType, 
     activeFilters?.orientation, 
+    activeFilters?.publicLinkId,
     activeFilters?.tags, 
     loadInitial, 
     resetState,

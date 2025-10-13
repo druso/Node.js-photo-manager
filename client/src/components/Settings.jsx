@@ -181,14 +181,14 @@ const Settings = ({ project, config, onConfigUpdate, onProjectDelete, onProjectR
   };
 
   const handleDeleteProject = async () => {
-    if (!project?.name) { alert('No project selected'); return; }
+    if (!project?.name || !project?.id) { alert('No project selected'); return; }
     if (deleteConfirmText !== project.name) {
       alert(`Please type the project name "${project.name}" to confirm deletion.`);
       return;
     }
 
     try {
-      await deleteProject(project.folder);
+      await deleteProject(project.id);
       alert('Project deleted successfully.');
       onProjectDelete();
       setShowDeleteModal(false);

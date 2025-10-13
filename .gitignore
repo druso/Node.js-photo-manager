@@ -1,8 +1,11 @@
 # Local project data (do not commit large/binary project assets)
 .projects/
+.db/
 projects/
 uploads/
 thumbnails/
+#.windsurf
+tasks_archived
 
 # Node.js
 node_modules/

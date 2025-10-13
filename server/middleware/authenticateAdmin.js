@@ -20,20 +20,23 @@ function extractCookieToken(req) {
   return raw.trim() || null;
 }
 
-function authenticateAdmin(req, res, next) {
+function attachAdminToRequest(req) {
+  const headerToken = extractBearerToken(req);
+  const cookieToken = extractCookieToken(req);
+  const token = headerToken || cookieToken;
+
+  if (!token) {
+    return { attached: false, reason: 'missing' };
+  }
+
   try {
-    const headerToken = extractBearerToken(req);
-    const cookieToken = extractCookieToken(req);
-    const token = headerToken || cookieToken;
-    if (!token) {
-      res.status(401).json({ error: 'Authentication required' });
-      return;
-    }
     const decoded = verifyAccessToken(token);
     if (decoded.role !== 'admin') {
-      res.status(401).json({ error: 'Authentication required' });
-      return;
+      const error = new Error('admin role required');
+      error.code = 'FORBIDDEN_ROLE';
+      return { attached: false, reason: 'forbidden', error };
     }
+
     req.admin = {
       id: decoded.sub || 'admin',
       role: decoded.role,
@@ -42,20 +45,35 @@ function authenticateAdmin(req, res, next) {
       expiresAt: decoded.exp,
       claims: decoded,
     };
-    next();
+
+    return { attached: true };
   } catch (error) {
+    return { attached: false, reason: 'invalid', error };
+  }
+}
+
+function authenticateAdmin(req, res, next) {
+  const result = attachAdminToRequest(req);
+  if (result.attached) {
+    next();
+    return;
+  }
+
+  if (result.error) {
     try {
       log.warn('access_token_invalid', {
-        message: error?.message,
-        name: error?.name,
-        code: error?.code,
+        message: result.error?.message,
+        name: result.error?.name,
+        code: result.error?.code,
         path: req.originalUrl,
       });
     } catch (_) {
       // ignore logging failures
     }
-    res.status(401).json({ error: 'Authentication required' });
   }
+
+  res.status(401).json({ error: 'Authentication required' });
 }
 
 module.exports = authenticateAdmin;
+module.exports.attachAdminToRequest = attachAdminToRequest;

@@ -1,6 +1,8 @@
 const projectsRepo = require('./repositories/projectsRepo');
 const tasksOrchestrator = require('./tasksOrchestrator');
 const { rotateDueHashes } = require('./publicAssetHashes');
+const jobsRepo = require('./repositories/jobsRepo');
+const { getConfig } = require('./config');
 const makeLogger = require('../utils/logger2');
 const log = makeLogger('scheduler');
 
@@ -32,9 +34,32 @@ function startScavengeForArchivedProjects() {
   }
 }
 
+function startFolderDiscovery() {
+  try {
+    const job = jobsRepo.enqueue({
+      tenant_id: 1,
+      project_id: null,
+      type: 'folder_discovery',
+      priority: 95,
+      scope: 'global',
+      payload: { 
+        source: 'scheduler',
+        triggered_at: new Date().toISOString()
+      }
+    });
+    try { log.info('scheduled_folder_discovery', { job_id: job.id }); } catch {}
+  } catch (e) {
+    try { log.warn('folder_discovery_schedule_failed', { error: e && e.message }); } catch {}
+  }
+}
+
 function startScheduler() {
   // Clear any existing timers
   stopScheduler();
+
+  // Get folder discovery interval from config (default 5 minutes)
+  const config = getConfig();
+  const folderDiscoveryIntervalMs = (config.folder_discovery?.interval_minutes || 5) * 60 * 1000;
 
   // Schedule maintenance task. It includes trash + reconciliation steps per definitions.
   // Hourly kickoff covers trash and regular reconciliation without enqueuing standalone jobs.
@@ -42,6 +67,12 @@ function startScheduler() {
 
   // Schedule archived-project scavenging to clean leftover folders.
   schedule(() => startScavengeForArchivedProjects(), 60 * 60 * 1000);
+
+  // Schedule folder discovery to automatically detect new/renamed folders
+  schedule(() => startFolderDiscovery(), folderDiscoveryIntervalMs);
+  log.info('folder_discovery_scheduled', { 
+    interval_minutes: folderDiscoveryIntervalMs / 60000 
+  });
 
   // Schedule hash rotation daily to keep public asset tokens fresh
   schedule(() => {
@@ -59,6 +90,7 @@ function startScheduler() {
   setTimeout(() => {
     startMaintenanceForActiveProjects();
     startScavengeForArchivedProjects();
+    startFolderDiscovery(); // Run discovery on startup
     try {
       const rotated = rotateDueHashes();
       if (rotated > 0) {

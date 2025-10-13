@@ -29,6 +29,8 @@ The application is built around a few key concepts:
 *   **Unified Filtering System**: Both All Photos and Project views use identical server-side filtering with consistent "filtered of total" count displays. Filters include date ranges, file type availability (JPG/RAW), keep flags, photo orientation, tags, and the `visibility` flag (`public` vs `private`). This ensures scalable performance and consistent user experience across views while keeping public/private segregation consistent across listings, locate endpoints, and pagination.
 *   **Cross-Project Visibility Operations (2025-10-07)**: The actions menu now supports previewing and applying visibility changes across both Project and All Photos contexts using the unified selection model. Bulk updates route through `useVisibilityMutation()` (dry-run aware) and call `POST /api/photos/visibility`, clearing selections and refreshing caches optimistically. Anonymous access remains limited to public thumbnails/previews; all mutating operations still require an authenticated admin session.
 
+*   **Shared Links for Public Viewing (2025-10-08)**: Admins can create shareable links to curate public photo galleries. Each shared link has a unique 32-character hashed key (generated via `crypto.randomBytes`) and can contain multiple photos. Public users accessing `/shared/:hashedKey` see only photos marked as `visibility = 'public'` within that link. The system enforces strict visibility filtering at the query level and uses hash-based asset URLs for secure public access. Admin endpoints (`/api/public-links`) allow creating, updating, and managing links, while public endpoints (`/shared/api/:hashedKey`) provide read-only access with rate limiting (30 req/min). The PhotoViewer component supports a public mode (`isPublicView={true}`) that hides admin-only controls while preserving essential viewing features.
+
 *   **Worker Pipeline**: To ensure the UI remains responsive, time-consuming tasks like generating thumbnails and previews are handled asynchronously by a background worker pipeline. Each job now carries an explicit `scope` (`project`, `photo_set`, or `global`) so workers can operate on single projects, arbitrary photo collections, or system-wide maintenance alike. Shared helpers in `server/services/workers/shared/photoSetUtils.js` resolve job targets and group photo sets per project, keeping filesystem access safe for cross-project operations. The system includes specialized workers for image moves between projects, which update database records, move files and derivatives, and emit real-time SSE events to keep the UI synchronized. This system is designed to be extensible for future processing needs and the canonical job catalog lives in `JOBS_OVERVIEW.md`.
 
 *   **Database**: While photo files (originals, raws, previews) are stored on the file system, all their metadata—such as project association, tags, timestamps, and file paths—is stored in a central SQLite database. The frontend application relies on this database for fast access to photo information.
@@ -311,6 +313,14 @@ The main App.jsx component underwent extensive refactoring to improve maintainab
 *   **Signed URLs**: Secure access to photo assets with expiration
 *   **File Type Validation**: Centralized server-side filtering via `server/utils/acceptance.js` (config-driven)
 *   **CORS Protection**: Configurable cross-origin access controls
+*   **Public Asset Hashing (Option A)**: Public photos use rotating hashed URLs for secure anonymous access
+    - Hash generation: `crypto.randomBytes(24).toString('base64url')` creates 32-char URL-safe tokens
+    - Storage: `photo_public_hashes` table tracks hash, rotation timestamp, and expiry per photo
+    - Lifecycle: Hashes auto-generated when `visibility='public'`, cleared when toggled to private
+    - Rotation: Daily scheduler job (`server/services/scheduler.js`) rotates expiring hashes
+    - TTL: Configurable via `config.public_assets.hash_ttl_days` (default 28 days) or env `PUBLIC_HASH_TTL_DAYS`
+    - Validation: Asset routes require valid hash for anonymous requests; admins bypass hash check
+    - Direct access: `GET /api/projects/image/:filename` returns viewer metadata with fresh hashes for public photos
 *   **Rate Limiting**:
     - Destructive endpoints (project rename/delete, commit/revert): 10 requests per 5 minutes per IP
     - Asset endpoints (configurable via `config.json → rate_limits`, with env overrides):

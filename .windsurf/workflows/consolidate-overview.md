@@ -5,7 +5,7 @@ auto_execution_mode: 1
 
 ### Task: Project Overview Document Assessment and Improvement
 
-Your primary task is to act as a reviewer for the **`PROJECT_OVERVIEW.md`**,  **`SCHEMA_DOCUMENTATION.md`**, **`JOBS_OVERVIEW.md`**, **`README.md`**. document for our Node.js application. This is a recurring weekly task to ensure the document remains a concise, accurate, and up-to-date guide for new and existing developers. Your goal is to not only identify areas for improvement but also to actively implement the necessary changes.
+Your primary task is to act as a reviewer for the project documents stored in project_docs: **`PROJECT_OVERVIEW.md`**,  **`SCHEMA_DOCUMENTATION.md`**, **`JOBS_OVERVIEW.md`**, **`README.md`**. document for our Node.js application. This is a recurring weekly task to ensure the document remains a concise, accurate, and up-to-date guide for new and existing developers. Your goal is to not only identify areas for improvement but also to actively implement the necessary changes.
 There is also a SECURITY.md file, that is NOT for you to assess, it needs the security team
 
 ---

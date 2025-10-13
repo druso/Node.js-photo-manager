@@ -12,6 +12,31 @@ const INITIAL_STATE = {
 };
 
 const REFRESH_LEEWAY_MS = 30_000;
+const REFRESH_OPT_IN_KEY = 'auth.refresh.optin';
+
+const setRefreshOptIn = (enabled) => {
+  if (typeof window === 'undefined') return;
+  try {
+    const storage = window.localStorage;
+    if (!storage) return;
+    if (enabled) {
+      storage.setItem(REFRESH_OPT_IN_KEY, '1');
+    } else {
+      storage.removeItem(REFRESH_OPT_IN_KEY);
+    }
+  } catch {
+    // Ignore storage access errors (e.g., privacy mode)
+  }
+};
+
+const hasRefreshOptIn = () => {
+  if (typeof window === 'undefined') return false;
+  try {
+    return window.localStorage?.getItem(REFRESH_OPT_IN_KEY) === '1';
+  } catch {
+    return false;
+  }
+};
 
 export function AuthProvider({ children }) {
   const [state, setState] = useState(INITIAL_STATE);
@@ -53,12 +78,14 @@ export function AuthProvider({ children }) {
       isLoggingIn: false,
     }));
 
+    setRefreshOptIn(true);
     scheduleRefresh(expiresInSeconds);
   }, [scheduleRefresh]);
 
   const setUnauthenticatedState = useCallback((errorMessage = null) => {
     setAuthAccessToken(null);
     clearRefreshTimer();
+    setRefreshOptIn(false);
     setState({
       status: 'unauthenticated',
       admin: null,
@@ -123,6 +150,44 @@ export function AuthProvider({ children }) {
 
   useEffect(() => {
     mountedRef.current = true;
+    const isSharedRoute = (() => {
+      if (typeof window === 'undefined') return false;
+      try {
+        return (window.location?.pathname || '').startsWith('/shared/');
+      } catch {
+        return false;
+      }
+    })();
+
+    const refreshOptIn = hasRefreshOptIn();
+
+    if (isSharedRoute && !refreshOptIn) {
+      setRefreshOptIn(false);
+      setState(prev => (
+        prev.status === 'loading'
+          ? { status: 'unauthenticated', admin: null, error: prev.error, isLoggingIn: false }
+          : prev
+      ));
+      return () => {
+        mountedRef.current = false;
+        clearRefreshTimer();
+        setAuthAccessToken(null);
+      };
+    }
+
+    if (!refreshOptIn) {
+      setState(prev => (
+        prev.status === 'loading'
+          ? { status: 'unauthenticated', admin: null, error: prev.error, isLoggingIn: false }
+          : prev
+      ));
+      return () => {
+        mountedRef.current = false;
+        clearRefreshTimer();
+        setAuthAccessToken(null);
+      };
+    }
+
     (async () => {
       const data = await performRefresh();
       if (!mountedRef.current && data) {

@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Test Public Shared Link</title>
+  <style>
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 20px;
+      background: #f5f5f5;
+    }
+    .container {
+      background: white;
+      padding: 30px;
+      border-radius: 8px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    h1 {
+      color: #333;
+      margin-bottom: 10px;
+    }
+    .instructions {
+      background: #e3f2fd;
+      padding: 15px;
+      border-radius: 4px;
+      margin: 20px 0;
+      border-left: 4px solid #2196f3;
+    }
+    .instructions h3 {
+      margin-top: 0;
+      color: #1976d2;
+    }
+    .instructions ol {
+      margin: 10px 0;
+      padding-left: 20px;
+    }
+    .instructions li {
+      margin: 8px 0;
+    }
+    .input-group {
+      margin: 20px 0;
+    }
+    label {
+      display: block;
+      font-weight: 600;
+      margin-bottom: 8px;
+      color: #555;
+    }
+    input {
+      width: 100%;
+      padding: 10px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      font-size: 14px;
+      box-sizing: border-box;
+    }
+    button {
+      background: #2196f3;
+      color: white;
+      border: none;
+      padding: 12px 24px;
+      border-radius: 4px;
+      font-size: 16px;
+      cursor: pointer;
+      margin-top: 10px;
+    }
+    button:hover {
+      background: #1976d2;
+    }
+    .result {
+      margin-top: 30px;
+      padding: 20px;
+      background: #f9f9f9;
+      border-radius: 4px;
+      display: none;
+    }
+    .result.show {
+      display: block;
+    }
+    .error {
+      background: #ffebee;
+      color: #c62828;
+      padding: 15px;
+      border-radius: 4px;
+      margin: 20px 0;
+      border-left: 4px solid #c62828;
+    }
+    .success {
+      background: #e8f5e9;
+      color: #2e7d32;
+      padding: 15px;
+      border-radius: 4px;
+      margin: 20px 0;
+      border-left: 4px solid #2e7d32;
+    }
+    .photo-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      gap: 16px;
+      margin-top: 20px;
+    }
+    .photo-item {
+      aspect-ratio: 1;
+      background: #e0e0e0;
+      border-radius: 8px;
+      overflow: hidden;
+      cursor: pointer;
+      transition: opacity 0.2s;
+    }
+    .photo-item:hover {
+      opacity: 0.9;
+    }
+    .photo-item img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+    .info {
+      background: #fff3e0;
+      padding: 15px;
+      border-radius: 4px;
+      margin: 20px 0;
+      border-left: 4px solid #ff9800;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>🔗 Test Public Shared Link</h1>
+    <p>Use this page to test shared links without being logged in.</p>
+
+    <div class="instructions">
+      <h3>📋 How to Test:</h3>
+      <ol>
+        <li><strong>Create a shared link</strong> in the admin interface (while logged in)</li>
+        <li><strong>Add some public photos</strong> to the shared link</li>
+        <li><strong>Copy the hashed key</strong> from the shared link URL (the 32-character string)</li>
+        <li><strong>Paste it below</strong> and click "Load Shared Link"</li>
+        <li><strong>Open this page in an incognito/private window</strong> to test without authentication</li>
+      </ol>
+    </div>
+
+    <div class="input-group">
+      <label for="hashedKey">Shared Link Hashed Key (32 characters):</label>
+      <input 
+        type="text" 
+        id="hashedKey" 
+        placeholder="e.g., AbCdEfGhIjKlMnOpQrStUvWxYz012345"
+        pattern="[A-Za-z0-9_-]{32}"
+      />
+    </div>
+
+    <button onclick="loadSharedLink()">Load Shared Link</button>
+
+    <div id="result" class="result"></div>
+  </div>
+
+  <script>
+    async function loadSharedLink() {
+      const hashedKey = document.getElementById('hashedKey').value.trim();
+      const resultDiv = document.getElementById('result');
+      
+      // Validate key format
+      if (!hashedKey || hashedKey.length !== 32) {
+        resultDiv.className = 'result show error';
+        resultDiv.innerHTML = '❌ Invalid key format. Must be exactly 32 characters (letters, numbers, - and _ only).';
+        return;
+      }
+
+      resultDiv.className = 'result show';
+      resultDiv.innerHTML = '<p>⏳ Loading shared link...</p>';
+
+      try {
+        const response = await fetch(`/shared/api/${hashedKey}`);
+        
+        if (!response.ok) {
+          const error = await response.json().catch(() => ({ error: 'Unknown error' }));
+          resultDiv.className = 'result show error';
+          resultDiv.innerHTML = `
+            <h3>❌ Failed to Load</h3>
+            <p><strong>Status:</strong> ${response.status}</p>
+            <p><strong>Error:</strong> ${error.error || 'Unknown error'}</p>
+            ${response.status === 404 ? '<p>The shared link may not exist or the key is incorrect.</p>' : ''}
+          `;
+          return;
+        }
+
+        const data = await response.json();
+        
+        resultDiv.className = 'result show success';
+        resultDiv.innerHTML = `
+          <h3>✅ Shared Link Loaded Successfully!</h3>
+          <p><strong>Title:</strong> ${data.title}</p>
+          ${data.description ? `<p><strong>Description:</strong> ${data.description}</p>` : ''}
+          <p><strong>Photos:</strong> ${data.total} ${data.total === 1 ? 'photo' : 'photos'}</p>
+          
+          ${data.photos && data.photos.length > 0 ? `
+            <div class="info">
+              <strong>ℹ️ Testing Notes:</strong>
+              <ul>
+                <li>If you see images below, public access is working correctly!</li>
+                <li>If images fail to load, check that photos are marked as "public" (visibility = public)</li>
+                <li>Each photo must have a public_hash for anonymous access</li>
+              </ul>
+            </div>
+            <div class="photo-grid">
+              ${data.photos.map(photo => `
+                <div class="photo-item" onclick="window.open('/shared/${hashedKey}', '_blank')">
+                  <img 
+                    src="/api/projects/${photo.project_folder}/thumbnail/${photo.filename}${photo.public_hash ? `?hash=${photo.public_hash}` : ''}"
+                    alt="${photo.basename || photo.filename}"
+                    onerror="this.parentElement.innerHTML='<div style=\\'padding:20px;text-align:center;color:#999\\'>Failed to load</div>'"
+                  />
+                </div>
+              `).join('')}
+            </div>
+          ` : '<p>No photos in this shared link.</p>'}
+          
+          <div style="margin-top: 20px;">
+            <button onclick="window.open('/shared/${hashedKey}', '_blank')">
+              Open Full Shared Link Page
+            </button>
+          </div>
+        `;
+      } catch (err) {
+        resultDiv.className = 'result show error';
+        resultDiv.innerHTML = `
+          <h3>❌ Network Error</h3>
+          <p>${err.message}</p>
+          <p>Make sure the server is running and accessible.</p>
+        `;
+      }
+    }
+
+    // Allow Enter key to submit
+    document.getElementById('hashedKey').addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') {
+        loadSharedLink();
+      }
+    });
+  </script>
+</body>
+</html>

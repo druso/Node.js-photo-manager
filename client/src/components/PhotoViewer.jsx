@@ -20,6 +20,8 @@ const PhotoViewer = ({
   fromAllMode = false,
   onRequestMove,
   onShowInfoChange,
+  isPublicView = false,
+  onRequestShare, // NEW: callback to open share modal for single photo
 }) => {
   // All hooks are called at the top level, unconditionally.
   const [currentIndex, setCurrentIndex] = useState(startIndex);
@@ -794,8 +796,8 @@ const currentPhoto = photos[currentIndex];
           onClick={(e)=>e.stopPropagation()}
         >
           {/* Content moved inside conditional render */}
-          {/* Project context */}
-          {(currentPhoto?.project_folder || projectFolder) && (
+          {/* Project context - hide Move button in public view */}
+          {!isPublicView && (currentPhoto?.project_folder || projectFolder) && (
             <div className="mb-4">
               <h3 className="text-sm font-semibold mb-2">Project</h3>
               <div className="flex flex-col gap-2 bg-gray-50 rounded-md px-3 py-3 border">
@@ -821,10 +823,23 @@ const currentPhoto = photos[currentIndex];
               </div>
             </div>
           )}
+          {/* Shared Links section - hide in public view */}
+          {!isPublicView && (
+            <div className="mb-4">
+              <h3 className="text-sm font-semibold mb-2">Shared Links</h3>
+              <button
+                onClick={() => onRequestShare && onRequestShare(currentPhoto)}
+                className="w-full px-3 py-2 text-sm rounded-md shadow bg-white text-gray-900 hover:bg-gray-50 border border-gray-300"
+                title="Add or remove this photo from shared links"
+              >
+                Manage shared links
+              </button>
+            </div>
+          )}
           {/* Panel spacer top (after project block) */}
-          <div className="mb-2"></div>
-          {/* Keep actions expander (Plan) */}
-          <details className="mb-4" open>
+          {!isPublicView && <div className="mb-2"></div>}
+          {/* Keep actions expander (Plan) - hide in public view */}
+          {!isPublicView && <details className="mb-4" open>
             <summary className="cursor-pointer text-sm font-semibold select-none">Plan</summary>
             <div className="mt-2 grid grid-cols-3 gap-2">
               {(() => {
@@ -880,7 +895,7 @@ const currentPhoto = photos[currentIndex];
                 })()}
               </div>
             </div>
-          </details>
+          </details>}
           {/* Quality section */}
           {!isRawFile && (
             <div className="mb-4">
@@ -1003,9 +1018,9 @@ const currentPhoto = photos[currentIndex];
             </div>
           </details>
           
-          {/* Filename area: chip + clickable filename badge (toggle selection) */}
+          {/* Filename area: chip + clickable filename badge (toggle selection) - hide selection in public view */}
           <div className="absolute bottom-4 right-4 flex items-center gap-2" onMouseDown={(e)=>e.stopPropagation()} onClick={(e)=>e.stopPropagation()}>
-            {isSelected && (
+            {!isPublicView && isSelected && (
               <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-[10px] leading-none bg-blue-100 text-blue-800 border border-blue-200 select-none shadow">
                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-3.5 h-3.5">
                   <path fillRule="evenodd" d="M2.25 12a9.75 9.75 0 1119.5 0 9.75 9.75 0 01-19.5 0zm14.03-2.28a.75.75 0 10-1.06-1.06l-4.72 4.72-1.69-1.69a.75.75 0 10-1.06 1.06l2.22 2.22c.3.3.79.3 1.06 0l5.25-5.25z" clipRule="evenodd" />
@@ -1013,13 +1028,19 @@ const currentPhoto = photos[currentIndex];
                 Selected
               </span>
             )}
-            <button
-              className={`text-white bg-black/60 px-4 py-2 rounded-md text-xs select-none cursor-pointer border ${isSelected ? 'border-blue-500' : 'border-transparent'} shadow-lg`}
-              onClick={(e)=>{ e.stopPropagation(); if (onToggleSelect) onToggleSelect(currentPhoto); }}
-              title={isSelected ? 'Click to unselect' : 'Click to select'}
-            >
-              {currentPhoto.filename}
-            </button>
+            {isPublicView ? (
+              <div className="text-white bg-black/60 px-4 py-2 rounded-md text-xs select-none shadow-lg">
+                {currentPhoto.filename}
+              </div>
+            ) : (
+              <button
+                className={`text-white bg-black/60 px-4 py-2 rounded-md text-xs select-none cursor-pointer border ${isSelected ? 'border-blue-500' : 'border-transparent'} shadow-lg`}
+                onClick={(e)=>{ e.stopPropagation(); if (onToggleSelect) onToggleSelect(currentPhoto); }}
+                title={isSelected ? 'Click to unselect' : 'Click to select'}
+              >
+                {currentPhoto.filename}
+              </button>
+            )}
           </div>
         </div>
       )}

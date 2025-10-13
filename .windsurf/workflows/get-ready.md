@@ -7,7 +7,7 @@ auto_execution_mode: 1
 
 Welcome to the team! Before you dive into your first development task, it's essential to get a solid understanding of the application's architecture, key concepts, and overall structure.
 
-Your assignment is to thoroughly review the main project documentation.
+Your assignment is to thoroughly review the main project documentation that you can find in the folder project_docs
 
 **Instructions:**
 

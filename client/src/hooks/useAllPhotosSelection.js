@@ -1,33 +1,48 @@
 import { useCallback, useState } from 'react';
 
+/**
+ * Selection hook that stores full photo objects instead of just keys.
+ * This solves the critical bug where selections from other pages couldn't be resolved
+ * for bulk operations (visibility changes, tagging, etc.)
+ * 
+ * Uses Map<key, photo> internally for O(1) lookups while preserving full photo data.
+ */
 export default function useAllPhotosSelection() {
-  const [selectedKeys, setSelectedKeys] = useState(new Set());
+  // Store Map<key, photo> instead of Set<key>
+  const [selectedPhotos, setSelectedPhotos] = useState(new Map());
 
   const replaceSelection = useCallback((next) => {
-    setSelectedKeys(() => {
-      if (next instanceof Set) {
-        return new Set(next);
+    setSelectedPhotos(() => {
+      if (next instanceof Map) {
+        return new Map(next);
       }
       if (Array.isArray(next)) {
-        return new Set(next);
+        const map = new Map();
+        next.forEach(photo => {
+          if (photo) {
+            const key = `${photo.project_folder}::${photo.filename}`;
+            map.set(key, photo);
+          }
+        });
+        return map;
       }
-      return new Set();
+      return new Map();
     });
   }, []);
 
   const clearSelection = useCallback(() => {
-    setSelectedKeys(new Set());
+    setSelectedPhotos(new Map());
   }, []);
 
   const toggleSelection = useCallback((photo) => {
     if (!photo) return;
     const key = `${photo.project_folder}::${photo.filename}`;
-    setSelectedKeys(prev => {
-      const next = new Set(prev);
+    setSelectedPhotos(prev => {
+      const next = new Map(prev);
       if (next.has(key)) {
         next.delete(key);
       } else {
-        next.add(key);
+        next.set(key, photo); // Store full photo object
       }
       return next;
     });
@@ -35,15 +50,24 @@ export default function useAllPhotosSelection() {
 
   const selectAllFromPhotos = useCallback((photos) => {
     if (!Array.isArray(photos) || photos.length === 0) {
-      setSelectedKeys(new Set());
+      setSelectedPhotos(new Map());
       return;
     }
-    const keys = photos.map(p => `${p.project_folder}::${p.filename}`);
-    setSelectedKeys(new Set(keys));
+    const map = new Map();
+    photos.forEach(photo => {
+      const key = `${photo.project_folder}::${photo.filename}`;
+      map.set(key, photo);
+    });
+    setSelectedPhotos(map);
   }, []);
+
+  // Expose selectedKeys as a Set for backward compatibility with existing code
+  // that checks selectedKeys.has(key)
+  const selectedKeys = new Set(selectedPhotos.keys());
 
   return {
     selectedKeys,
+    selectedPhotos, // NEW: expose the Map for direct access to photo objects
     replaceSelection,
     clearSelection,
     toggleSelection,

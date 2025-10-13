@@ -1,7 +1,7 @@
 {
   "photo_grid": {
     "lazy_load_threshold": 100,
-    "page_size": 100,
+    "page_size": 250,
     "dwell_ms": 300
   },
   "keyboard_shortcuts": {
@@ -23,40 +23,27 @@
   "ui": {
     "default_view_mode": "grid",
     "filters_collapsed_default": true,
-    "remember_last_project": true,
-    "preview_mode_default": false
+    "remember_last_project": true
   },
   "uploader": {
     "accepted_files": {
-      "extensions": [
-        "jpg",
-        "jpeg",
-        "png",
-        "tif",
-        "tiff",
-        "raw",
-        "cr2",
-        "nef",
-        "arw",
-        "dng"
-      ],
-      "mime_prefixes": [
-        "image/"
-      ]
+      "extensions": ["jpg", "jpeg", "png", "tif", "tiff", "raw", "cr2", "nef", "arw", "dng"],
+      "mime_prefixes": ["image/"]
     }
-  },
-  "viewer": {
-    "preload_count": 1
   },
   "processing": {
-    "thumbnail": {
-      "maxDim": 800,
-      "quality": 30
-    },
-    "preview": {
-      "maxDim": 6000,
-      "quality": 30
-    }
+    "thumbnail": { "maxDim": 200, "quality": 80 },
+    "preview": { "maxDim": 6000, "quality": 80 }
+  },
+  "public_assets": {
+    "hash_rotation_days": 21,
+    "hash_ttl_days": 28
+  },
+  "rate_limits": {
+    "thumbnail_per_minute": 600,
+    "preview_per_minute": 600,
+    "image_per_minute": 120,
+    "zip_per_minute": 30
   },
   "pipeline": {
     "max_parallel_jobs": 2,
@@ -67,14 +54,8 @@
     "priority_lane_slots": 1,
     "priority_threshold": 90
   },
-  "rate_limits": {
-    "thumbnail_per_minute": 600,
-    "preview_per_minute": 600,
-    "image_per_minute": 120,
-    "zip_per_minute": 30
-  },
-  "public_assets": {
-    "hash_rotation_days": 21,
-    "hash_ttl_days": 28
+  "folder_discovery": {
+    "interval_minutes": 1,
+    "enabled": true
   }
 }

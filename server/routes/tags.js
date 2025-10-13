@@ -2,19 +2,18 @@ const express = require('express');
 const path = require('path');
 const fs = require('fs-extra');
 const makeLogger = require('../utils/logger2');
-const log = makeLogger('tags');
 const { rateLimit } = require('../utils/rateLimit');
-
+const { PROJECTS_DIR, DEFAULT_USER, getProjectPath } = require('../services/fsUtils');
 const projectsRepo = require('../services/repositories/projectsRepo');
 const photosRepo = require('../services/repositories/photosRepo');
-const tagsRepo = require('../services/repositories/tagsRepo');
 const photoTagsRepo = require('../services/repositories/photoTagsRepo');
 
 const router = express.Router();
+const log = makeLogger('tags');
 
-const PROJECT_ROOT = path.join(__dirname, '..', '..');
-const PROJECTS_DIR = path.join(PROJECT_ROOT, '.projects');
-fs.ensureDirSync(PROJECTS_DIR);
+// Ensure user directory exists
+const userDir = path.join(PROJECTS_DIR, DEFAULT_USER);
+fs.ensureDirSync(userDir);
 
 // PUT /api/projects/:folder/tags
 // Light limit to avoid spamming metadata updates
@@ -23,7 +22,7 @@ router.put('/:folder/tags', rateLimit({ windowMs: 60 * 1000, max: 60 }), async (
     const { folder } = req.params;
     const { updates } = req.body; // Array of { filename, tags }
 
-    const projectPath = path.join(PROJECTS_DIR, folder);
+    const projectPath = getProjectPath(folder);
     if (!await fs.pathExists(projectPath)) {
       return res.status(404).json({ error: 'Project not found' });
     }

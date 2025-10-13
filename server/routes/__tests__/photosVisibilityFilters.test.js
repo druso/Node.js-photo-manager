@@ -10,7 +10,7 @@ const { withAuthEnv, loadFresh } = require('../../services/auth/__tests__/testUt
 const { getDb } = require('../../services/db');
 const tokenService = require('../../services/auth/tokenService');
 
-const PROJECTS_ROOT = path.join(__dirname, '../../..', '.projects');
+const PROJECTS_ROOT = path.join(__dirname, '../../..', '.projects', 'user_0');
 
 function loadRel(modulePath) {
   return loadFresh(path.join(__dirname, modulePath));
@@ -41,6 +41,7 @@ function createTestApp() {
 }
 
 function seedProject() {
+  fs.ensureDirSync(path.join(__dirname, '../../..', '.projects'));
   fs.ensureDirSync(PROJECTS_ROOT);
   const db = getDb();
   const ts = new Date().toISOString();

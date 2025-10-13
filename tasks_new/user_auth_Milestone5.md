@@ -1,8 +1,22 @@
 # Milestone 5: Tying It Together — Linking UI
 
 - **Reference**: `tasks_new/user_auth.md`, `PROJECT_OVERVIEW.md`, `SCHEMA_DOCUMENTATION.md`
+- **Prerequisites**: Milestone 4 Phase 2 complete (shared link viewing + `/sharedlinks` management page)
 - **Purpose**: Integrate shared link management into core photo browsing experiences, enabling admins to assign/remove photos from shared links directly from grids and detail panels while keeping the UI seamless.
 - **Outcome**: Action menus and photo viewer offer "Share" flows mirroring `Move to…` UX, supporting multi-link selection, creation of new links, and auditing/removal—all backed by Milestones 3–4 APIs.
+
+## What Milestone 4 Phase 2 Delivered
+1. ✅ Admin can view shared links at `/shared/:hash` with all photos (public + private)
+2. ✅ Public users see only public photos in shared links
+3. ✅ Shared links work as a distinct view mode (alongside `/all` and `/project`)
+4. ✅ Management page at `/sharedlinks` to list/create/edit/delete links
+5. ✅ Backend APIs: `GET /api/public-links`, `POST /api/public-links`, `PATCH /api/public-links/:id`, `DELETE /api/public-links/:id`
+
+## What This Milestone Adds
+- **Photo → Link assignment**: Admins can add photos to shared links from anywhere in the app
+- **Batch operations**: Select multiple photos, assign to multiple links at once
+- **Audit functionality**: See which links a photo belongs to, remove from links
+- **Seamless UX**: Reuse existing modal patterns (like "Move to...") for consistency
 
 ## Step-by-step plan
 - **Step 1 — Action menu integration**
@@ -16,8 +30,10 @@
   - **Tests**: Manual QA toggling membership from viewer; React tests covering modal state transitions.
 
 - **Step 3 — API wiring for batch operations**
-  - Ensure front-end actions call batch endpoints (e.g., `POST /api/public-links/:id/photos` with array of photo IDs) and removal endpoint (e.g., `DELETE /api/public-links/:id/photos` with payload of photo IDs).
-  - Add client API helpers (`client/src/api/publicLinksApi.js`) handling optimistic updates and concurrency.
+  - Backend already has: `POST /api/public-links/:id/photos` (add photos) and `DELETE /api/public-links/:id/photos` (remove photos)
+  - Create client API helpers (`client/src/api/publicLinksApi.js`) wrapping these endpoints
+  - Support batch operations: assign multiple photos to multiple links in sequence
+  - Handle errors gracefully (partial success scenarios)
   - **Tests**: Supertest verifying batch endpoints; client tests mocking API responses.
 
 - **Step 4 — UI feedback & optimistic updates**

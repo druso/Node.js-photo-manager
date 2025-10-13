@@ -41,7 +41,9 @@ const VirtualizedPhotoGrid = ({
   const isLoadingMoreRef = useRef(false); // Flag to prevent multiple simultaneous load more operations
   const [paginationStatus, setPaginationStatus] = useState('idle'); // 'idle' | 'loading_prev' | 'loading_more'
   const statusRef = useRef('idle');
-  useEffect(() => { statusRef.current = paginationStatus; }, [paginationStatus]);
+  useEffect(() => { 
+    statusRef.current = paginationStatus; 
+  }, [paginationStatus]);
   const pendingLoadRef = useRef(null); // Store pending load operation details
   const restoreTriedRef = useRef(false);
   const saveThrottleRef = useRef(0);
@@ -140,7 +142,31 @@ const VirtualizedPhotoGrid = ({
     }
     
     // Execute the load operation
-    pendingLoad.loadFunction();
+    const loadPromise = pendingLoad.loadFunction();
+    
+    // Reset pagination status after load completes (or after a timeout as fallback)
+    // This ensures we don't get stuck in loading state
+    if (loadPromise && typeof loadPromise.then === 'function') {
+      loadPromise.finally(() => {
+        // If no scroll anchor was captured, reset status immediately
+        if (!scrollAnchorRef.current) {
+          setTimeout(() => {
+            setPaginationStatus('idle');
+            isLoadingPrevRef.current = false;
+            isLoadingMoreRef.current = false;
+          }, 100);
+        }
+      });
+    } else {
+      // If loadFunction doesn't return a promise, reset after a short delay
+      setTimeout(() => {
+        if (!scrollAnchorRef.current) {
+          setPaginationStatus('idle');
+          isLoadingPrevRef.current = false;
+          isLoadingMoreRef.current = false;
+        }
+      }, 500);
+    }
   }, [paginationStatus]);
 
   // Utility function to find visible photo element for scroll anchoring
@@ -300,7 +326,6 @@ const VirtualizedPhotoGrid = ({
     
     // Set flag to prevent new anchor captures during restoration
     isRestoringScrollRef.current = true;
-    console.log('[ScrollAnchor] Starting restoration, blocking new anchor captures');
     
     // Restore scroll position to keep the anchor element in the same viewport position
     const anchor = scrollAnchorRef.current;
@@ -326,7 +351,7 @@ const VirtualizedPhotoGrid = ({
     });
     
     return () => cancelAnimationFrame(rafId);
-  }, [photos.length, totalHeight]);
+  }, [photos, totalHeight]); // Changed from photos.length to photos to trigger on content changes
 
   // Session-based scroll restoration (only when no anchor is requested)
   useEffect(() => {

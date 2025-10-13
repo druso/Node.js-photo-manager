@@ -138,7 +138,8 @@ function buildAllPhotosWhere({
   before_cursor = null, 
   tags = null, 
   project_id = null,
-  visibility = null 
+  visibility = null,
+  public_link_id = null,
 } = {}) {
   const params = [];
   const where = [];
@@ -149,6 +150,11 @@ function buildAllPhotosWhere({
   if (project_id != null) {
     where.push(`p.id = ?`);
     params.push(project_id);
+  }
+
+  if (public_link_id) {
+    where.push(`ph.id IN (SELECT ppl.photo_id FROM photo_public_links ppl WHERE ppl.public_link_id = ?)`);
+    params.push(public_link_id);
   }
   
   // Date filters operate on taken_at

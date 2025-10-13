@@ -96,5 +96,13 @@
       { "type": "manifest_check", "priority": 95 },
       { "type": "generate_derivatives", "priority": 90 }
     ]
+  },
+  "folder_discovery": {
+    "label": "Folder Discovery",
+    "user_relevant": false,
+    "scope": "global",
+    "steps": [
+      { "type": "folder_discovery", "priority": 95 }
+    ]
   }
 }

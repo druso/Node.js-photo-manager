@@ -58,8 +58,25 @@ Tables and relationships:
   - Columns: `photo_id` (INTEGER PK/FK), `hash` (TEXT unique per row), `rotated_at` (TEXT ISO timestamp), `expires_at` (TEXT ISO timestamp)
   - Relationships: `photo_id` references `photos.id`; row deleted when a photo is made private or removed.
   - Generation: backend `publicAssetHashes.ensureHashForPhoto(photoId)` inserts/rotates hashes using defaults from `config.public_assets` (`hash_rotation_days` / `hash_ttl_days` with env overrides `PUBLIC_HASH_ROTATION_DAYS` / `PUBLIC_HASH_TTL_DAYS`).
+  - Hash format: 32-char URL-safe base64url string via `crypto.randomBytes(24).toString('base64url')`
   - Rotation: daily scheduler (`server/services/scheduler.js`) invokes `publicAssetHashes.rotateDueHashes()` to refresh hashes before expiry.
   - Consumption: asset routes validate the `hash` query parameter for anonymous requests; admins can stream assets without providing a hash.
+  - Direct access: `GET /api/projects/image/:filename` returns JSON with fresh hash for public photos, 401 for private.
+  - Frontend: `PublicHashContext` (`client/src/contexts/PublicHashContext.jsx`) manages hash lifecycle, caching fresh hashes and refreshing expired ones via `fetchPublicImageMetadata()`.
+
+- `public_links`
+  - Purpose: stores shared link metadata for public photo galleries
+  - Columns: `id` (TEXT PK, UUID), `title` (TEXT NOT NULL), `description` (TEXT), `hashed_key` (TEXT NOT NULL UNIQUE), `created_at` (TEXT), `updated_at` (TEXT)
+  - Indexes: `idx_public_links_hashed_key` on `hashed_key` for fast lookup
+  - Hashed key: 32-char URL-safe base64url string generated via `crypto.randomBytes(24).toString('base64url')`
+  - Access: `publicLinksRepo.getByHashedKey(hashedKey)` for public access, `publicLinksRepo.getById(id)` for admin operations
+
+- `photo_public_links`
+  - Purpose: many-to-many junction table linking photos to shared links
+  - Columns: `photo_id` (INTEGER FK), `public_link_id` (TEXT FK), `created_at` (TEXT), PK(photo_id, public_link_id)
+  - Relationships: `photo_id` references `photos.id`, `public_link_id` references `public_links.id`; cascade deletes on both
+  - Indexes: `idx_photo_public_links_photo_id`, `idx_photo_public_links_link_id` for efficient queries
+  - Access: `publicLinksRepo.associatePhotos(linkId, photoIds)`, `publicLinksRepo.removePhoto(linkId, photoId)`
 
 ### All Photos API (Cross-Project)
 
@@ -105,6 +122,55 @@ Data access is through repository modules:
   - `photoQueryBuilders.js` - SQL WHERE clause construction utilities
 - `server/services/repositories/tagsRepo.js`
 - `server/services/repositories/photoTagsRepo.js`
+- `server/services/repositories/publicLinksRepo.js` - Shared link management (create, update, delete, associate photos)
+
+### Shared Links API (2025-10-08 Update)
+
+**Admin Endpoints** (require authentication via `authenticateAdmin` middleware):
+
+- `GET /api/public-links` - List all shared links with photo counts
+- `POST /api/public-links` - Create new shared link (rate limited: 10 req/5min)
+  - Body: `{ title: string, description?: string }`
+  - Returns: Created link with auto-generated UUID and 32-char hashed key
+- `GET /api/public-links/:id` - Get specific shared link details
+- `PATCH /api/public-links/:id` - Update title/description
+  - Body: `{ title?: string, description?: string }`
+- `POST /api/public-links/:id/regenerate` - Regenerate hashed key (rate limited: 5 req/5min)
+  - Invalidates old key, generates new 32-char base64url key
+- `DELETE /api/public-links/:id` - Delete shared link (cascade removes photo associations)
+- `POST /api/public-links/:id/photos` - Associate photos with shared link
+  - Body: `{ photo_ids: number[] }`
+- `DELETE /api/public-links/:id/photos/:photoId` - Remove photo from shared link
+- `GET /api/public-links/:id/photos` - Get all photos in link (admin view, includes private)
+
+**Public Endpoints** (no authentication required):
+
+- `GET /shared/api/:hashedKey` - Get shared link with public photos (rate limited: 30 req/min)
+  - Query params: `limit`, `cursor`, `before_cursor` for pagination
+  - Returns: `{ id, title, description, photos: [...], total, next_cursor, prev_cursor }`
+  - Only returns photos with `visibility = 'public'`
+  - Photos include `public_hash` and `public_hash_expires_at` for asset URL construction
+  - 404 if link not found or invalid key format
+- `GET /shared/api/:hashedKey/photo/:photoId` - Get specific photo in shared link context
+  - Validates photo is public and belongs to the link
+  - 404 if photo not found, private, or not in link
+
+**Asset Access for Public Photos**:
+
+- Public asset routes require `?hash=<hash>` query parameter for anonymous requests:
+  - `GET /api/projects/:folder/thumbnail/:filename?hash=<hash>`
+  - `GET /api/projects/:folder/preview/:filename?hash=<hash>`
+  - `GET /api/projects/:folder/image/:filename?hash=<hash>`
+- Admin requests (valid JWT) bypass hash requirement
+- Invalid/missing/expired hash returns 401/404
+- Hash validation via `publicAssetHashes.validateHash(photoId, providedHash)`
+
+**Frontend Routes**:
+
+- `/shared/:hashedKey` - Public shared link page (rendered by `SharedLinkPage.jsx`)
+  - Simple routing in `client/src/index.js` matches 32-char base64url keys
+  - Displays photo grid with title/description
+  - Integrates `PhotoViewer` with `isPublicView={true}` to hide admin controls
 
 Notes:
 

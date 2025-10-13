@@ -7,6 +7,7 @@ const { rateLimit } = require('../utils/rateLimit');
 const photosRepo = require('../services/repositories/photosRepo');
 const photoTagsRepo = require('../services/repositories/photoTagsRepo');
 const projectsRepo = require('../services/repositories/projectsRepo');
+const publicLinksRepo = require('../services/repositories/publicLinksRepo');
 const { normalizeVisibilityParam } = require('../utils/visibility');
 
 // Apply rate limiting (60 requests per minute per IP)
@@ -30,7 +31,8 @@ router.get('/photos/locate-page', apiRateLimit, async (req, res) => {
     const { project_folder, filename, name, limit, date_from, date_to, file_type, keep_type, orientation } = q;
     const includeTags = q.include === 'tags';
     const tags = typeof q.tags === 'string' && q.tags.length ? q.tags : null; // comma-separated list of tags, with optional - prefix for exclusion
-    const { value: visibility, error: visibilityError } = normalizeVisibilityParam(q.visibility);
+    const public_link_hash = typeof q.public_link_id === 'string' && q.public_link_id.length ? q.public_link_id : null;
+    const { value: visibilityValue, error: visibilityError } = normalizeVisibilityParam(q.visibility);
     if (visibilityError) {
       return res.status(400).json({ error: visibilityError });
     }
@@ -38,6 +40,17 @@ router.get('/photos/locate-page', apiRateLimit, async (req, res) => {
     if (!filename && !name) {
       return res.status(400).json({ error: 'filename or name is required' });
     }
+
+    let publicLinkId = null;
+    if (public_link_hash) {
+      const link = publicLinksRepo.getByHashedKey(public_link_hash);
+      if (!link) {
+        return res.status(404).json({ error: 'Public link not found' });
+      }
+      publicLinkId = link.id;
+    }
+
+    const visibility = publicLinkId && !req.admin ? 'public' : visibilityValue;
 
     log.debug('locate_page_req', {
       project_folder,
@@ -203,12 +216,40 @@ router.get('/photos', async (req, res) => {
       projectId = project.id;
     }
 
-    const { value: visibilityFilter, error: visibilityError } = normalizeVisibilityParam(q.visibility);
+    const { value: visibilityValue, error: visibilityError } = normalizeVisibilityParam(q.visibility);
     if (visibilityError) {
       return res.status(400).json({ error: visibilityError });
     }
 
-    const page = photosRepo.listAll({ limit, cursor, before_cursor, date_from, date_to, file_type, keep_type, orientation, tags, project_id: projectId, visibility: visibilityFilter });
+    const public_link_hash = typeof q.public_link_id === 'string' && q.public_link_id.length ? q.public_link_id : null;
+    let publicLinkId = null;
+    if (public_link_hash) {
+      const link = publicLinksRepo.getByHashedKey(public_link_hash);
+      if (!link) {
+        return res.status(404).json({ error: 'Public link not found' });
+      }
+      publicLinkId = link.id;
+    }
+
+    let visibilityFilter = visibilityValue;
+    if (publicLinkId && !req.admin) {
+      visibilityFilter = 'public';
+    }
+
+    const page = photosRepo.listAll({
+      limit,
+      cursor,
+      before_cursor,
+      date_from,
+      date_to,
+      file_type,
+      keep_type,
+      orientation,
+      tags,
+      project_id: projectId,
+      visibility: visibilityFilter,
+      public_link_id: publicLinkId,
+    });
     const items = (page.items || []).map((r) => {
       let metadata;
       try {

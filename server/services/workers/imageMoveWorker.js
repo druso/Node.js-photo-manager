@@ -1,9 +1,9 @@
 const path = require('path');
 const fs = require('fs-extra');
-const jobsRepo = require('../repositories/jobsRepo');
 const projectsRepo = require('../repositories/projectsRepo');
 const photosRepo = require('../repositories/photosRepo');
-const { JPG_EXTS, RAW_EXTS } = require('../../utils/assetPaths');
+const jobsRepo = require('../repositories/jobsRepo');
+const { getProjectPath } = require('../fsUtils');
 const { emitJobUpdate } = require('../events');
 const makeLogger = require('../../utils/logger2');
 const log = makeLogger('imageMoveWorker');
@@ -24,7 +24,7 @@ async function runImageMoveFiles(job) {
   const payload = job.payload_json || {};
   const destProject = projectsRepo.getById(job.project_id);
   if (!destProject) throw new Error('Destination project not found');
-  const destPath = path.join(__dirname, '..', '..', '..', '.projects', destProject.project_folder);
+  const destPath = getProjectPath(destProject);
   log.info('move_job_started', { job_id: job.id, project_id: job.project_id, dest_folder: destProject.project_folder, items_total: (jobsRepo.listItems(job.id) || []).length });
 
   // Load or create items
@@ -54,7 +54,7 @@ async function runImageMoveFiles(job) {
       }
       const srcProject = projectsRepo.getById(srcEntry.project_id);
       if (!srcProject) throw new Error('Source project not found');
-      const srcPath = path.join(__dirname, '..', '..', '..', '.projects', srcProject.project_folder);
+      const srcPath = getProjectPath(srcProject);
 
       // Move originals (case-insensitive: try known exts)
       const tryExts = [];

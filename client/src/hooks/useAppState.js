@@ -33,6 +33,7 @@ export function useAppState() {
   const [showCreateProject, setShowCreateProject] = useState(false);
   const [showMoveModal, setShowMoveModal] = useState(false);
   const [showAllMoveModal, setShowAllMoveModal] = useState(false);
+  const [showShareModal, setShowShareModal] = useState(false);
 
   // View state
   const [viewMode, setViewMode] = useState('grid'); // 'grid' or 'table'
@@ -80,6 +81,12 @@ export function useAppState() {
       items: [],
       suggestedDestination: null
     }
+  });
+
+  // Shared link context (populated when viewing /shared/:hash)
+  const [sharedLinkInfo, setSharedLinkInfo] = useState({
+    title: null,
+    description: null,
   });
 
   // Task and notification state
@@ -160,7 +167,9 @@ export function useAppState() {
     setSelection,
     uiModals,
     setUiModals,
-    
+    sharedLinkInfo,
+    setSharedLinkInfo,
+
     // Project and data state
     projects,
     setProjects,
@@ -184,6 +193,8 @@ export function useAppState() {
     setShowMoveModal,
     showAllMoveModal,
     setShowAllMoveModal,
+    showShareModal,
+    setShowShareModal,
 
     // View state
     viewMode,

@@ -2,6 +2,8 @@ import React, { useEffect, useMemo, useRef, useState, useCallback, useLayoutEffe
 import { listProjects, getProject, createProject } from './api/projectsApi';
 import { locateProjectPhotosPage } from './api/photosApi';
 import { listAllPendingDeletes } from './api/allPhotosApi';
+import { getSharedLink } from './api/sharedLinksApi';
+import { getLinksForPhoto } from './api/sharedLinksManagementApi';
 import ProjectSelector from './components/ProjectSelector';
 import PhotoDisplay from './components/PhotoDisplay';
 import OperationsMenu from './components/OperationsMenu';
@@ -34,13 +36,14 @@ import BottomUploadBar from './components/BottomUploadBar';
 import GlobalDragDrop from './components/GlobalDragDrop';
 import './App.css';
 import { useToast } from './ui/toast/ToastContext';
-import MovePhotosModal from './components/MovePhotosModal';
+import UnifiedSelectionModal from './components/UnifiedSelectionModal';
 import ProjectSelectionModal from './components/ProjectSelectionModal';
 import UploadHandler from './components/UploadHandler';
 import { getSessionState, setSessionWindowY, setSessionMainY, getLastProject, setLastProject } from './utils/storage';
 import useAllPhotosPagination, { stripKnownExt, useProjectPagination } from './hooks/useAllPhotosPagination';
 import UploadButton from './components/UploadButton';
 import { PublicHashProvider } from './contexts/PublicHashContext';
+import { useAuth } from './auth/AuthContext';
 
 // New modular components
 import SortControls from './components/SortControls';
@@ -63,10 +66,12 @@ import { useEventHandlers } from './services/EventHandlersService';
 import { usePhotoFiltering } from './hooks/usePhotoFiltering';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 import { useProjectNavigation } from './services/ProjectNavigationService';
+import { useSharedLinkData } from './hooks/useSharedLinkData';
 
 const ALL_PROJECT_SENTINEL = Object.freeze({ folder: '__all__', name: 'All Photos' });
 
-function App() {
+function App({ sharedLinkHash = null }) {
+  const { isAuthenticated } = useAuth();
   // Get app state with unified view context
   const {
     // Unified view context
@@ -86,17 +91,18 @@ function App() {
     viewerList, setViewerList,
     viewMode, setViewMode,
     selectedPhotos, setSelectedPhotos,
-    selectionMode, setSelectionMode,
     filtersCollapsed, setFiltersCollapsed,
     sizeLevel, setSizeLevel,
     taskDefs, setTaskDefs,
     notifiedTasksRef,
     previousProjectRef,
+    sharedLinkInfo,
+    setSharedLinkInfo,
     showMoveModal, setShowMoveModal,
     showAllMoveModal, setShowAllMoveModal,
+    showShareModal, setShowShareModal,
     allPendingDeletes, setAllPendingDeletes,
     uiPrefsReady, setUiPrefsReady,
-    
     // Refs
     suppressUrlRef,
     pendingOpenRef,
@@ -120,7 +126,46 @@ function App() {
     toggleSort
   } = filtersAndSort;
 
-  // All Photos mode is determined by view.project_filter being null
+  // Shared link mode detection
+  const isSharedLinkMode = !!sharedLinkHash;
+  const isAllMode = view?.project_filter === null;
+
+  console.log('[App.jsx] Shared link state:', {
+    sharedLinkHash,
+    isSharedLinkMode,
+    isAuthenticated,
+  });
+
+  // Use shared link data hook when in shared mode
+  const {
+    photos: sharedPhotos,
+    metadata: sharedMetadata,
+    total: sharedTotal,
+    nextCursor: sharedNextCursor,
+    prevCursor: sharedPrevCursor,
+    loading: sharedLoading,
+    error: sharedError,
+    loadMore: sharedLoadMore,
+    loadPrev: sharedLoadPrev,
+    hasMore: sharedHasMore,
+    hasPrev: sharedHasPrev,
+  } = useSharedLinkData({
+    hashedKey: sharedLinkHash,
+    isAuthenticated,
+    limit: 100, // Match DEFAULT_LIMIT from useAllPhotosPagination
+  });
+
+  // Legacy compatibility: keep sharedLinkInfo for existing UI code
+  const sharedLinkMeta = isSharedLinkMode 
+    ? { title: sharedMetadata.title, description: sharedMetadata.description }
+    : (sharedLinkInfo ?? { title: null, description: null });
+
+  const gridHeading = isSharedLinkMode
+    ? (sharedLinkMeta.title || 'Shared Gallery')
+    : isAllMode
+      ? 'All Photos'
+      : (selectedProject?.name || selectedProject?.folder || '');
+  const gridDescription = isSharedLinkMode ? (sharedLinkMeta.description || null) : null;
 
   const stickyHeaderRef = useRef(null);
   const [headerHeight, setHeaderHeight] = useState(160);
@@ -128,6 +173,50 @@ function App() {
   const [showOptionsModal, setShowOptionsModal] = useState(false);
   const [optionsTab, setOptionsTab] = useState('settings');
   const [showCreateProject, setShowCreateProject] = useState(false);
+  
+  // Share modal: track current links for pre-selection and photos to share
+  const [currentPhotoLinks, setCurrentPhotoLinks] = useState([]);
+  const [photosToShare, setPhotosToShare] = useState([]);
+
+  const exitSharedLink = useCallback(() => {
+    try {
+      // Exit to shared links management page
+      window.location.assign('/sharedlinks');
+    } catch {
+      window.location.href = '/all';
+    }
+  }, [view?.project_filter]);
+
+  // Shared link mode: clear project selection and set view to "all" mode
+  useEffect(() => {
+    if (!isSharedLinkMode) {
+      // Clear legacy sharedLinkInfo when exiting shared mode
+      setSharedLinkInfo({ title: null, description: null });
+      return;
+    }
+
+    // In shared mode: clear project selection and set to "all" view
+    setShowOptionsModal(false);
+    updateProjectFilter(null);
+    setSelectedProject(null);
+    
+    // Clear filters to default values
+    setActiveFilters({
+      textSearch: '',
+      dateRange: { start: '', end: '' },
+      fileType: 'any',
+      orientation: 'any',
+      keepType: 'any',
+      visibility: 'any',
+      tags: undefined,
+    });
+    
+    // Update legacy sharedLinkInfo for backward compatibility
+    setSharedLinkInfo({
+      title: sharedMetadata.title || null,
+      description: sharedMetadata.description || null,
+    });
+  }, [isSharedLinkMode, sharedMetadata.title, sharedMetadata.description, updateProjectFilter, setSelectedProject, setActiveFilters, setSharedLinkInfo]);
 
   // Project pagination hook (must come before ProjectDataService)
   const {
@@ -150,7 +239,7 @@ function App() {
     projectFolder: selectedProject?.folder || view?.project_filter || null,
     sortKey,
     sortDir,
-    isEnabled: view?.project_filter !== null && (!!selectedProject?.folder || !!view?.project_filter),
+    isEnabled: !isSharedLinkMode && view?.project_filter !== null && (!!selectedProject?.folder || !!view?.project_filter),
   });
 
   // Project data service for business logic
@@ -166,6 +255,7 @@ function App() {
   // but avoid variable name conflicts with our unified view context
   const {
     selectedKeys: allSelectedKeys,
+    selectedPhotos: allSelectedPhotos, // NEW: Map<key, photo> with full objects
     replaceSelection: replaceAllSelection,
     clearSelection: clearAllSelection,
     toggleSelection: toggleAllSelection,
@@ -191,7 +281,7 @@ function App() {
     deepLinkRef: allDeepLinkRef,
   } = useAllPhotosPagination({
     activeFilters,
-    isEnabled: view?.project_filter === null,
+    isEnabled: !isSharedLinkMode && view?.project_filter === null,
     onResolveDeepLink: ({ index, items }) => {
       setViewerList(items);
       setViewerState({ isOpen: true, startIndex: index, fromAll: true });
@@ -543,7 +633,8 @@ function App() {
 
   // Event handlers service
   const {
-    handleProjectCreate,
+    handleProjectSelection,
+    handleSharedLinkHash,
     handlePhotosUploaded,
     handleTagsUpdated,
     handleKeepBulkUpdated,
@@ -669,8 +760,8 @@ function App() {
         onCompleted={handlePhotosUploaded}
       >
         <div className="bg-gray-50 overflow-x-hidden">
-          {/* Selection Mode Banner (M2) - Show only when selections exist */}
-          {(() => {
+          {/* Selection Mode Banner (M2) - Show only for authenticated users when selections exist */}
+          {isAuthenticated && (() => {
             const isAllMode = view?.project_filter === null;
             const count = isAllMode ? allSelectedKeys.size : selectedPhotos.size;
             return count > 0 ? (
@@ -693,67 +784,118 @@ function App() {
 
                   {/* Right Controls: Upload (+) and Options (hamburger) */}
                   <div className="flex items-center space-x-2">
-                    <UploadButton
-                      isAllMode={view?.project_filter === null}
-                      selectedProject={selectedProject}
-                      allProjectFolder={ALL_PROJECT_SENTINEL.folder}
-                      openProjectSelection={openProjectSelection}
-                    />
-                    {showOptionsModal ? (
+                    {/* Upload button - hide in shared mode and for public users */}
+                    {isAuthenticated && !isSharedLinkMode && (
+                      <UploadButton
+                        isAllMode={view?.project_filter === null}
+                        selectedProject={selectedProject}
+                        allProjectFolder={ALL_PROJECT_SENTINEL.folder}
+                        openProjectSelection={openProjectSelection}
+                      />
+                    )}
+                    
+                    {/* Operations menu - show for authenticated users (including shared mode) */}
+                    {isAuthenticated && (
+                      <>
+                        {showOptionsModal ? (
+                          <button
+                            onClick={() => setShowOptionsModal(false)}
+                            className="inline-flex items-center justify-center rounded-md border shadow-sm px-3 py-2 text-sm font-medium bg-white text-gray-700 hover:bg-gray-50 border-gray-300"
+                            title="Close options"
+                            aria-label="Close options"
+                          >
+                            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M6 6l12 12M18 6L6 18" />
+                            </svg>
+                          </button>
+                        ) : (
+                          <button
+                            onClick={() => {
+                              setOptionsTab('settings');
+                              setShowOptionsModal(true);
+                            }}
+                            className="inline-flex items-center justify-center rounded-md border shadow-sm px-3 py-2 text-sm font-medium bg-white text-gray-700 hover:bg-gray-50 border-gray-300"
+                            title="Options"
+                            aria-label="Options"
+                          >
+                            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+                            </svg>
+                          </button>
+                        )}
+                      </>
+                    )}
+                    
+                    {/* Public user menu - show login option */}
+                    {!isAuthenticated && (
                       <button
-                        onClick={() => setShowOptionsModal(false)}
-                        className="inline-flex items-center justify-center rounded-md border shadow-sm px-3 py-2 text-sm font-medium bg-white text-gray-700 hover:bg-gray-50 border-gray-300"
-                        title="Close options"
-                        aria-label="Close options"
-                      >
-                        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M6 6l12 12M18 6L6 18" />
-                        </svg>
-                      </button>
-                    ) : (
-                      <button
-                        onClick={() => {
-                          setOptionsTab('settings');
-                          setShowOptionsModal(true);
-                        }}
-                        className="inline-flex items-center justify-center rounded-md border shadow-sm px-3 py-2 text-sm font-medium bg-white text-gray-700 hover:bg-gray-50 border-gray-300"
-                        title="Options"
-                        aria-label="Options"
+                        onClick={() => window.location.href = '/'}
+                        className="inline-flex items-center gap-2 rounded-md border shadow-sm px-3 py-2 text-sm font-medium bg-white text-gray-700 hover:bg-gray-50 border-gray-300"
+                        title="Login"
+                        aria-label="Login"
                       >
                         <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 16l-4-4m0 0l4-4m-4 4h14m-5 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h7a3 3 0 013 3v1" />
                         </svg>
+                        Login
                       </button>
                     )}
                   </div>
                 </div>
+                {gridHeading ? (
+                  <div className="pb-3 space-y-1">
+                    <h2 className="text-lg font-semibold text-gray-900">{gridHeading}</h2>
+                    {gridDescription ? (
+                      <p className="text-sm text-gray-600 whitespace-pre-line">{gridDescription}</p>
+                    ) : null}
+                  </div>
+                ) : null}
               </div>
             </header>
 
             {/* Project selector bar (replaces tabs) */}
-            {(selectedProject || view?.project_filter === null) && (
+            {(selectedProject || view?.project_filter === null || isSharedLinkMode) && (
               <div className="bg-white border-b-0 relative">
                 <div className="w-full px-4 sm:px-6 lg:px-8">
                   <div className="flex items-center justify-between py-2">
-                    <div className="flex items-center gap-3">
-                      <label className="inline-flex items-center gap-2 text-sm text-gray-700 select-none">
-                        <input
-                          type="checkbox"
-                          checked={view?.project_filter === null}
-                          onChange={toggleAllMode}
-                          className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                          aria-label="Toggle All Photos mode"
+                    {isSharedLinkMode ? (
+                      <div className="flex items-center gap-3">
+                        <div className="text-sm text-gray-600">
+                          Viewing shared link: <span className="font-semibold text-gray-900">{sharedLinkMeta.title || sharedLinkHash}</span>
+                        </div>
+                        {isAuthenticated && (
+                          <button
+                            onClick={exitSharedLink}
+                            className="inline-flex items-center gap-1 rounded-md px-3 py-1.5 text-sm font-medium border border-gray-300 bg-white text-gray-700 hover:bg-gray-50"
+                          >
+                            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 19l-7-7 7-7" />
+                            </svg>
+                            Exit shared link
+                          </button>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-3">
+                        <label className="inline-flex items-center gap-2 text-sm text-gray-700 select-none">
+                          <input
+                            type="checkbox"
+                            checked={view?.project_filter === null}
+                            onChange={toggleAllMode}
+                            className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                            aria-label="Toggle All Photos mode"
+                          />
+                          <span>All</span>
+                        </label>
+                        <ProjectSelector
+                          projects={projects}
+                          selectedProject={view?.project_filter === null ? null : selectedProject}
+                          onProjectSelect={handleProjectSelect}
+                          disabled={view?.project_filter === null}
+                          placeholderLabel="All Projects"
                         />
-                        <span>All</span>
-                      </label>
-                      <ProjectSelector
-                        projects={projects}
-                        selectedProject={view?.project_filter === null ? null : selectedProject}
-                        onProjectSelect={handleProjectSelect}
-                        disabled={view?.project_filter === null}
-                        placeholderLabel="All Projects"
-                      />
-                    </div>
+                      </div>
+                    )}
                     <div className="flex items-center gap-2">
                       <button
                         onClick={() => setFiltersCollapsed(prev => !prev)}
@@ -855,10 +997,12 @@ function App() {
                             <OperationsMenu
                               allMode
                               allSelectedKeys={allSelectedKeys}
+                              allSelectedPhotos={allSelectedPhotos}
                               setAllSelectedKeys={replaceAllSelection}
                               config={config}
                               trigger="label"
                               onRequestMove={() => setShowAllMoveModal(true)}
+                              onRequestShare={() => setShowShareModal(true)}
                               selection={selection}
                               setSelection={setSelection}
                             />
@@ -875,6 +1019,7 @@ function App() {
                               config={config}
                               trigger="label"
                               onRequestMove={() => setShowMoveModal(true)}
+                              onRequestShare={() => setShowShareModal(true)}
                               selection={selection}
                               setSelection={setSelection}
                             />
@@ -897,7 +1042,8 @@ function App() {
             )}
           </div>
 
-          <MovePhotosModal
+          <UnifiedSelectionModal
+            mode="move"
             open={showMoveModal}
             onClose={(res) => {
               setShowMoveModal(false);
@@ -922,7 +1068,8 @@ function App() {
             })()}
           />
 
-          <MovePhotosModal
+          <UnifiedSelectionModal
+            mode="move"
             open={showAllMoveModal}
             onClose={(res) => {
               setShowAllMoveModal(false);
@@ -960,6 +1107,91 @@ function App() {
               }
               return acc;
             }, [])}
+          />
+
+          <UnifiedSelectionModal
+            mode="share"
+            open={showShareModal}
+            onClose={(res) => {
+              setShowShareModal(false);
+              setCurrentPhotoLinks([]);
+              const sharedPhotos = photosToShare;
+              setPhotosToShare([]);
+              
+              // Clear selections and update visibility after successful share
+              if (res && res.shared) {
+                // Update visibility to public for shared photos (optimistic update)
+                if (sharedPhotos.length > 0) {
+                  const photoIds = sharedPhotos.map(p => p.id).filter(Boolean);
+                  
+                  // Update All Photos view
+                  if (view?.project_filter === null) {
+                    mutateAllPhotos(prev => {
+                      if (!Array.isArray(prev)) return prev;
+                      return prev.map(photo => 
+                        photoIds.includes(photo.id) 
+                          ? { ...photo, visibility: 'public' }
+                          : photo
+                      );
+                    });
+                    appStateClearAllSelection();
+                  } else {
+                    // Update Project view
+                    setProjectData(prev => {
+                      if (!prev || !Array.isArray(prev.photos)) return prev;
+                      return {
+                        ...prev,
+                        photos: prev.photos.map(photo =>
+                          photoIds.includes(photo.id)
+                            ? { ...photo, visibility: 'public' }
+                            : photo
+                        )
+                      };
+                    });
+                    mutatePagedPhotos(prev => {
+                      if (!Array.isArray(prev)) return prev;
+                      return prev.map(photo =>
+                        photoIds.includes(photo.id)
+                          ? { ...photo, visibility: 'public' }
+                          : photo
+                      );
+                    });
+                    setSelectedPhotos(new Set());
+                  }
+                } else {
+                  // No photos to update, just clear selection
+                  if (view?.project_filter === null) {
+                    appStateClearAllSelection();
+                  } else {
+                    setSelectedPhotos(new Set());
+                  }
+                }
+              }
+            }}
+            selectedPhotos={photosToShare.length > 0 ? photosToShare : (() => {
+              // Collect selected photos with their IDs
+              if (view?.project_filter === null) {
+                // All Photos mode - use allSelectedPhotos Map
+                if (allSelectedPhotos && allSelectedPhotos instanceof Map) {
+                  return Array.from(allSelectedPhotos.values());
+                }
+                // Fallback to allPhotos list
+                const keys = Array.from(allSelectedKeys || []);
+                const photosList = Array.isArray(allPhotos) ? allPhotos : [];
+                const map = new Map(photosList.map(photo => {
+                  const key = `${photo.project_folder || ''}::${photo.filename}`;
+                  return [key, photo];
+                }));
+                return keys.map(k => map.get(k)).filter(Boolean);
+              } else {
+                // Project mode - use selectedPhotos Set
+                const photos = Array.isArray(projectData?.photos) ? projectData.photos : [];
+                return Array.from(selectedPhotos || [])
+                  .map(filename => photos.find(p => p.filename === filename))
+                  .filter(Boolean);
+              }
+            })()}
+            currentLinkIds={currentPhotoLinks}
           />
 
           {!filtersCollapsed && (
@@ -1010,8 +1242,10 @@ function App() {
             <div className="w-full px-4 sm:px-6 lg:px-8 pt-2 pb-8" ref={mainRef}>
               <MainContentRenderer
                 isAllMode={view?.project_filter === null}
+                isSharedMode={isSharedLinkMode}
                 selectedProject={selectedProject}
                 projects={projects}
+                config={config}
                 viewMode={viewMode}
                 sortKey={sortKey}
                 sortDir={sortDir}
@@ -1027,6 +1261,15 @@ function App() {
                 handleAllPhotoSelect={handleAllPhotoSelect}
                 handleToggleSelectionAll={handleToggleSelectionAll}
                 allSelectedKeys={allSelectedKeys}
+                sharedPhotos={sharedPhotos}
+                sharedTotal={sharedTotal}
+                sharedNextCursor={sharedNextCursor}
+                sharedPrevCursor={sharedPrevCursor}
+                sharedLoadMore={sharedLoadMore}
+                sharedLoadPrev={sharedLoadPrev}
+                sharedHasMore={sharedHasMore}
+                sharedHasPrev={sharedHasPrev}
+                sharedLoading={sharedLoading}
                 filteredProjectData={filteredProjectData}
                 sortedPagedPhotos={sortedPagedPhotos}
                 nextCursor={nextCursor}
@@ -1039,7 +1282,6 @@ function App() {
                 handleToggleSelection={handleToggleSelection}
                 selectedPhotos={selectedPhotos}
                 onEnterSelectionMode={enterSelectionMode}
-                config={config}
               />
             </div>
           )}
@@ -1081,6 +1323,36 @@ function App() {
                     setSelectedPhotos(new Set([filename]));
                     setShowMoveModal(true);
                   }
+                }}
+                onRequestShare={async (photo) => {
+                  if (!photo) return;
+                  
+                  // Load current links for this photo
+                  if (photo.id) {
+                    try {
+                      const links = await getLinksForPhoto(photo.id);
+                      setCurrentPhotoLinks((links || []).map(l => l.id));
+                    } catch (err) {
+                      console.error('Failed to load current links:', err);
+                      setCurrentPhotoLinks([]);
+                    }
+                  } else {
+                    setCurrentPhotoLinks([]);
+                  }
+                  
+                  // Set the photos to share directly
+                  setPhotosToShare([photo]);
+                  
+                  // Close viewer and open share modal with single photo
+                  setViewerState(prev => ({ ...(prev || {}), isOpen: false }));
+                  // Set selection to this single photo
+                  if (view?.project_filter === null || viewerState.fromAll) {
+                    const sourceFolder = photo?.project_folder || selectedProject?.folder || '';
+                    replaceAllSelection(new Set([`${sourceFolder}::${photo.filename}`]));
+                  } else {
+                    setSelectedPhotos(new Set([photo.filename]));
+                  }
+                  setShowShareModal(true);
                 }}
               />
             </ErrorBoundary>

@@ -11,6 +11,7 @@ const photosRepo = require('../services/repositories/photosRepo');
 const { ensureHashForPhoto, getActiveHash, validateHash } = require('../services/publicAssetHashes');
 const { baseFromParam, resolveOriginalPath, guessContentTypeFromExt } = require('../utils/assetPaths');
 const { getConfig } = require('../services/config');
+const { getProjectPath } = require('../services/fsUtils');
 const { verifyAccessToken } = require('../services/auth/tokenService');
 const { ACCESS_COOKIE_NAME } = require('../services/auth/authCookieService');
 
@@ -32,10 +33,6 @@ function readLimits() {
   }
 }
 const RATE_LIMITS = readLimits();
-
-// Paths
-const PROJECT_ROOT = path.join(__dirname, '..', '..');
-const PROJECTS_DIR = path.join(PROJECT_ROOT, '.projects');
 
 function getFileType(filename) {
   const ext = path.extname(filename).toLowerCase();
@@ -203,7 +200,8 @@ function setNegativeCacheHeaders(res) {
 router.get('/:folder/thumbnail/:filename', rateLimit({ windowMs: 60 * 1000, max: RATE_LIMITS.thumbnailPerMinute }), (req, res) => {
   const { folder, filename } = req.params;
   const base = baseFromParam(filename);
-  const thumbPath = path.join(PROJECTS_DIR, folder, '.thumb', `${base}.jpg`);
+  const projectPath = getProjectPath(folder);
+  const thumbPath = path.join(projectPath, '.thumb', `${base}.jpg`);
   log.info('thumb_request', { folder, filename, base, thumbPath, exists: fs.existsSync(thumbPath) });
   const admin = getOptionalAdmin(req);
   if (fs.existsSync(thumbPath)) {
@@ -278,7 +276,8 @@ router.get('/:folder/thumbnail/:filename', rateLimit({ windowMs: 60 * 1000, max:
 router.get('/:folder/preview/:filename', rateLimit({ windowMs: 60 * 1000, max: RATE_LIMITS.previewPerMinute }), (req, res) => {
   const { folder, filename } = req.params;
   const base = baseFromParam(filename);
-  const prevPath = path.join(PROJECTS_DIR, folder, '.preview', `${base}.jpg`);
+  const projectPath = getProjectPath(folder);
+  const prevPath = path.join(projectPath, '.preview', `${base}.jpg`);
   log.info('preview_request', { folder, filename, base, prevPath, exists: fs.existsSync(prevPath) });
   const admin = getOptionalAdmin(req);
   if (fs.existsSync(prevPath)) {
@@ -352,7 +351,7 @@ router.get('/:folder/preview/:filename', rateLimit({ windowMs: 60 * 1000, max: R
 router.get('/:folder/file/:type/:filename', rateLimit({ windowMs: 60 * 1000, max: RATE_LIMITS.imagePerMinute }), requireValidToken, async (req, res) => {
   const { folder, type } = req.params;
   const filenameParam = req.params.filename;
-  const projectPath = path.join(PROJECTS_DIR, folder);
+  const projectPath = getProjectPath(folder);
   try {
     const project = projectsRepo.getByFolder(folder);
     if (!project) return res.status(404).json({ error: 'Project not found' });
@@ -416,7 +415,7 @@ router.post('/:folder/download-url', express.json(), async (req, res) => {
       return res.status(400).json({ error: 'Invalid parameters' });
     }
     // Optionally verify the file exists in manifest for safety
-    const projectPath = path.join(PROJECTS_DIR, folder);
+    const projectPath = getProjectPath(folder);
     const project = projectsRepo.getByFolder(folder);
     if (!project) return res.status(404).json({ error: 'Project not found' });
     const base = baseFromParam(filename);
@@ -440,7 +439,7 @@ router.post('/:folder/download-url', express.json(), async (req, res) => {
 router.get('/:folder/files-zip/:filename', rateLimit({ windowMs: 60 * 1000, max: RATE_LIMITS.zipPerMinute }), requireValidToken, async (req, res) => {
   const { folder } = req.params;
   const filenameParam = req.params.filename;
-  const projectPath = path.join(PROJECTS_DIR, folder);
+  const projectPath = getProjectPath(folder);
   try {
     const project = projectsRepo.getByFolder(folder);
     if (!project) return res.status(404).json({ error: 'Project not found' });
@@ -480,7 +479,7 @@ router.get('/:folder/files-zip/:filename', rateLimit({ windowMs: 60 * 1000, max:
 // GET /api/projects/:folder/image/:filename  -> streams full-res JPG (no RAW here)
 router.get('/:folder/image/:filename', rateLimit({ windowMs: 60 * 1000, max: RATE_LIMITS.imagePerMinute }), async (req, res) => {
   const { folder, filename } = req.params;
-  const projectPath = path.join(PROJECTS_DIR, folder);
+  const projectPath = getProjectPath(folder);
 
   try {
     const project = projectsRepo.getByFolder(folder);

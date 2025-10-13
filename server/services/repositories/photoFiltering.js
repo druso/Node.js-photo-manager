@@ -143,6 +143,7 @@ function listAll({
   tags = null,
   project_id = null,
   visibility = null,
+  public_link_id = null,
 } = {}) {
   const db = getDb();
 
@@ -158,7 +159,7 @@ function listAll({
     tags_provided: !!tags,
   });
 
-  const baseFilters = { date_from, date_to, file_type, keep_type, orientation, tags, project_id, visibility };
+  const baseFilters = { date_from, date_to, file_type, keep_type, orientation, tags, project_id, visibility, public_link_id };
 
   const computeTotals = (baseWhereSql, baseParams) => {
     let filteredTotal = 0;
@@ -313,20 +314,27 @@ function listAll({
       nextCursor = createCursor(last.taken_at, last.id);
     }
 
-    const hasNewer = db
-      .prepare(`
-        SELECT 1
-        FROM photos ph
-        JOIN projects p ON p.id = ph.project_id
-        ${whereSql ? `${whereSql} AND` : 'WHERE'} (
-          (COALESCE(ph.date_time_original, ph.created_at) > ?) OR
-          (COALESCE(ph.date_time_original, ph.created_at) = ? AND ph.id > ?)
-        )
-        LIMIT 1
-      `)
-      .get(...params, first.taken_at, first.taken_at, first.id);
-    if (cursor || hasNewer) {
+    // Always set prevCursor when using forward pagination (cursor)
+    // This allows backward navigation after loading subsequent pages
+    if (cursor) {
       prevCursor = createCursor(first.taken_at, first.id);
+    } else {
+      // For initial load (no cursor), check if there are newer items
+      const hasNewer = db
+        .prepare(`
+          SELECT 1
+          FROM photos ph
+          JOIN projects p ON p.id = ph.project_id
+          ${whereSql ? `${whereSql} AND` : 'WHERE'} (
+            (COALESCE(ph.date_time_original, ph.created_at) > ?) OR
+            (COALESCE(ph.date_time_original, ph.created_at) = ? AND ph.id > ?)
+          )
+          LIMIT 1
+        `)
+        .get(...params, first.taken_at, first.taken_at, first.id);
+      if (hasNewer) {
+        prevCursor = createCursor(first.taken_at, first.id);
+      }
     }
 
     log.debug('listAll_page', {
@@ -346,7 +354,133 @@ function listAll({
   return { items, nextCursor, prevCursor, total: filteredTotal, unfiltered_total: unfilteredTotal };
 }
 
+/**
+ * List photos in a shared link
+ * @param {Object} options
+ * @param {number} options.public_link_id - Public link ID
+ * @param {number} [options.limit=100] - Page size limit
+ * @param {string} [options.cursor] - Forward pagination cursor
+ * @param {string} [options.before_cursor] - Backward pagination cursor
+ * @param {boolean} [options.includePrivate=false] - If true, include private photos (admin access); if false, only public photos
+ * @returns {Object} Result with items, cursors, and total
+ */
+function listSharedLinkPhotos({
+  public_link_id,
+  limit = 100,
+  cursor = null,
+  before_cursor = null,
+  includePrivate = false,
+}) {
+  const db = getDb();
+  
+  // Base WHERE clause: photos must be in the link
+  // For public access (includePrivate=false): also filter to public photos only
+  // For admin access (includePrivate=true): include all photos (public + private)
+  let whereSql = `
+    WHERE ppl.public_link_id = ?${includePrivate ? '' : ' AND ph.visibility = \'public\''}
+  `;
+  const params = [public_link_id];
+  
+  // Handle cursor-based pagination
+  if (cursor) {
+    const { timestamp, id } = parseCursor(cursor);
+    whereSql += ` AND (
+      (COALESCE(ph.date_time_original, ph.created_at) < ?) OR
+      (COALESCE(ph.date_time_original, ph.created_at) = ? AND ph.id < ?)
+    )`;
+    params.push(timestamp, timestamp, id);
+  } else if (before_cursor) {
+    const { timestamp, id } = parseCursor(before_cursor);
+    whereSql += ` AND (
+      (COALESCE(ph.date_time_original, ph.created_at) > ?) OR
+      (COALESCE(ph.date_time_original, ph.created_at) = ? AND ph.id > ?)
+    )`;
+    params.push(timestamp, timestamp, id);
+  }
+  
+  const orderSql = before_cursor
+    ? 'ORDER BY COALESCE(ph.date_time_original, ph.created_at) ASC, ph.id ASC'
+    : 'ORDER BY COALESCE(ph.date_time_original, ph.created_at) DESC, ph.id DESC';
+  
+  const rows = db
+    .prepare(`
+      SELECT 
+        ph.*, 
+        p.project_folder, 
+        p.project_name,
+        COALESCE(ph.date_time_original, ph.created_at) AS taken_at,
+        pph.hash AS public_hash, 
+        pph.expires_at AS public_hash_expires_at
+      FROM photos ph
+      INNER JOIN photo_public_links ppl ON ppl.photo_id = ph.id
+      INNER JOIN projects p ON p.id = ph.project_id
+      LEFT JOIN photo_public_hashes pph ON pph.photo_id = ph.id
+      ${whereSql}
+      ${orderSql}
+      LIMIT ?
+    `)
+    .all(...params, limit);
+  
+  let items = rows || [];
+  
+  // Reverse items if backward pagination
+  if (before_cursor && items.length) {
+    items = items.reverse();
+  }
+  
+  let nextCursor = null;
+  let prevCursor = null;
+  
+  if (items.length) {
+    const last = items[items.length - 1];
+    const first = items[0];
+    
+    // Check if there are more items after the last one
+    const hasMore = db
+      .prepare(`
+        SELECT 1
+        FROM photos ph
+        INNER JOIN photo_public_links ppl ON ppl.photo_id = ph.id
+        WHERE ppl.public_link_id = ?${includePrivate ? '' : ' AND ph.visibility = \'public\''}
+        AND (
+          (COALESCE(ph.date_time_original, ph.created_at) < ?) OR
+          (COALESCE(ph.date_time_original, ph.created_at) = ? AND ph.id < ?)
+        )
+        LIMIT 1
+      `)
+      .get(
+        public_link_id,
+        last.date_time_original || last.created_at,
+        last.date_time_original || last.created_at,
+        last.id,
+      );
+    
+    if (hasMore) {
+      nextCursor = createCursor(last.date_time_original || last.created_at, last.id);
+    }
+    
+    if (cursor || before_cursor) {
+      prevCursor = createCursor(first.date_time_original || first.created_at, first.id);
+    }
+  }
+  
+  // Get total count of photos in this link (filtered by visibility if not includePrivate)
+  const totalResult = db
+    .prepare(`
+      SELECT COUNT(*) as c
+      FROM photos ph
+      INNER JOIN photo_public_links ppl ON ppl.photo_id = ph.id
+      WHERE ppl.public_link_id = ?${includePrivate ? '' : ' AND ph.visibility = \'public\''}
+    `)
+    .get(public_link_id);
+  
+  const total = totalResult ? totalResult.c : 0;
+  
+  return { items, nextCursor, prevCursor, total };
+}
+
 module.exports = {
   listProjectFiltered,
-  listAll
+  listAll,
+  listSharedLinkPhotos,
 };

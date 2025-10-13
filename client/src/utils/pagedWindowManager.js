@@ -153,6 +153,12 @@ export default class PagedWindowManager {
           prevCursor: page.prevCursor || null,
           nextCursor: page.nextCursor || null,
           total: res?.total ?? undefined,
+          itemCount: page.items?.length || 0,
+        });
+        devLog('[PagedWindow] Current state before adding page:', {
+          pagesCount: this.pages.length,
+          headPrevCursor: this.headPrevCursor,
+          tailNextCursor: this.tailNextCursor,
         });
         
         // Update total regardless (if provided)
@@ -162,9 +168,27 @@ export default class PagedWindowManager {
           // Only advance cursor when we have actual items to avoid skipping valid pages
           this.tailNextCursor = page.nextCursor || null;
           page._pageNumber = this.nextPageNumber++;
+          devLog('[PagedWindow] Page object before push:', {
+            pageNumber: page._pageNumber,
+            itemCount: page.items.length,
+            prevCursor: page.prevCursor,
+            nextCursor: page.nextCursor,
+          });
           this.pages.push(page);
           devLog(`[PagedWindow] Loaded page ${page._pageNumber}. Current window: [${this.#getCurrentWindowNumbers().join(', ')}]`);
+          devLog('[PagedWindow] Before eviction:', {
+            pagesCount: this.pages.length,
+            headPrevCursor: this.headPrevCursor,
+            maxPages: this.maxPages,
+            allPagesPrevCursors: this.pages.map(p => ({ num: p._pageNumber, prev: p.prevCursor ? 'has' : 'null' })),
+          });
           this.#evictIfNeeded('head');
+          devLog('[PagedWindow] After eviction:', {
+            pagesCount: this.pages.length,
+            headPrevCursor: this.headPrevCursor,
+            firstPagePrevCursor: this.pages[0]?.prevCursor || null,
+            allPagesPrevCursors: this.pages.map(p => ({ num: p._pageNumber, prev: p.prevCursor ? 'has' : 'null' })),
+          });
           return page;
         } else {
           // If page is empty (after deduplication), advance cursor but don't give up yet
@@ -321,10 +345,17 @@ export default class PagedWindowManager {
       if (side === 'head') {
         const removed = this.pages.shift();
         this.#forgetKeys(removed);
-        // Update headPrevCursor to the remaining first page's prev
-        this.headPrevCursor = this.pages.length ? (this.pages[0].prevCursor || null) : null;
+        // When evicting from head during forward pagination, we need to maintain
+        // the ability to paginate backward. The new first page's prevCursor points
+        // to the page we just evicted, which we CAN reload via backward pagination.
+        // So we should use the new first page's prevCursor as our headPrevCursor.
+        if (this.pages.length > 0) {
+          this.headPrevCursor = this.pages[0].prevCursor || null;
+          devLog('[PagedWindow] Updated headPrevCursor from new first page:', this.headPrevCursor);
+        } else {
+          this.headPrevCursor = null;
+        }
         devLog(`[PagedWindow] Evicted page ${removed?._pageNumber || '?'}. Current window: [${this.#getCurrentWindowNumbers().join(', ')}]`);
-        // TEMP DEBUG: headPrevCursor after head eviction
         devLog('[PagedWindow] After head eviction, headPrevCursor =', this.headPrevCursor);
       } else {
         const removed = this.pages.pop();

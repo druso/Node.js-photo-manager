@@ -1,0 +1,373 @@
+{{ ... }}
+
+This document summarizes the background job pipeline, supported job types, their options, and how key flows (file upload, maintenance, and change commit) use them.
+
+- Source files: `server/services/workerLoop.js`, `server/services/scheduler.js`, `server/routes/uploads.js`, `server/routes/maintenance.js`, `server/routes/jobs.js`
+- Repositories: `server/services/repositories/jobsRepo.js`
+-## Related Docs
+
+- `PROJECT_OVERVIEW.md`
+- `SCHEMA_DOCUMENTATION.md`
+- `tasks_progress/jobs_refactoring_progress.md`
+- `tasks_progress/job_refactoring/REFACTORING_SUMMARY.md`
+- `tasks_progress/job_refactoring_backwardcompatibilitynotes.md` (removal timeline for `scope` column)
+
+## Pipeline Architecture (brief)
+
+- **Two-lane worker pipeline** controlled by config:
+  - Priority lane: jobs with `priority >= pipeline.priority_threshold`.
+  - Normal Lane: all other jobs.
+- **Key knobs** (see `config.json` / `config.default.json`):
+  - `pipeline.max_parallel_jobs`, `pipeline.priority_lane_slots`, `pipeline.priority_threshold`
+  - `pipeline.heartbeat_ms`, `pipeline.stale_seconds`, `pipeline.max_attempts_default`
+{{ ... }}
+- **Heartbeats, crash recovery** (`requeueStaleRunning`), and bounded retries (`max_attempts_default`) are handled by `workerLoop.js`.
+- **Live job updates via SSE**: `GET /api/jobs/stream` (also item-level events from `derivativesWorker`).
+- **Scope-aware jobs** (as of 2025-10-01): Jobs can operate on arbitrary photo subsets across projects via `scope` field.
+- **Shared helpers**: Worker modules rely on `server/services/workers/shared/photoSetUtils.js` to resolve job targets, group items by project, and enforce payload limits consistently across `project`, `photo_set`, and `global` scopes.
+
+Image Move emits realtime events too. See "Image Move" below for `item_removed` and `item_moved` semantics.
+
+## Job Scopes (Cross-Project Support)
+
+Jobs now support three scope types via the `scope` column:
+
+- **`project`**: Traditional single-project operations (requires `project_id`)
+- **`photo_set`**: Arbitrary photo collections, potentially spanning multiple projects (optional `project_id`)
+- **`global`**: System-wide operations like maintenance (no `project_id`)
+
+**Payload Limits**: All jobs enforce a maximum of 2,000 items per job. Larger batches are automatically chunked or rejected at the API level.
+
+**Backward Compatibility**: Existing jobs without `scope` default to `'project'`. See `tasks_progress/job_refactoring_backwardcompatibilitynotes.md` for removal timeline.
+
+## At a glance: Tasks → Steps and Priorities
+
+### Project-Scoped Tasks
+
+- **Upload Post-Process** (`upload_postprocess` task, scope: `project`)
+  - `upload_postprocess` (90)
+  - `manifest_check` (95)
+  - `folder_check` (95)
+
+- **Commit Changes** (`change_commit` task, scope: `project`)
+  - `file_removal` (100)
+  - `manifest_check` (95)
+  - `folder_check` (95)
+  - `manifest_cleaning` (80)
+
+- **Maintenance** (`maintenance` task, scope: `project`)
+  - `trash_maintenance` (100)
+  - `manifest_check` (95)
+  - `folder_check` (95)
+  - `manifest_cleaning` (80)
+
+- **Project Scavenge** (`project_scavenge` task, scope: `project`)
+  - `project_scavenge` (100)
+
+- **Delete Project** (`project_delete` task, scope: `project`)
+  - `project_stop_processes` (100)
+  - `project_delete_files` (100)
+  - `project_cleanup_db` (95)
+
+### Cross-Project Tasks (New)
+
+- **Commit Changes (All Photos)** (`change_commit_all` task, scope: `photo_set`)
+  - `file_removal` (100)
+  - `manifest_check` (95)
+  - `folder_check` (95)
+  - `manifest_cleaning` (80)
+
+- **Image Move** (`image_move` task, scope: `photo_set`)
+  - `image_move_files` (95)
+  - `manifest_check` (95)
+  - `generate_derivatives` (90)
+
+### Global Tasks (New)
+
+- **Global Maintenance** (`maintenance_global` task, scope: `global`)
+  - `trash_maintenance` (100)
+  - `manifest_check` (95)
+  - `folder_check` (95)
+  - `manifest_cleaning` (80)
+
+- **Global Project Scavenge** (`project_scavenge_global` task, scope: `global`)
+  - `project_scavenge` (100)
+
+**Lane behavior**: Steps with priority ≥ `pipeline.priority_threshold` run in the priority lane and can preempt normal jobs. See `config.json` for `pipeline.priority_lane_slots` and `pipeline.priority_threshold`.
+
+## Supported Job Types
+
+- generate_derivatives
+  - Worker: `derivativesWorker` via `runGenerateDerivatives()`.
+  - Purpose: generate thumbnails and previews for photos (whole project or subset).
+  - Payload options: `{ force?: boolean, filenames?: string[] }`.
+
+- upload_postprocess
+  - Worker: `derivativesWorker` via `runGenerateDerivatives()` (itemized execution).
+  - Purpose: post-upload processing for the uploaded filenames.
+  - Payload options: `{ filenames: string[] }` (enqueued with items via `enqueueWithItems`).
+
+- trash_maintenance
+  - Worker: `maintenanceWorker.runTrashMaintenance()`.
+  - Purpose: periodic cleanup and management of `.trash` directory.
+  - Payload: none currently.
+
+- manifest_check
+  - Worker: `maintenanceWorker.runManifestCheck()`.
+  - Purpose: reconcile database vs on-disk state (idempotent).
+  - Payload: none currently.
+
+- folder_check
+  - Worker: `maintenanceWorker.runFolderCheck()`.
+  - Purpose: scan project folder for untracked files; enqueue `upload_postprocess` for accepted ones; move others to `.trash`.
+  - Payload: none currently.
+
+- manifest_cleaning
+  - Worker: `maintenanceWorker.runManifestCleaning()`.
+  - Purpose: periodic manifest/database cleanup.
+  - Payload: none currently.
+
+- project_scavenge
+  - Worker: `projectScavengeWorker.runProjectScavenge()`.
+  - Purpose: remove leftover on-disk folders for archived projects (`projects.status='canceled'`). Best‑effort, idempotent.
+  - Payload: none currently.
+
+- file_removal
+  - Worker: `fileRemovalWorker.runFileRemoval()`.
+  - Purpose: remove non-kept originals/derivatives during Commit; idempotent and safe to retry.
+  - Payload: carries task metadata (bound to the `change_commit` task step).
+
+- project_stop_processes (part of task `project_delete`)
+  - Worker: `projectDeletionWorker.stopProcesses()`.
+  - Purpose: mark project archived (`status='canceled'`) and cancel queued/running jobs for the project.
+  - Payload: carries task metadata.
+
+- project_delete_files (part of task `project_delete`)
+  - Worker: `projectDeletionWorker.deleteFiles()`.
+  - Purpose: delete the on-disk project folder `.projects/user_0/<project_folder>/`.
+  - Payload: carries task metadata.
+
+- project_cleanup_db (part of task `project_delete`)
+  - Worker: `projectDeletionWorker.cleanupDb()`.
+  - Purpose: cleanup related DB rows (`photos`, `tags`, `photo_tags`), retain `projects` row (archived).
+  - Payload: carries task metadata.
+
+- image_move_files (part of task `image_move`)
+  - Worker: `imageMoveWorker.runImageMoveFiles()`.
+  - Purpose: move one or more images (and their derivatives when present) from their current project to a destination project.
+  - Trigger: orchestrated via the `image_move` task. Typical sources:
+    - Client operations menu (move selected photos)
+    - Uploads route when `reloadConflictsIntoThisProject=true` detects cross‑project conflicts (see `server/routes/uploads.js`).
+  - Payload options: provided via task orchestration; individual filenames are carried as `job_items` with `filename` set to the base name (no extension).
+
+Note: Any other `type` will be failed by `workerLoop` as Unknown.
+
+## How Flows Use the Jobs
+
+### File Upload
+
+- Endpoint: `POST /api/projects/:folder/upload`
+- Behavior:
+  - Saves incoming files to the project directory.
+  - Updates/creates corresponding photo records in SQLite (availability, metadata, keep flags aligned to availability on upload).
+  - Enqueues `upload_postprocess` with items for each uploaded basename:
+    - `jobsRepo.enqueueWithItems({ type: 'upload_postprocess', payload: { filenames }, items: filenames.map(fn => ({ filename: fn })) })`.
+- Optional processing entry point: `POST /api/projects/:folder/process`
+  - Enqueues `generate_derivatives` (whole project or subset via `payload.filenames`; `payload.force` supported).
+- UI/Realtime:
+  - SSE item-level updates emitted as `{ type: 'item', project_folder, filename, thumbnail_status, preview_status, updated_at }` while processing proceeds.
+
+### Folder Discovery
+
+- Purpose: Automatically discover and index project folders that appear in `.projects/user_0/` (e.g., from external file copies, backups, or manual organization).
+- Trigger: Scheduled hourly via `server/services/scheduler.js` → `folder_discovery` job.
+- Worker: `server/services/workers/folderDiscoveryWorker.js`
+
+**Discovery Process**:
+
+1. **Scan for folders** in `.projects/user_0/` (skips hidden folders and `db`)
+2. **Check for manifest** (`.project.yaml`):
+   - **Has manifest**: Reconcile with database
+     - If project ID exists: update folder name if renamed
+     - If project ID missing but name exists: check for shared images
+       - **Shared images found**: Merge projects (move files, extract metadata, enqueue `upload_postprocess`)
+       - **No shared images**: Create separate project
+   - **No manifest**: Create new project from folder
+3. **Extract metadata** from discovered images:
+   - Uses `exif-parser` to extract EXIF data (date, orientation, camera info)
+   - Same process as upload flow for consistency
+   - Prefers JPG files for metadata extraction
+4. **Index photos** in database with full metadata
+5. **Check derivatives**:
+   - If thumbnails/previews missing: enqueue `upload_postprocess` job
+   - Reuses existing task infrastructure
+6. **Generate manifest** if missing (`.project.yaml` with project ID and name)
+
+**Merge Logic**:
+- When projects share images, files are moved to the existing project
+- Metadata extracted from all moved files
+- Source folder removed after successful merge
+- `manifest_check` and `upload_postprocess` jobs enqueued for reconciliation
+
+**Benefits**:
+- ✅ Full metadata extraction (same as upload)
+- ✅ Reuses existing `upload_postprocess` task
+- ✅ Automatic derivative generation
+- ✅ Handles external folder additions gracefully
+- ✅ Detects and merges duplicate projects
+
+### Maintenance
+
+- Scheduler model (see `server/services/scheduler.js`):
+  - Kicks off the `maintenance` task hourly for each active (non‑archived) project.
+  - Separately kicks off the `project_scavenge` task hourly for archived projects to clean up leftover folders.
+- Task composition (see `server/services/task_definitions.json` → `maintenance.steps`):
+  - `trash_maintenance` (priority 100)
+  - `manifest_check` (priority 95)
+  - `folder_check` (priority 95)
+- Manual triggering: maintenance flows can be initiated via `server/routes/maintenance.js` where applicable.
+- Lane behavior: high priorities (>= threshold, default 90) run in the priority lane to keep reconciliation snappy even if normal jobs are long-running.
+
+### Change Commit (Commit/Revert Toolbar)
+
+- Commit Changes (Project-scoped)
+  - Endpoint: `POST /api/projects/:folder/commit-changes`
+  - Behavior:
+    - For each photo in the specified project: moves non-kept JPG/RAW files to `.trash` (derivatives removed immediately for JPGs).
+    - Updates DB availability/keep flags accordingly.
+    - Enqueues reconciliation jobs: `manifest_check` (95), `folder_check` (95), `manifest_cleaning` (80).
+    - Emits SSE: `item_removed` for each deleted photo, `manifest_changed` with `removed_filenames`.
+  - Rate limit: 10 req/5 min/IP.
+
+- Commit Changes (Global)
+  - Endpoint: `POST /api/photos/commit-changes`
+  - Behavior:
+    - Operates across multiple projects with pending deletions.
+    - Accepts optional `{ projects: ["p1", "p2"] }` body to target specific projects.
+    - If no projects specified, automatically detects all projects with pending deletions.
+    - For each affected project: moves non-kept JPG/RAW files to `.trash`, updates DB, enqueues reconciliation jobs.
+    - Emits SSE events per project: `item_removed`, `manifest_changed`.
+  - Rate limit: 10 req/5 min/IP.
+
+- Revert Changes (Project-scoped)
+  - Endpoint: `POST /api/projects/:folder/revert-changes`
+  - Behavior: resets `keep_jpg := jpg_available` and `keep_raw := raw_available` for all photos in the specified project.
+  - Non-destructive (no files moved).
+  - Rate limit: 10 req/5 min/IP.
+
+- Revert Changes (Global)
+  - Endpoint: `POST /api/photos/revert-changes`
+  - Behavior:
+    - Operates across multiple projects with keep mismatches.
+    - Accepts optional `{ projects: ["p1", "p2"] }` body to target specific projects.
+    - If no projects specified, automatically detects all projects with keep mismatches.
+    - Resets `keep_jpg := jpg_available` and `keep_raw := raw_available` for affected photos.
+  - Non-destructive (no files moved).
+  - Rate limit: 10 req/5 min/IP.
+
+- Pending Deletes Summary
+  - Endpoint: `GET /api/photos/pending-deletes`
+  - Behavior: returns aggregated pending deletion counts across all projects.
+  - Response: `{ jpg: number, raw: number, total: number, byProject: string[] }`
+  - Supports filtering by date range, file type, and orientation (ignores `keep_type` so counts are independent of preview mode filters).
+  - The All Photos UI fetches this endpoint directly (see `listAllPendingDeletes()`), ensuring the commit/revert toolbar reflects cross-project totals even when the paginated list is filtered.
+
+### Image Move
+
+- Endpoint (tasks-only): `POST /api/projects/:folder/jobs` with `{"task_type":"image_move","items":["<base1>","<base2>"]}`
+  - `:folder` is the destination project folder (e.g., `p3`).
+    1) `image_move_files` (95) — moves originals and any existing derivatives; updates DB and derivative statuses; emits SSE.
+    2) `manifest_check` (95) — on the destination, to reconcile availability if needed; a separate `manifest_check` is also enqueued for the source by the worker.
+    3) `generate_derivatives` (90) — runs if any derivative was missing and marked `pending` by the move.
+- SSE events (from `imageMoveWorker`):
+  - `{ type: "item_removed", project_folder: <source>, filename, updated_at }` — remove from source UI lists.
+  - `{ type: "item_moved", project_folder: <dest>, filename, thumbnail_status, preview_status, updated_at }` — add/update in destination with derivative statuses set to `generated` if a derivative was moved, `pending` if it must be regenerated, or `not_supported` for RAW.
+- Uploads integration: when posting to `POST /api/projects/:folder/upload` with multipart field `reloadConflictsIntoThisProject=true`, the server detects uploaded bases that exist in other projects and auto‑starts `image_move` into the current `:folder` for those bases.
+
+---
+
+## Cross-Project API Endpoints (New)
+
+The following endpoints accept photo_id lists and enforce payload size limits:
+
+### Photo Operations
+- **`POST /api/photos/tags/add`** - Add tags to photos (max 2,000 items)
+  - Body: `{ items: [{ photo_id, tags: [...] }], dry_run?: boolean }`
+  - Returns: `{ updated: number, errors?: [...] }`
+
+- **`POST /api/photos/tags/remove`** - Remove tags from photos (max 2,000 items)
+  - Body: `{ items: [{ photo_id, tags: [...] }], dry_run?: boolean }`
+  - Returns: `{ updated: number, errors?: [...] }`
+
+- **`POST /api/photos/keep`** - Update keep flags (max 2,000 items)
+  - Body: `{ items: [{ photo_id, keep_jpg?: boolean, keep_raw?: boolean }], dry_run?: boolean }`
+  - Returns: `{ updated: number, errors?: [...] }`
+  - Emits SSE item-level updates for real-time UI sync
+
+- **`POST /api/photos/process`** - Generate derivatives (max 2,000 items)
+  - Body: `{ items: [{ photo_id }], force?: boolean, dry_run?: boolean }`
+  - Returns: `{ task_id: string, job_count: number, job_ids: [...], chunked?: boolean, errors?: [...] }`
+  - Uses single `photo_set`-scoped task for all photos (optimized, no per-project fan-out)
+
+- **`POST /api/photos/move`** - Move photos between projects (max 2,000 items)
+  - Body: `{ items: [{ photo_id }], dest_folder: string, dry_run?: boolean }`
+  - Returns: `{ job_count: number, job_ids: [...], destination_project: {...}, errors?: [...] }`
+  - Groups photos by source project and enqueues per-project image_move jobs
+
+### Commit/Revert Operations
+- **`POST /api/photos/commit-changes`** - Commit pending deletions across projects
+  - Body: `{ projects?: [...], project_folders?: [...] }` (optional selectors)
+  - Returns: `{ queued_projects: number, projects: [...], skipped?: [...] }`
+  - Fans out to per-project `change_commit` tasks
+
+- **`POST /api/photos/revert-changes`** - Revert keep flag mismatches across projects
+  - Body: `{ projects?: [...], project_folders?: [...] }` (optional selectors)
+  - Returns: `{ queued_projects: number, projects: [...], skipped?: [...] }`
+  - Fans out to per-project revert operations
+
+### Payload Validation
+All endpoints enforce a **maximum of 2,000 items per request**. Requests exceeding this limit return:
+```json
+{
+  "error": "Payload contains X items, exceeding maximum of 2000. Please reduce the batch size or split into multiple requests."
+}
+```
+
+**Status Code**: 400 Bad Request
+
+**Note**: Internal callers (workers, orchestrator) can use `autoChunk: true` in `jobsRepo.enqueueWithItems()` to automatically split large batches into multiple jobs.
+
+## API Contract (Tasks-only)
+
+- `POST /api/projects/:folder/jobs`
+  - Tasks-only API: requires `task_type` in the JSON body.
+  - Optional: `items` array for per-file itemization when applicable (e.g., uploaded filenames).
+  - Returns: `{ task }` with task metadata (accepted, queued steps, etc.).
+  - Supported `task_type` values include: `upload_postprocess`, `change_commit`, `maintenance`, `project_delete`, `project_scavenge`, and `image_move`.
+- `GET /api/tasks/definitions`
+  - Returns task labels, user-relevant flags, and composed steps used by the client UI.
+  - Source: `server/services/task_definitions.json`.
+
+Client helper: see `client/src/api/jobsApi.js` for UI calls and the SSE singleton used to consume `GET /api/jobs/stream` updates.
+
+## Observability
+
+- List jobs: `GET /api/projects/:folder/jobs` (filters: `status`, `type`).
+- Job detail: `GET /api/jobs/:id` (includes items summary).
+- SSE stream: `GET /api/jobs/stream` for real-time updates.
+  - Dev-only client logs: the `client/src/api/jobsApi.js` SSE client logs `[SSE] ...` only when running under Vite dev (`import.meta.env.DEV`). Production builds do not log these messages.
+
+## Project Deletion Task
+
+- Endpoint: `DELETE /api/projects/:folder`
+  - Performs a soft-delete (`projects.status='canceled'`, `archived_at` set) and enqueues the high-priority `project_delete` task so the UI removal is immediate while cleanup runs asynchronously.
+
+- Task steps (see `server/services/task_definitions.json` → `project_delete.steps`):
+  1) `project_stop_processes` — priority 100
+     - Marks project archived and cancels queued/running jobs for the project.
+  2) `project_delete_files` — priority 100
+     - Deletes on-disk folder `.projects/user_0/<project_folder>/`.
+  3) `project_cleanup_db` — priority 95
+     - Cleans related DB rows (`photos`, `tags`, `photo_tags`) while retaining the archived `projects` row.
+
+- Lane behavior: priorities ≥ threshold (default 90) run in the priority lane, ensuring deletion tasks preempt normal jobs.

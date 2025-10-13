@@ -20,9 +20,11 @@ export default function OperationsMenu({
   config,
   trigger = 'label', // 'label' | 'hamburger'
   onRequestMove,
+  onRequestShare, // NEW: callback to open share modal
   // All Photos mode props
   allMode = false,
-  allSelectedKeys, // Set of 'project_folder::filename'
+  allSelectedKeys, // Set of 'project_folder::filename' (for backward compatibility)
+  allSelectedPhotos, // NEW: Map<key, photo> with full photo objects
   setAllSelectedKeys,
   allPhotos,
   selection,
@@ -71,6 +73,12 @@ export default function OperationsMenu({
   };
 
   const collectAllSelection = () => {
+    // Use the selectedPhotos Map directly - it already contains full photo objects
+    if (allSelectedPhotos && allSelectedPhotos instanceof Map) {
+      return Array.from(allSelectedPhotos.values());
+    }
+    
+    // Fallback to old behavior if Map not provided (backward compatibility)
     const keys = Array.from(allSelectedKeys || []);
     if (!keys.length) return [];
     const photosList = Array.isArray(allPhotos) ? allPhotos : [];
@@ -369,6 +377,14 @@ export default function OperationsMenu({
               title="Move selected photos to another project"
             >
               Move to…
+            </button>
+            <button
+              onClick={() => { if (onRequestShare) onRequestShare(); }}
+              disabled={selectionIsEmpty}
+              className={`w-full mt-2 px-3 py-2 text-sm rounded-md border ${selectionIsEmpty ? 'bg-gray-200 text-gray-500 cursor-not-allowed border-gray-300' : 'bg-gray-100 hover:bg-gray-200 border-gray-300 text-gray-800'}`}
+              title="Add selected photos to shared links"
+            >
+              Share…
             </button>
             <div className="mt-3 grid grid-cols-2 gap-2">
               <button

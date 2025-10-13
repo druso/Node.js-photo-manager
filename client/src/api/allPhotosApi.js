@@ -44,6 +44,7 @@ export async function locateAllPhotosPage(opts = {}) {
   if (opts.file_type && opts.file_type !== 'any') params.set('file_type', String(opts.file_type));
   if (opts.keep_type && opts.keep_type !== 'any') params.set('keep_type', String(opts.keep_type));
   if (opts.orientation && opts.orientation !== 'any') params.set('orientation', String(opts.orientation));
+  if (opts.public_link_id) params.set('public_link_id', String(opts.public_link_id));
   
   const url = `/api/photos/locate-page?${params.toString()}`;
   const res = await authFetch(url, { cache: 'no-store' });
@@ -86,6 +87,7 @@ export async function listAllPhotos(opts = {}) {
   if (opts.orientation && opts.orientation !== 'any') params.set('orientation', String(opts.orientation));
   if (opts.project_folder) params.set('project_folder', String(opts.project_folder));
   if (opts.visibility && opts.visibility !== 'any') params.set('visibility', String(opts.visibility));
+  if (opts.public_link_id) params.set('public_link_id', String(opts.public_link_id));
   const url = `/api/photos${params.toString() ? `?${params.toString()}` : ''}`;
   const res = await authFetch(url, { cache: 'no-store' });
   if (!res.ok) throw new Error(`listAllPhotos failed: ${res.status}`);
