@@ -144,6 +144,8 @@ function listAll({
   project_id = null,
   visibility = null,
   public_link_id = null,
+  sort = null,
+  dir = null,
 } = {}) {
   const db = getDb();
 
@@ -157,8 +159,19 @@ function listAll({
     keep_type,
     orientation,
     tags_provided: !!tags,
+    sort,
+    dir,
   });
 
+  // Normalize sort parameters and construct ORDER BY clause
+  const sortField = sort === 'filename' ? 'filename' : sort === 'file_size' ? 'file_size' : 'date_time_original';
+  const sortDirection = dir === 'ASC' ? 'ASC' : 'DESC';
+  
+  // Construct ORDER BY clause for SQL (cannot use template literals in prepared statements)
+  const sortColumn = sortField === 'filename' ? 'ph.filename' : sortField === 'file_size' ? 'ph.file_size' : 'taken_at';
+  const orderByAsc = `ORDER BY ${sortColumn} ASC, ph.id ASC`;
+  const orderByDir = `ORDER BY ${sortColumn} ${sortDirection}, ph.id ${sortDirection}`;
+  
   const baseFilters = { date_from, date_to, file_type, keep_type, orientation, tags, project_id, visibility, public_link_id };
 
   const computeTotals = (baseWhereSql, baseParams) => {
@@ -218,7 +231,7 @@ function listAll({
           FROM photos ph
           JOIN projects p ON p.id = ph.project_id
           ${whereSql}
-          ORDER BY taken_at ASC, ph.id ASC
+          ${orderByAsc}
           LIMIT ?
         `)
         .all(...whereParams, limit);
@@ -273,7 +286,7 @@ function listAll({
   const baseWhereSql = baseWhere.whereSql;
   const baseParams = baseWhere.params;
 
-  const { whereSql, params } = buildAllPhotosWhere({ ...baseFilters, cursor });
+  const { whereSql, params } = buildAllPhotosWhere({ ...baseFilters, cursor, sort_direction: sortDirection });
   const rows = db
     .prepare(`
       SELECT
@@ -285,7 +298,7 @@ function listAll({
       JOIN projects p ON p.id = ph.project_id
       LEFT JOIN photo_public_hashes pph ON pph.photo_id = ph.id
       ${whereSql}
-      ORDER BY taken_at DESC, ph.id DESC
+      ${orderByDir}
       LIMIT ?
     `)
     .all(...params, limit);
@@ -298,19 +311,29 @@ function listAll({
     const first = items[0];
     const last = items[items.length - 1];
 
-    const hasOlder = db
+    // Check if there are items after the last item (for nextCursor)
+    // "After" depends on sort direction: DESC means older (<), ASC means newer (>)
+    const afterOp = sortDirection === 'DESC' ? '<' : '>';
+    const compareColumn = sortColumn === 'taken_at' 
+      ? 'COALESCE(ph.date_time_original, ph.created_at)' 
+      : sortColumn;
+    // Get the comparison value from the last item based on sort field
+    const lastValue = sortField === 'filename' ? last.filename : 
+                      sortField === 'file_size' ? last.file_size : 
+                      last.taken_at;
+    const hasMore = db
       .prepare(`
         SELECT 1
         FROM photos ph
         JOIN projects p ON p.id = ph.project_id
         ${whereSql ? `${whereSql} AND` : 'WHERE'} (
-          (COALESCE(ph.date_time_original, ph.created_at) < ?) OR
-          (COALESCE(ph.date_time_original, ph.created_at) = ? AND ph.id < ?)
+          (${compareColumn} ${afterOp} ?) OR
+          (${compareColumn} = ? AND ph.id ${afterOp} ?)
         )
         LIMIT 1
       `)
-      .get(...params, last.taken_at, last.taken_at, last.id);
-    if (hasOlder) {
+      .get(...params, lastValue, lastValue, last.id);
+    if (hasMore) {
       nextCursor = createCursor(last.taken_at, last.id);
     }
 
@@ -319,20 +342,30 @@ function listAll({
     if (cursor) {
       prevCursor = createCursor(first.taken_at, first.id);
     } else {
-      // For initial load (no cursor), check if there are newer items
-      const hasNewer = db
+      // For initial load (no cursor), check if there are items before the first item
+      // "Before" depends on sort direction: DESC means newer (>), ASC means older (<)
+      const beforeOp = sortDirection === 'DESC' ? '>' : '<';
+      // Build the comparison column - for date sorting use COALESCE, for others use the column directly
+      const compareColumn = sortColumn === 'taken_at' 
+        ? 'COALESCE(ph.date_time_original, ph.created_at)' 
+        : sortColumn;
+      // Get the comparison value from the first item based on sort field
+      const firstValue = sortField === 'filename' ? first.filename : 
+                         sortField === 'file_size' ? first.file_size : 
+                         first.taken_at;
+      const hasItemsBefore = db
         .prepare(`
           SELECT 1
           FROM photos ph
           JOIN projects p ON p.id = ph.project_id
           ${whereSql ? `${whereSql} AND` : 'WHERE'} (
-            (COALESCE(ph.date_time_original, ph.created_at) > ?) OR
-            (COALESCE(ph.date_time_original, ph.created_at) = ? AND ph.id > ?)
+            (${compareColumn} ${beforeOp} ?) OR
+            (${compareColumn} = ? AND ph.id ${beforeOp} ?)
           )
           LIMIT 1
         `)
-        .get(...params, first.taken_at, first.taken_at, first.id);
-      if (hasNewer) {
+        .get(...params, firstValue, firstValue, first.id);
+      if (hasItemsBefore) {
         prevCursor = createCursor(first.taken_at, first.id);
       }
     }
@@ -351,6 +384,7 @@ function listAll({
   }
 
   const { filteredTotal, unfilteredTotal } = computeTotals(baseWhereSql, baseParams);
+  
   return { items, nextCursor, prevCursor, total: filteredTotal, unfiltered_total: unfilteredTotal };
 }
 

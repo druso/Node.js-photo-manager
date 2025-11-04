@@ -32,6 +32,8 @@ export function useAppInitialization({
   setViewerState,
   setPendingSelectProjectRef,
   setAllDeepLink,
+  setSortKey,
+  setSortDir,
   
   // Unified view context
   view,
@@ -117,6 +119,16 @@ export function useAppInitialization({
       // Apply URL filters if any were found
       if (Object.keys(urlFilters).length > 0) {
         setActiveFilters(prev => ({ ...prev, ...urlFilters }));
+      }
+      
+      // Parse sort parameters from URL
+      const urlSort = params.get('sort');
+      const urlDir = params.get('dir');
+      if (urlSort && (urlSort === 'name' || urlSort === 'date' || urlSort === 'size')) {
+        setSortKey(urlSort);
+      }
+      if (urlDir && (urlDir === 'asc' || urlDir === 'desc')) {
+        setSortDir(urlDir);
       }
       
       // Parse showdetail parameter for viewer - will be applied when viewer opens

@@ -276,6 +276,8 @@ function App({ sharedLinkHash = null, initialPhotoName = null }) {
   } = useAllPhotosPagination({
     activeFilters,
     isEnabled: !isSharedLinkMode && view?.project_filter === null,
+    sortKey,
+    sortDir,
     onResolveDeepLink: ({ index, items }) => {
       setViewerList(items);
       setViewerState({ isOpen: true, startIndex: index, fromAll: true });
@@ -411,6 +413,7 @@ function App({ sharedLinkHash = null, initialPhotoName = null }) {
     setFiltersCollapsed, setActiveFilters, setViewerState,
     setPendingSelectProjectRef: (ref) => { pendingSelectProjectRef.current = ref; },
     setAllDeepLink,
+    setSortKey, setSortDir,
     
     // Unified view context
     view,
@@ -731,7 +734,9 @@ function App({ sharedLinkHash = null, initialPhotoName = null }) {
     view,
     selectedProject,
     activeFilters,
-    viewerState
+    viewerState,
+    sortKey,
+    sortDir
   });
 
   const commitDescription = view?.project_filter === null

@@ -88,6 +88,8 @@ export async function listAllPhotos(opts = {}) {
   if (opts.project_folder) params.set('project_folder', String(opts.project_folder));
   if (opts.visibility && opts.visibility !== 'any') params.set('visibility', String(opts.visibility));
   if (opts.public_link_id) params.set('public_link_id', String(opts.public_link_id));
+  if (opts.sort) params.set('sort', String(opts.sort));
+  if (opts.dir) params.set('dir', String(opts.dir));
   const url = `/api/photos${params.toString() ? `?${params.toString()}` : ''}`;
   const res = await authFetch(url, { cache: 'no-store' });
   if (!res.ok) throw new Error(`listAllPhotos failed: ${res.status}`);

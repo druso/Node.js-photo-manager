@@ -140,6 +140,7 @@ function buildAllPhotosWhere({
   project_id = null,
   visibility = null,
   public_link_id = null,
+  sort_direction = 'DESC',
 } = {}) {
   const params = [];
   const where = [];
@@ -204,7 +205,9 @@ function buildAllPhotosWhere({
     }
   }
   
-  // Forward pagination: items strictly older than the cursor position
+  // Forward pagination: items after the cursor position (direction depends on sort order)
+  // DESC (newest first): "after" means older (<)
+  // ASC (oldest first): "after" means newer (>)
   if (cursor && !before_cursor) {
     try {
       let cur = String(cursor).trim();
@@ -216,9 +219,10 @@ function buildAllPhotosWhere({
       const obj = JSON.parse(json);
       const cTaken = obj && obj.taken_at ? String(obj.taken_at) : null;
       const cId = obj && Number.isFinite(Number(obj.id)) ? Number(obj.id) : null;
-      log.debug('build_where_cursor_parsed', { cursor_len: String(cursor).length, cTaken, cId });
+      log.debug('build_where_cursor_parsed', { cursor_len: String(cursor).length, cTaken, cId, sort_direction });
       if (cTaken && cId != null) {
-        where.push(`(COALESCE(ph.date_time_original, ph.created_at) < ? OR (COALESCE(ph.date_time_original, ph.created_at) = ? AND ph.id < ?))`);
+        const op = sort_direction === 'ASC' ? '>' : '<';
+        where.push(`(COALESCE(ph.date_time_original, ph.created_at) ${op} ? OR (COALESCE(ph.date_time_original, ph.created_at) = ? AND ph.id ${op} ?))`);
         params.push(cTaken, cTaken, cId);
       }
     } catch (e) {

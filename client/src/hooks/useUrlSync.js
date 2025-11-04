@@ -4,7 +4,9 @@ export const useUrlSync = ({
   view,
   selectedProject,
   activeFilters,
-  viewerState
+  viewerState,
+  sortKey,
+  sortDir
 }) => {
   const isAllPhotosView = view?.project_filter === null;
   // Sync URL query with filters when in All mode (preserve current /all path and filename if any)
@@ -26,6 +28,9 @@ export const useUrlSync = ({
       if (activeFilters?.fileType && activeFilters.fileType !== 'any') qp.set('file_type', activeFilters.fileType);
       if (activeFilters?.keepType && activeFilters.keepType !== 'any') qp.set('keep_type', activeFilters.keepType);
       if (activeFilters?.orientation && activeFilters.orientation !== 'any') qp.set('orientation', activeFilters.orientation);
+      // Add sort parameters if not default (date desc)
+      if (sortKey && sortKey !== 'date') qp.set('sort', sortKey);
+      if (sortDir && sortDir !== 'desc') qp.set('dir', sortDir);
       // Add showdetail parameter if viewer is open and info panel is shown
       if (viewerState?.isOpen && viewerState?.showInfo) {
         qp.set('showdetail', '1');
@@ -40,7 +45,7 @@ export const useUrlSync = ({
     } catch (err) {
       console.error('[useUrlSync] Error in All Photos sync:', err);
     }
-  }, [isAllPhotosView, activeFilters?.dateRange?.start, activeFilters?.dateRange?.end, activeFilters?.fileType, activeFilters?.keepType, activeFilters?.orientation, viewerState?.isOpen, viewerState?.showInfo]);
+  }, [isAllPhotosView, activeFilters?.dateRange?.start, activeFilters?.dateRange?.end, activeFilters?.fileType, activeFilters?.keepType, activeFilters?.orientation, sortKey, sortDir, viewerState?.isOpen, viewerState?.showInfo]);
 
   // Sync URL query with filters when in Project mode as well
   useEffect(() => {
@@ -57,6 +62,9 @@ export const useUrlSync = ({
       if (activeFilters?.fileType && activeFilters.fileType !== 'any') qp.set('file_type', activeFilters.fileType);
       if (activeFilters?.keepType && activeFilters.keepType !== 'any') qp.set('keep_type', activeFilters.keepType);
       if (activeFilters?.orientation && activeFilters.orientation !== 'any') qp.set('orientation', activeFilters.orientation);
+      // Add sort parameters if not default (date desc)
+      if (sortKey && sortKey !== 'date') qp.set('sort', sortKey);
+      if (sortDir && sortDir !== 'desc') qp.set('dir', sortDir);
       // Add showdetail parameter if viewer is open and info panel is shown
       if (viewerState?.isOpen && viewerState?.showInfo) {
         qp.set('showdetail', '1');
@@ -71,5 +79,5 @@ export const useUrlSync = ({
     } catch (err) {
       console.error('[useUrlSync] Error in Project sync:', err);
     }
-  }, [isAllPhotosView, selectedProject?.folder, activeFilters?.dateRange?.start, activeFilters?.dateRange?.end, activeFilters?.fileType, activeFilters?.keepType, activeFilters?.orientation, viewerState?.isOpen, viewerState?.showInfo]);
+  }, [isAllPhotosView, selectedProject?.folder, activeFilters?.dateRange?.start, activeFilters?.dateRange?.end, activeFilters?.fileType, activeFilters?.keepType, activeFilters?.orientation, sortKey, sortDir, viewerState?.isOpen, viewerState?.showInfo]);
 };

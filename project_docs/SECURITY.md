@@ -2,6 +2,17 @@
 
 ## Latest Security Enhancements (2025-11)
 
+### Photo Grid Sorting and Pagination Fix (2025-11-04)
+- **Sort-aware cursor pagination**: Fixed cursor-based pagination to respect sort direction in SQL WHERE clauses. The `buildAllPhotosWhere` function now uses direction-aware comparison operators (DESC: `<` for older, ASC: `>` for newer), preventing pagination failures and item deduplication when sorting in ascending order.
+- **Input validation**: Sort parameters (`sort`, `dir`) are normalized and validated on the backend before constructing SQL queries, preventing potential SQL injection through sort field manipulation.
+- **Consistent state management**: Frontend pagination state (cursors, hasPrev/hasNext) now correctly reflects backend pagination boundaries across all sort orders.
+
+**Security Impact**:
+- **Query Safety**: Sort parameters are validated and normalized before SQL construction, reducing injection risk
+- **State Integrity**: Correct cursor handling prevents pagination state confusion that could expose unintended data
+- **Audit Trail**: Debug logging in `photoQueryBuilders.js` and `photoFiltering.js` tracks cursor operations for forensic analysis
+- **No Authorization Bypass**: Sort/pagination logic operates within existing access control boundaries
+
 ### Maintenance Reconciliation Pipeline (2025-11-05)
 - **Duplicate resolution**: Cross-project filename collision detection with deterministic `_duplicate{n}` renaming prevents accidental overwrites and maintains data integrity across project boundaries.
 - **Manifest lifecycle**: `.project.yaml` files are now preserved during maintenance scans (skipped by `folder_check`) and validated/repaired by `manifest_check`, ensuring filesystem-to-database reconciliation remains accurate.

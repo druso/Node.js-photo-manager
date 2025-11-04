@@ -183,6 +183,14 @@ export default class PagedWindowManager {
             allPagesPrevCursors: this.pages.map(p => ({ num: p._pageNumber, prev: p.prevCursor ? 'has' : 'null' })),
           });
           this.#evictIfNeeded('head');
+          
+          // After loading a new page forward, ensure headPrevCursor reflects the first page's prevCursor
+          // This is critical when we haven't evicted yet (e.g., only have 2 pages)
+          if (this.pages.length > 0 && this.pages[0].prevCursor) {
+            this.headPrevCursor = this.pages[0].prevCursor;
+            devLog('[PagedWindow] Updated headPrevCursor from first page after loadNext:', this.headPrevCursor);
+          }
+          
           devLog('[PagedWindow] After eviction:', {
             pagesCount: this.pages.length,
             headPrevCursor: this.headPrevCursor,

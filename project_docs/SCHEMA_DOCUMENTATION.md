@@ -81,9 +81,11 @@ Tables and relationships:
 ### All Photos API (Cross-Project)
 
 - All photos (paginated): `GET /api/photos`
-  - Query params: `limit`, `cursor`, `before_cursor`, `date_from`, `date_to`, `file_type`, `keep_type`, `orientation`, `tags`, `visibility`, `include=tags`
+  - Query params: `limit`, `cursor`, `before_cursor`, `date_from`, `date_to`, `file_type`, `keep_type`, `orientation`, `tags`, `visibility`, `include=tags`, `sort`, `dir`
+  - Sort params: `sort` (filename|date_time_original|file_size), `dir` (ASC|DESC)
   - Returns: `{ items: [...], total: number, unfiltered_total: number, next_cursor: string|null, prev_cursor: string|null }`
   - Filter params: same as project photos API
+  - Sort behavior: Server-side sorting with cursor-based pagination; cursors are sort-order specific
   - Tag filtering: `tags=portrait,-rejected` includes photos with 'portrait' tag and excludes those with 'rejected' tag
     - Positive tags (no prefix): photo must have ALL specified tags (AND logic)
     - Negative tags (with `-` prefix): photo must have NONE of the specified tags (NOT ANY logic)
@@ -126,7 +128,10 @@ Data access is through repository modules:
 - `server/services/repositories/projectsRepo.js`
 - `server/services/repositories/photosRepo.js` (modular interface delegating to specialized modules)
   - `photoCrud.js` - Basic CRUD operations (get, upsert, update, delete)
-  - `photoFiltering.js` - Filtering and listing operations (listAll, listProjectFiltered)
+  - `photoFiltering.js` - Filtering, sorting, and listing operations (listAll, listProjectFiltered)
+    - Supports dynamic ORDER BY with sort-direction aware cursor calculations
+    - Maps frontend sort keys (name/date/size) to database columns (filename/date_time_original/file_size)
+    - Correctly calculates prevCursor based on sort direction (DESC: newer items, ASC: older items)
   - `photoPagination.js` - Pagination logic (locateProjectPage, locateAllPage, listPaged)
   - `photoPendingOps.js` - Pending operations (deletes, mismatches)
   - `photoQueryBuilders.js` - SQL WHERE clause construction utilities

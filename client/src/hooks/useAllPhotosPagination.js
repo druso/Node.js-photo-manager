@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import PagedWindowManager from '../utils/pagedWindowManager';
 import { listAllPhotos, locateAllPhotosPage } from '../api/allPhotosApi';
 import { locateProjectPhotosPage } from '../api/photosApi';
+import { setSessionMainY } from '../utils/storage';
 
 const DEBUG_PAGINATION = false;
 const debugLog = (...args) => {
@@ -45,9 +46,17 @@ function buildFilterParams(activeFilters) {
 }
 
 function resolveProjectSort(sortKey, sortDir) {
-  const key = sortKey === 'name' ? 'filename' : 'date_time_original';
+  // Map frontend sort keys to backend field names
+  let field;
+  if (sortKey === 'name') {
+    field = 'filename';
+  } else if (sortKey === 'size') {
+    field = 'file_size';
+  } else {
+    field = 'date_time_original'; // default for 'date'
+  }
   const dir = sortDir === 'asc' ? 'ASC' : 'DESC';
-  return { field: key, direction: dir };
+  return { field, direction: dir };
 }
 
 function usePhotoPagination({
@@ -87,9 +96,8 @@ function usePhotoPagination({
     folderRef.current = mode === 'project' ? (projectFolder ?? null) : null;
   }, [mode, projectFolder]);
 
-  useEffect(() => {
-    sortRef.current = resolveProjectSort(sortKey, sortDir);
-  }, [sortKey, sortDir]);
+  // Note: sortRef.current is updated in the main effect below when sort changes are detected
+  // Don't update it here or the change detection won't work
 
   const makeItemKey = useCallback((item) => {
     const folder = mode === 'project'
@@ -170,12 +178,9 @@ function usePhotoPagination({
           if (cursor) params.cursor = cursor;
           if (before_cursor) params.before_cursor = before_cursor;
           
-          // Log pagination request for debugging
-          debugLog(`[UNIFIED] Fetching page for mode: ${mode}`, { 
-            cursor, 
-            before_cursor, 
-            projectFolder: folderRef.current 
-          });
+          // Add sort parameters for both modes
+          if (sort?.field) params.sort = sort.field;
+          if (sort?.direction) params.dir = sort.direction;
           
           let res;
           if (mode === 'project') {
@@ -187,8 +192,6 @@ function usePhotoPagination({
             
             // Always use project_folder parameter for consistency
             params.project_folder = folder;
-            if (sort?.field) params.sort = sort.field;
-            if (sort?.direction) params.dir = sort.direction;
             
             // Use the same API for both modes to ensure consistent behavior
             res = await listAllPhotos(params);
@@ -253,20 +256,13 @@ function usePhotoPagination({
       debugLog('[UNIFIED] Calling manager.loadInitial');
       
       const page = await manager.loadInitial({ filters, sort: sortRef.current });
-      debugLog('[UNIFIED] manager.loadInitial returned:', { 
-        hasItems: Array.isArray(page?.items), 
-        itemCount: page?.items?.length || 0,
-        nextCursor: page?.nextCursor,
-        prevCursor: page?.prevCursor
-      });
+      debugLog('[UNIFIED] manager.loadInitial returned:', page ? 'page object' : 'null');
       
       const snap = manager.snapshot();
-      seenKeysRef.current = new Set();
-      seenCursorsRef.current = new Set();
-      lastCursorRef.current = null;
-      
-      for (const it of page.items || []) {
-        seenKeysRef.current.add(makeItemKey(it));
+      if (page && Array.isArray(page.items)) {
+        for (const it of page.items) {
+          seenKeysRef.current.add(makeItemKey(it));
+        }
       }
       
       const flattened = snap.pages.flatMap(p => p.items);
@@ -275,13 +271,6 @@ function usePhotoPagination({
       setUnfilteredTotal(Number.isFinite(page?.unfiltered_total) ? Number(page.unfiltered_total) : Number(page?.total) || flattened.length);
       setNextCursor(snap.tailNextCursor);
       setHasPrev(!!snap.headPrevCursor);
-      
-      debugLog('[UNIFIED] Updated state after loadInitial:', { 
-        photoCount: flattened.length,
-        nextCursor: snap.tailNextCursor,
-        hasPrev: !!snap.headPrevCursor,
-        total: Number.isFinite(page?.total) ? Number(page.total) : flattened.length
-      });
     } finally {
       loadingLockRef.current = false;
     }
@@ -335,12 +324,6 @@ function usePhotoPagination({
       setUnfilteredTotal(Number.isFinite(page?.unfiltered_total) ? Number(page.unfiltered_total) : unfilteredTotal);
       setNextCursor(snap.tailNextCursor);
       setHasPrev(!!snap.headPrevCursor);
-      
-      console.log('[UNIFIED] Updated state after loadMore:', { 
-        newNextCursor: snap.tailNextCursor,
-        newHasPrev: !!snap.headPrevCursor,
-        totalItems: snap.pages.flatMap(p => p.items).length
-      });
     } finally {
       setLoadingMore(false);
       loadingLockRef.current = false;
@@ -394,12 +377,6 @@ function usePhotoPagination({
       
       // Clear seen cursors to avoid issues with bidirectional navigation
       seenCursorsRef.current.clear();
-      
-      console.log('[UNIFIED] Updated state after loadPrev:', { 
-        newNextCursor: snap.tailNextCursor,
-        newHeadPrevCursor: snap.headPrevCursor,
-        totalItems: snap.pages.flatMap(p => p.items).length
-      });
     } finally {
       setLoadingMore(false);
     }
@@ -439,7 +416,6 @@ function usePhotoPagination({
     );
     
     if (shouldResetManager) {
-      debugLog('[UNIFIED] Sort changed, resetting manager state');
       sortRef.current = resolveProjectSort(sortKey, sortDir);
       
       // Reset the appropriate manager in the global cache
@@ -448,6 +424,24 @@ function usePhotoPagination({
       } else if (mode === 'all') {
         managerInstances.resetManager('all');
       }
+      
+      // Clear scroll position so we start at the top
+      try {
+        setSessionMainY(0);
+        // Also try to scroll to top immediately
+        if (typeof window !== 'undefined') {
+          window.scrollTo(0, 0);
+        }
+        const mainEl = document.querySelector('main');
+        if (mainEl) {
+          mainEl.scrollTop = 0;
+        }
+      } catch (e) {
+        console.warn('[UNIFIED] Failed to clear scroll position:', e);
+      }
+      
+      // Reset React state to clear photos array and cursors
+      resetState();
     }
     
     let canceled = false;

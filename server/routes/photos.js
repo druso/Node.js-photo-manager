@@ -188,6 +188,8 @@ router.get('/photos', async (req, res) => {
     const orientation = typeof q.orientation === 'string' && q.orientation.length ? q.orientation : null; // any | vertical | horizontal
     const includeTags = q.include === 'tags';
     const tags = typeof q.tags === 'string' && q.tags.length ? q.tags : null; // comma-separated list of tags, with optional - prefix for exclusion
+    const sort = typeof q.sort === 'string' && q.sort.length ? q.sort : null; // filename | date_time_original | file_size
+    const dir = typeof q.dir === 'string' && q.dir.length ? q.dir : null; // ASC | DESC
     
     // Calculate total count directly
     let totalCount = 0;
@@ -249,6 +251,8 @@ router.get('/photos', async (req, res) => {
       project_id: projectId,
       visibility: visibilityFilter,
       public_link_id: publicLinkId,
+      sort,
+      dir,
     });
     const items = (page.items || []).map((r) => {
       let metadata;
