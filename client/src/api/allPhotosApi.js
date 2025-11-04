@@ -115,3 +115,41 @@ export async function listAllPendingDeletes(opts = {}) {
   if (!res.ok) throw new Error(`listAllPendingDeletes failed: ${res.status}`);
   return res.json();
 }
+
+/**
+ * Fetch all photo keys (project_folder::filename) matching filters.
+ * Lightweight query for "Select All" functionality - returns only identifiers, no metadata.
+ * @param {Object} opts
+ * @param {string} [opts.date_from] - YYYY-MM-DD
+ * @param {string} [opts.date_to] - YYYY-MM-DD
+ * @param {('any'|'jpg_only'|'raw_only'|'both')} [opts.file_type]
+ * @param {('any'|'any_kept'|'jpg_only'|'raw_jpg'|'none')} [opts.keep_type]
+ * @param {('any'|'vertical'|'horizontal')} [opts.orientation]
+ * @param {string} [opts.tags] - Comma-separated tags with optional - prefix for exclusion
+ * @param {('any'|'public'|'private')} [opts.visibility]
+ * @param {string} [opts.public_link_id] - Public link hash
+ * @param {string} [opts.sort_by] - Sort field (default: 'date')
+ * @param {string} [opts.sort_dir] - Sort direction (default: 'desc')
+ * @returns {Promise<{ keys: string[], total: number }>}
+ */
+export async function listAllPhotoKeys(opts = {}) {
+  const params = new URLSearchParams();
+  if (opts.date_from) params.set('date_from', String(opts.date_from));
+  if (opts.date_to) params.set('date_to', String(opts.date_to));
+  if (opts.file_type && opts.file_type !== 'any') params.set('file_type', String(opts.file_type));
+  if (opts.keep_type && opts.keep_type !== 'any') params.set('keep_type', String(opts.keep_type));
+  if (opts.orientation && opts.orientation !== 'any') params.set('orientation', String(opts.orientation));
+  if (opts.tags) params.set('tags', String(opts.tags));
+  if (opts.visibility && opts.visibility !== 'any') params.set('visibility', String(opts.visibility));
+  if (opts.public_link_id) params.set('public_link_id', String(opts.public_link_id));
+  if (opts.sort_by) params.set('sort_by', String(opts.sort_by));
+  if (opts.sort_dir) params.set('sort_dir', String(opts.sort_dir));
+  
+  const url = `/api/photos/all-keys${params.toString() ? `?${params.toString()}` : ''}`;
+  const res = await authFetch(url, { cache: 'no-store' });
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(errorData.error || `listAllPhotoKeys failed: ${res.status}`);
+  }
+  return res.json();
+}

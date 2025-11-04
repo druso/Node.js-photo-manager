@@ -29,11 +29,17 @@ This architecture maintains full backward compatibility while significantly impr
 Tables and relationships:
 
 - `projects`
-  - Columns: `id` (INTEGER PK), `project_name` (TEXT), `project_folder` (TEXT UNIQUE), `created_at` (TEXT), `updated_at` (TEXT), `schema_version` (TEXT NULL), `status` (TEXT NULL), `archived_at` (TEXT NULL)
+  - Columns: `id` (INTEGER PK), `project_name` (TEXT), `project_folder` (TEXT UNIQUE), `created_at` (TEXT), `updated_at` (TEXT), `schema_version` (TEXT NULL), `status` (TEXT NULL), `archived_at` (TEXT NULL), `manifest_version` (TEXT DEFAULT '1.0')
   - `status`: when `'canceled'` the project is considered archived/soft-deleted and is hidden from frontend lists and detail endpoints. The row is retained for audit.
   - `archived_at`: timestamp when the project was soft-deleted.
-  - Indexes: `CREATE INDEX IF NOT EXISTS idx_projects_status ON projects(status)`
-  - `project_folder` format: `p<id>` (canonical on-disk folder; immutable, decoupled from display name)
+  - `manifest_version`: version of the `.project.yaml` manifest format.
+  - Indexes: `CREATE INDEX IF NOT EXISTS idx_projects_status ON projects(status)`, `CREATE INDEX IF NOT EXISTS idx_projects_folder ON projects(project_folder)`
+  - `project_folder` format: Initially `p<id>`, but can be aligned to match `project_name` via maintenance
+  - **Maintenance-Based Folder Alignment** (2025-11-04):
+    - Rename API updates `project_name` immediately (non-blocking)
+    - Maintenance system detects mismatches between `project_name` and `project_folder`
+    - Hourly `folder_alignment` job renames folders to match project names
+    - All operations are idempotent and handle collisions gracefully
 
 - `photos`
   - Columns (selected): `id`, `project_id` (FK), `filename`, `basename`, `ext`, `created_at`, `updated_at`,
@@ -265,6 +271,7 @@ Durable background jobs are stored in two tables: `jobs` and `job_items`.
     `created_at`, `updated_at`.
   - Indexes: `(job_id)`, `(tenant_id)`.
   - Use when a job processes multiple files so you can report per‑item progress and summaries.
+  - For photo-set jobs (`scope = 'photo_set'`), orchestrator now injects `{ project_id, project_folder, project_name }` hints per item when a project context is known. Workers can rely on these hints instead of scanning the entire project directory.
 
 - Source of truth: `server/services/db.js` (DDL), repositories in `server/services/repositories/jobsRepo.js`.
 - Worker loop: `server/services/workerLoop.js` dispatches by `job.type` to worker modules under `server/services/workers/`, using shared helpers in `server/services/workers/shared/photoSetUtils.js` to resolve targets based on scope.
@@ -310,6 +317,7 @@ The jobs stream (`GET /api/jobs/stream`) emits item-level updates while derivati
   "type": "item",
   "project_folder": "p12",
   "filename": "IMG_0001.CR2",
+  "photo_id": 123,
   "statuses": {
     "thumb": "done",
     "preview": "processing"
@@ -318,7 +326,7 @@ The jobs stream (`GET /api/jobs/stream`) emits item-level updates while derivati
 ```
 
 - `type: "item"` marks a per-asset update.
-- `project_folder` and `filename` uniquely identify the asset.
+- `project_folder`, `photo_id`, and `filename` identify the asset. Clients key primarily on `photo_id` and fall back to filename matching.
 - `statuses` conveys derivative states; the client updates `projectData.photos` in-place and preserves scroll/viewer state.
 
 #### Image Move: DB and SSE Semantics

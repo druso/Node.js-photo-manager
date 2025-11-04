@@ -73,6 +73,7 @@ function updateVisibility(id, visibility) {
 const listAll = photoFiltering.listAll;
 const listProjectFiltered = photoFiltering.listProjectFiltered;
 const listSharedLinkPhotos = photoFiltering.listSharedLinkPhotos;
+const listAllKeys = photoFiltering.listAllKeys;
 
 // ===== PAGINATION =====
 // Delegate to photoPagination module
@@ -84,8 +85,10 @@ const listPaged = photoPagination.listPaged;
 // Delegate to photoPendingOps module
 const listPendingDeletesForProject = photoPendingOps.listPendingDeletesForProject;
 const listPendingDeletesByProject = photoPendingOps.listPendingDeletesByProject;
+const listPendingDeletePhotos = photoPendingOps.listPendingDeletePhotos;
 const listKeepMismatchesForProject = photoPendingOps.listKeepMismatchesForProject;
 const listKeepMismatchesByProject = photoPendingOps.listKeepMismatchesByProject;
+const listKeepMismatchPhotos = photoPendingOps.listKeepMismatchPhotos;
 const countMissingDerivativesForProject = photoPendingOps.countMissingDerivativesForProject;
 
 module.exports = {
@@ -111,6 +114,7 @@ module.exports = {
   listAll,
   listProjectFiltered,
   listSharedLinkPhotos,
+  listAllKeys,
   
   // Pagination
   locateProjectPage,
@@ -120,7 +124,9 @@ module.exports = {
   // Pending operations
   listPendingDeletesForProject,
   listPendingDeletesByProject,
+  listPendingDeletePhotos,
   listKeepMismatchesForProject,
   listKeepMismatchesByProject,
+  listKeepMismatchPhotos,
   countMissingDerivativesForProject,
 };

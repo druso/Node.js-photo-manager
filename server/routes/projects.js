@@ -80,7 +80,8 @@ router.patch('/:id', rateLimit({ windowMs: 5 * 60 * 1000, max: 10 }), async (req
   }
 });
 
-// PATCH /api/projects/:folder/rename - rename project (updates both name and folder)
+// PATCH /api/projects/:folder/rename - rename project
+// Updates display name only - maintenance will align folder name automatically
 // Limit: 10 requests per 5 minutes per IP
 router.patch('/:folder/rename', rateLimit({ windowMs: 5 * 60 * 1000, max: 10 }), async (req, res) => {
   try {
@@ -98,86 +99,35 @@ router.patch('/:folder/rename', rateLimit({ windowMs: 5 * 60 * 1000, max: 10 }),
     }
     
     // Import utilities
-    const { generateUniqueFolderName } = require('../utils/projects');
     const { writeManifest } = require('../services/projectManifest');
     
-    // Generate new unique folder name
-    const newFolder = generateUniqueFolderName(new_name);
+    // Update display name in database
+    const updated = projectsRepo.updateName(project.id, String(new_name));
     
-    // If folder name hasn't changed, just update the name
-    if (newFolder === folder) {
-      const updated = projectsRepo.updateName(project.id, String(new_name));
-      
-      // Update manifest with new name
-      writeManifest(folder, {
-        name: new_name,
-        id: project.id,
-        created_at: project.created_at
-      });
-      
-      return res.json({
-        message: 'Project name updated successfully',
-        project: {
-          id: updated.id,
-          name: updated.project_name,
-          folder: updated.project_folder,
-          created_at: updated.created_at,
-          updated_at: updated.updated_at,
-        }
-      });
-    }
-    
-    // Rename filesystem folder
-    const oldPath = path.join(PROJECTS_DIR, folder);
-    const newPath = path.join(PROJECTS_DIR, newFolder);
-    
-    if (!fs.existsSync(oldPath)) {
-      return res.status(404).json({ error: 'Project folder not found on filesystem' });
-    }
-    
-    if (fs.existsSync(newPath)) {
-      return res.status(409).json({ error: 'Target folder already exists' });
-    }
-    
-    // Perform atomic rename
-    await fs.rename(oldPath, newPath);
-    
-    // Update manifest in new location
-    writeManifest(newFolder, {
+    // Update manifest with new name
+    // Maintenance will detect mismatch and align folder name later
+    writeManifest(folder, {
       name: new_name,
       id: project.id,
       created_at: project.created_at
     });
     
-    // Update database
-    const updated = projectsRepo.updateFolderAndName(project.id, newFolder, new_name);
-    
-    // Emit SSE event for UI update
-    emitJobUpdate({
-      type: 'project_renamed',
-      old_folder: folder,
-      new_folder: newFolder,
-      new_name: new_name,
-      project_id: project.id
-    });
-    
-    log.info('project_renamed', {
+    log.info('project_name_updated', {
       project_id: project.id,
-      old_folder: folder,
-      new_folder: newFolder,
-      new_name: new_name
+      project_folder: folder,
+      new_name: new_name,
+      note: 'Folder alignment will be handled by maintenance'
     });
     
     return res.json({
-      message: 'Project renamed successfully',
+      message: 'Project name updated successfully. Folder will be aligned during next maintenance cycle.',
       project: {
         id: updated.id,
         name: updated.project_name,
         folder: updated.project_folder,
         created_at: updated.created_at,
-        updated_at: updated.updated_at,
-      },
-      old_folder: folder
+        updated_at: updated.updated_at
+      }
     });
   } catch (err) {
     log.error('project_rename_failed', { 

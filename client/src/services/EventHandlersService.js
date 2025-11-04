@@ -15,13 +15,16 @@ export class EventHandlersService {
     setViewerList,
     setPendingSelectProjectRef,
     
-    // Current state
-    selectedProject,
+    // Data
+    projects,
     projectData,
     filteredProjectData,
     
     // Functions
     fetchProjectData,
+    refreshPendingDeletes,
+    mutatePagedPhotos,
+    mutateAllPhotos,
     
     // Constants
     ALL_PROJECT_SENTINEL
@@ -33,10 +36,13 @@ export class EventHandlersService {
     this.setViewerState = setViewerState;
     this.setViewerList = setViewerList;
     this.setPendingSelectProjectRef = setPendingSelectProjectRef;
-    this.selectedProject = selectedProject;
+    this.projects = projects;
     this.projectData = projectData;
     this.filteredProjectData = filteredProjectData;
     this.fetchProjectData = fetchProjectData;
+    this.refreshPendingDeletes = refreshPendingDeletes;
+    this.mutatePagedPhotos = mutatePagedPhotos;
+    this.mutateAllPhotos = mutateAllPhotos;
     this.ALL_PROJECT_SENTINEL = ALL_PROJECT_SENTINEL;
   }
 
@@ -46,14 +52,14 @@ export class EventHandlersService {
       const createdFolder = created?.project?.folder || created?.folder || created?.project_folder;
       if (!createdFolder) {
         console.error('Project creation response missing folder:', created);
-        return;
+        return null;
       }
       
       // Add to projects list
       const newProject = {
         id: created?.project?.id || created?.id,
         folder: createdFolder,
-        name: projectName,
+        name: created?.project?.name || projectName,
         ...created?.project
       };
       
@@ -61,6 +67,8 @@ export class EventHandlersService {
       
       // Set as pending selection (will be picked up by project selection effect)
       this.setPendingSelectProjectRef(createdFolder);
+
+      return newProject;
     } catch (error) {
       console.error('Failed to create project:', error);
       throw error;
@@ -68,7 +76,7 @@ export class EventHandlersService {
   }
 
   handlePhotosUploaded() {
-    const currentFolder = this.selectedProject?.folder;
+    const currentFolder = this.projects?.find(p => p.folder === this.ALL_PROJECT_SENTINEL.folder)?.folder;
     if (currentFolder && currentFolder !== this.ALL_PROJECT_SENTINEL.folder) {
       const reload = this.fetchProjectData(currentFolder);
       Promise.resolve(reload)
@@ -80,8 +88,8 @@ export class EventHandlersService {
   }
 
   handleTagsUpdated() {
-    if (this.selectedProject) {
-      this.fetchProjectData(this.selectedProject.folder);
+    if (this.projects) {
+      this.fetchProjectData(this.projects.find(p => p.folder === this.ALL_PROJECT_SENTINEL.folder)?.folder);
     }
   }
 
@@ -146,6 +154,7 @@ export class EventHandlersService {
   }
 
   handleKeepUpdated({ filename, keep_jpg, keep_raw }) {
+    // Update project data
     this.setProjectData(prev => {
       if (!prev) return prev;
       const updated = {
@@ -156,6 +165,39 @@ export class EventHandlersService {
       };
       return updated;
     });
+    
+    // Update paged photos cache
+    if (this.mutatePagedPhotos) {
+      this.mutatePagedPhotos(prev => {
+        if (!Array.isArray(prev)) return prev;
+        return prev.map(p => 
+          p.filename === filename ? { ...p, keep_jpg, keep_raw } : p
+        );
+      });
+    }
+    
+    // Update all photos cache
+    if (this.mutateAllPhotos) {
+      this.mutateAllPhotos(prev => {
+        if (!Array.isArray(prev)) return prev;
+        return prev.map(p => 
+          p.filename === filename ? { ...p, keep_jpg, keep_raw } : p
+        );
+      });
+    }
+    
+    // Update viewer list if active
+    this.setViewerList(prev => {
+      if (!Array.isArray(prev)) return prev;
+      return prev.map(p => 
+        p.filename === filename ? { ...p, keep_jpg, keep_raw } : p
+      );
+    });
+    
+    // Refresh pending deletes count after keep flag change
+    if (this.refreshPendingDeletes) {
+      this.refreshPendingDeletes();
+    }
   }
 
   handleToggleSelection(photo) {
@@ -185,13 +227,17 @@ export function useEventHandlers({
   setViewerList,
   setPendingSelectProjectRef,
   
-  // Current state
+  // Data
   selectedProject,
+  projects,
   projectData,
   filteredProjectData,
   
   // Functions
   fetchProjectData,
+  refreshPendingDeletes,
+  mutatePagedPhotos,
+  mutateAllPhotos,
   
   // Constants
   ALL_PROJECT_SENTINEL
@@ -204,10 +250,13 @@ export function useEventHandlers({
     setViewerState,
     setViewerList,
     setPendingSelectProjectRef,
-    selectedProject,
+    projects,
     projectData,
     filteredProjectData,
     fetchProjectData,
+    refreshPendingDeletes,
+    mutatePagedPhotos,
+    mutateAllPhotos,
     ALL_PROJECT_SENTINEL
   });
 

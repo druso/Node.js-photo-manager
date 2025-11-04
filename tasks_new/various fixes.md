@@ -1,3 +1,0 @@
-- if I select an image visually it does not change to confirm the selection, the dot on the top left of the previews should be selected. [SUCCESS]
-- while an image is selected the top blue bar appear, it has a "clear" button, pressing it does nothing. It should deselect any image.[FAIL]
-- Selection works in /all or any of the /shared/links , however inside a /project I cannot select an image. This is weird because the grid on /all and on /project should be exactly the same, why is there a different behavior?[FAIL]

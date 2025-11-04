@@ -81,9 +81,38 @@ export function usePhotoDataRefresh({
     await refreshPhotoData();
   }, [isAllMode, refreshPhotoData]);
 
+  /**
+   * Refresh only pending deletes count (lighter weight than full refresh)
+   */
+  const refreshPendingDeletes = useCallback(async () => {
+    try {
+      const range = activeFilters?.dateRange || {};
+      const result = await listAllPendingDeletes({
+        date_from: range.start || undefined,
+        date_to: range.end || undefined,
+        file_type: activeFilters?.fileType !== 'any' ? activeFilters?.fileType : undefined,
+        orientation: activeFilters?.orientation !== 'any' ? activeFilters?.orientation : undefined,
+      });
+      setAllPendingDeletes({
+        jpg: result.jpg || 0,
+        raw: result.raw || 0,
+        total: result.total || 0,
+        byProject: new Set(result.byProject || []),
+      });
+    } catch (error) {
+      console.debug('Error refreshing pending deletes:', error);
+    }
+  }, [
+    activeFilters?.dateRange,
+    activeFilters?.fileType,
+    activeFilters?.orientation,
+    setAllPendingDeletes
+  ]);
+
   return { 
     refreshPhotoData,
-    refreshAllPhotos // For backward compatibility
+    refreshAllPhotos, // For backward compatibility
+    refreshPendingDeletes
   };
 }
 

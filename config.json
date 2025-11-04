@@ -32,8 +32,8 @@
     }
   },
   "processing": {
-    "thumbnail": { "maxDim": 200, "quality": 80 },
-    "preview": { "maxDim": 6000, "quality": 80 }
+    "thumbnail": { "maxDim": 600, "quality": 50 },
+    "preview": { "maxDim": 6000, "quality": 50 }
   },
   "public_assets": {
     "hash_rotation_days": 21,

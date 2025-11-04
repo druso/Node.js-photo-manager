@@ -93,7 +93,7 @@ function findNextAvailableName(baseName) {
     try {
       const projectsRepo = require('../services/repositories/projectsRepo');
       const existing = projectsRepo.getByFolder(name);
-      if (existing && existing.status !== 'canceled') {
+      if (existing) {
         return false;
       }
     } catch (err) {
@@ -161,7 +161,26 @@ function makeProjectFolderName(project_name, id) {
  * @deprecated Use isLegacyProjectFolder instead
  */
 function isCanonicalProjectFolder(folder) {
-  return isLegacyProjectFolder(folder);
+  if (!folder || typeof folder !== 'string') {
+    return false;
+  }
+
+  const normalized = String(folder).trim();
+  if (!normalized) {
+    return false;
+  }
+
+  if (isLegacyProjectFolder(normalized)) {
+    return true;
+  }
+
+  const sanitized = sanitizeFolderName(normalized);
+  if (sanitized !== normalized) {
+    return false;
+  }
+
+  // Cap length to ensure filesystem compatibility (sanitizer already enforces 240)
+  return sanitized.length <= 240;
 }
 
 /**

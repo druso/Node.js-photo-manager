@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { getDb } = require('../services/db');
+const photosRepo = require('../services/repositories/photosRepo');
 
 // Store active SSE connections
 const connections = new Map();
@@ -54,59 +55,73 @@ router.get('/pending-changes', (req, res) => {
 function getPendingChangesState() {
   try {
     const db = getDb();
-    
-    // Debug: Check total photos and mismatches
-    const totalPhotos = db.prepare('SELECT COUNT(*) as count FROM photos').get();
-    const mismatches = db.prepare(`
-      SELECT COUNT(*) as count FROM photos
-      WHERE (jpg_available = 1 AND keep_jpg = 0) OR (raw_available = 1 AND keep_raw = 0)
-    `).get();
-    
-    console.log('[SSE] Database check:', {
-      totalPhotos: totalPhotos.count,
-      totalMismatches: mismatches.count
+
+    const perProject = db.prepare(`
+      SELECT 
+        p.id AS project_id,
+        p.project_folder,
+        SUM(CASE WHEN ph.jpg_available = 1 AND ph.keep_jpg = 0 THEN 1 ELSE 0 END) AS pending_jpg,
+        SUM(CASE WHEN ph.raw_available = 1 AND ph.keep_raw = 0 THEN 1 ELSE 0 END) AS pending_raw
+      FROM photos ph
+      JOIN projects p ON p.id = ph.project_id
+      WHERE (p.status IS NULL OR p.status != 'canceled')
+        AND (
+          (ph.jpg_available = 1 AND ph.keep_jpg = 0)
+          OR (ph.raw_available = 1 AND ph.keep_raw = 0)
+        )
+      GROUP BY p.id
+    `).all();
+
+    const projectMetaById = new Map();
+    const totals = perProject.reduce((acc, row) => {
+      const jpg = Number(row.pending_jpg) || 0;
+      const raw = Number(row.pending_raw) || 0;
+      const total = jpg + raw;
+      projectMetaById.set(row.project_id, {
+        project_id: row.project_id,
+        project_folder: row.project_folder,
+        pending_total: total,
+        pending_jpg: jpg,
+        pending_raw: raw,
+        has_pending: total > 0,
+      });
+      acc.jpg += jpg;
+      acc.raw += raw;
+      acc.total += total;
+      return acc;
+    }, { total: 0, jpg: 0, raw: 0 });
+
+    const projects = Array.from(projectMetaById.values());
+    const flags = Object.fromEntries(projects.map(entry => [entry.project_folder, entry.has_pending]));
+
+    const pendingPhotos = photosRepo.listPendingDeletePhotos();
+    const photos = pendingPhotos.map(row => {
+      const meta = projectMetaById.get(row.project_id);
+      return {
+        photo_id: row.id,
+        project_id: row.project_id,
+        project_folder: meta ? meta.project_folder : null,
+        jpg_available: !!row.jpg_available,
+        raw_available: !!row.raw_available,
+        keep_jpg: row.keep_jpg === 1,
+        keep_raw: row.keep_raw === 1,
+        pending_jpg: !!(row.jpg_available && row.keep_jpg === 0),
+        pending_raw: !!(row.raw_available && row.keep_raw === 0),
+      };
     });
-    
-    // Debug: Show some example mismatches
-    const examples = db.prepare(`
-      SELECT 
-        ph.filename,
-        p.project_folder,
-        ph.jpg_available,
-        ph.keep_jpg,
-        ph.raw_available,
-        ph.keep_raw
-      FROM photos ph
-      JOIN projects p ON ph.project_id = p.id
-      WHERE (ph.jpg_available = 1 AND ph.keep_jpg = 0) OR (ph.raw_available = 1 AND ph.keep_raw = 0)
-      LIMIT 5
-    `).all();
-    
-    console.log('[SSE] Example mismatches:', examples);
-    
-    // Join with projects table to get folder name
-    const results = db.prepare(`
-      SELECT 
-        p.project_folder,
-        COUNT(*) as mismatch_count
-      FROM photos ph
-      JOIN projects p ON ph.project_id = p.id
-      WHERE (ph.jpg_available = 1 AND ph.keep_jpg = 0) OR (ph.raw_available = 1 AND ph.keep_raw = 0)
-      GROUP BY p.project_folder
-    `).all();
-    
-    console.log('[SSE] Projects with mismatches:', results);
-    
-    const state = {};
-    for (const row of results) {
-      state[row.project_folder] = true;
-    }
-    
-    console.log('[SSE] Current pending changes state:', state);
-    return state;
+
+    const timestamp = new Date().toISOString();
+
+    return {
+      timestamp,
+      totals,
+      projects,
+      photos,
+      flags,
+    };
   } catch (error) {
     console.error('[SSE] Error getting pending changes state:', error);
-    return {};
+    return { timestamp: new Date().toISOString(), totals: { total: 0, jpg: 0, raw: 0 }, projects: [], photos: [], flags: {} };
   }
 }
 

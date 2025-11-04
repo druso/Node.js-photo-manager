@@ -54,67 +54,20 @@ function resolveProject(selector) {
   return null;
 }
 
-function computePendingCounts(project) {
-  const rows = photosRepo.listPendingDeletesForProject(project.id);
-  let pendingJpg = 0;
-  let pendingRaw = 0;
-  for (const row of rows) {
-    if (row.jpg_available && row.keep_jpg === 0) pendingJpg++;
-    if (row.raw_available && row.keep_raw === 0) pendingRaw++;
-  }
-  return { pending_jpg: pendingJpg, pending_raw: pendingRaw, total: pendingJpg + pendingRaw };
-}
-
-function computeMismatchStats(project) {
-  const rows = photosRepo.listKeepMismatchesForProject(project.id);
-  let mismatchJpg = 0;
-  let mismatchRaw = 0;
-  let updated = 0;
-  for (const row of rows) {
-    const shouldKeepJpg = toBoolean(row.jpg_available);
-    const shouldKeepRaw = toBoolean(row.raw_available);
-    const currentKeepJpg = toBoolean(row.keep_jpg);
-    const currentKeepRaw = toBoolean(row.keep_raw);
-
-    if (currentKeepJpg !== shouldKeepJpg) mismatchJpg++;
-    if (currentKeepRaw !== shouldKeepRaw) mismatchRaw++;
-
-    if (currentKeepJpg !== shouldKeepJpg || currentKeepRaw !== shouldKeepRaw) {
-      photosRepo.updateKeepFlags(row.id, {
-        keep_jpg: shouldKeepJpg,
-        keep_raw: shouldKeepRaw,
-      });
-      updated++;
-    }
-  }
-  return { updated, processed: rows.length, mismatch_jpg: mismatchJpg, mismatch_raw: mismatchRaw };
-}
-
 function commitChanges(req, res) {
   try {
     const folderParam = req.params && req.params.folder;
     const scope = req.routeContext && req.routeContext.scope ? req.routeContext.scope : (folderParam ? 'project' : 'global');
     const selectors = gatherSelectors(req.body);
-    const seen = new Set();
-    const targets = [];
-    const countsByProject = new Map();
+    const requestedProjects = new Map();
     const missingSelectors = [];
-
-    const addProject = (project) => {
-      if (!project) return;
-      if (project.status === 'canceled') return;
-      if (seen.has(project.id)) return;
-      seen.add(project.id);
-      targets.push(project);
-    };
 
     if (folderParam) {
       const project = projectsRepo.getByFolder(folderParam);
       if (!project) {
         return res.status(404).json({ error: 'Project not found' });
       }
-      addProject(project);
-      countsByProject.set(project.id, computePendingCounts(project));
+      requestedProjects.set(project.id, project);
     }
 
     if (!folderParam && selectors.length) {
@@ -124,26 +77,63 @@ function commitChanges(req, res) {
           missingSelectors.push(selector);
           continue;
         }
-        addProject(project);
-        countsByProject.set(project.id, computePendingCounts(project));
+        requestedProjects.set(project.id, project);
       }
     }
 
-    if (!folderParam && targets.length === 0) {
-      const aggregated = photosRepo.listPendingDeletesByProject();
-      for (const row of aggregated) {
-        const project = projectsRepo.getById(row.project_id);
-        if (!project) continue;
-        addProject(project);
-        countsByProject.set(project.id, {
-          pending_jpg: Number(row.pending_jpg) || 0,
-          pending_raw: Number(row.pending_raw) || 0,
-          total: (Number(row.pending_jpg) || 0) + (Number(row.pending_raw) || 0),
+    const projectIdsFilter = requestedProjects.size ? Array.from(requestedProjects.keys()) : null;
+
+    const pendingPhotos = photosRepo.listPendingDeletePhotos({ projectIds: projectIdsFilter });
+
+    if (!pendingPhotos.length) {
+      return res.json({
+        queued_projects: 0,
+        projects: [],
+        missing: missingSelectors.length ? missingSelectors : undefined,
+        message: 'No pending deletions to commit',
+      });
+    }
+
+    const groupedByProject = new Map();
+    const ensureProject = (projectId) => {
+      if (!groupedByProject.has(projectId)) {
+        let project = requestedProjects.get(projectId);
+        if (!project) {
+          project = projectsRepo.getById(projectId);
+          if (!project || project.status === 'canceled') {
+            return null;
+          }
+        }
+        groupedByProject.set(projectId, {
+          project,
+          filenames: new Set(),
+          photoIds: new Set(),
+          photoNamesById: new Map(),
+          pending_jpg: 0,
+          pending_raw: 0,
         });
       }
+      return groupedByProject.get(projectId);
+    };
+
+    for (const row of pendingPhotos) {
+      const group = ensureProject(row.project_id);
+      if (!group) continue;
+      group.filenames.add(String(row.filename));
+      group.photoIds.add(Number(row.id));
+      group.photoNamesById.set(Number(row.id), String(row.filename));
+      if (row.jpg_available && row.keep_jpg === 0) group.pending_jpg++;
+      if (row.raw_available && row.keep_raw === 0) group.pending_raw++;
     }
 
-    if (!targets.length) {
+    // Filter out any projects that ended up with zero actionable items
+    for (const [projectId, group] of Array.from(groupedByProject.entries())) {
+      if (!group.filenames.size) {
+        groupedByProject.delete(projectId);
+      }
+    }
+
+    if (!groupedByProject.size) {
       return res.json({
         queued_projects: 0,
         projects: [],
@@ -153,52 +143,101 @@ function commitChanges(req, res) {
     }
 
     if (scope === 'project') {
-      const project = targets[0];
-      const counts = countsByProject.get(project.id) || computePendingCounts(project);
-      if (!counts.total) {
-        return res.json({ started: false, pending: 0, pending_jpg: 0, pending_raw: 0 });
-      }
-      const { task_id } = tasksOrchestrator.startTask({ project_id: project.id, type: 'change_commit', source: 'commit' });
+      const projectEntry = groupedByProject.values().next().value;
+      const filenames = Array.from(projectEntry.filenames);
+      const photoItems = Array.from(projectEntry.photoIds).map(photo_id => ({ photo_id }));
+      const { task_id } = tasksOrchestrator.startTask({
+        project_id: projectEntry.project.id,
+        type: 'change_commit',
+        source: 'commit',
+        payload: { filenames },
+        items: photoItems,
+      });
       return res.json({
         started: true,
         task_id,
-        pending: counts.total,
-        pending_jpg: counts.pending_jpg,
-        pending_raw: counts.pending_raw,
+        pending: projectEntry.pending_jpg + projectEntry.pending_raw,
+        pending_jpg: projectEntry.pending_jpg,
+        pending_raw: projectEntry.pending_raw,
       });
     }
 
-    const queued = [];
-    const skipped = [];
-    for (const project of targets) {
-      const counts = countsByProject.get(project.id) || computePendingCounts(project);
-      if (!counts.total) {
-        skipped.push({
-          project_id: project.id,
-          project_folder: project.project_folder,
-          project_name: project.project_name,
-          pending_jpg: counts.pending_jpg,
-          pending_raw: counts.pending_raw,
-        });
-        continue;
-      }
-      const { task_id } = tasksOrchestrator.startTask({ project_id: project.id, type: 'change_commit', source: 'commit' });
-      queued.push({
+    const projectSummaries = [];
+    const photoItems = [];
+    let totalPending = 0;
+
+    for (const { project, photoIds, photoNamesById, pending_jpg, pending_raw } of groupedByProject.values()) {
+      if (!photoIds.size) continue;
+      const pending_total = (pending_jpg || 0) + (pending_raw || 0);
+      totalPending += pending_total;
+
+      const summary = {
         project_id: project.id,
         project_folder: project.project_folder,
         project_name: project.project_name,
-        pending_jpg: counts.pending_jpg,
-        pending_raw: counts.pending_raw,
-        task_id,
+        pending_jpg,
+        pending_raw,
+        pending_total,
+        photo_count: photoIds.size,
+      };
+      projectSummaries.push(summary);
+
+      for (const photoId of photoIds) {
+        const filename = photoNamesById.get(photoId) || null;
+        photoItems.push({
+          photo_id: photoId,
+          filename,
+          project_id: project.id,
+          project_folder: project.project_folder,
+          project_name: project.project_name,
+        });
+      }
+    }
+
+    if (!photoItems.length) {
+      return res.json({
+        queued_projects: 0,
+        projects: [],
+        missing: missingSelectors.length ? missingSelectors : undefined,
+        message: 'No pending deletions to commit',
       });
     }
 
+    const taskInfo = tasksOrchestrator.startTask({
+      type: 'change_commit_all',
+      source: 'commit',
+      payload: {
+        summary: {
+          project_count: projectSummaries.length,
+          total_pending: totalPending,
+          projects: projectSummaries.map(({ project_id, project_folder, project_name, pending_jpg, pending_raw, photo_count }) => ({
+            project_id,
+            project_folder,
+            project_name,
+            pending_jpg,
+            pending_raw,
+            photo_count,
+          })),
+        },
+      },
+      items: photoItems,
+    });
+
+    const enrichedProjects = projectSummaries.map(summary => ({
+      ...summary,
+      task_id: taskInfo && taskInfo.task_id ? taskInfo.task_id : null,
+    }));
+
     return res.json({
-      queued_projects: queued.length,
-      projects: queued,
-      skipped: skipped.length ? skipped : undefined,
+      started: true,
+      scope: 'photo_set',
+      task_id: taskInfo && taskInfo.task_id ? taskInfo.task_id : null,
+      chunked: taskInfo ? !!taskInfo.chunked : false,
+      job_count: taskInfo && typeof taskInfo.job_count === 'number' ? taskInfo.job_count : undefined,
+      queued_projects: enrichedProjects.length,
+      total_pending: totalPending,
+      projects: enrichedProjects,
       missing: missingSelectors.length ? missingSelectors : undefined,
-      message: queued.length ? undefined : 'No pending deletions to commit',
     });
   } catch (err) {
     log.error('commit_changes_failed', { error: err && err.message, stack: err && err.stack });
@@ -211,25 +250,15 @@ function revertChanges(req, res) {
     const folderParam = req.params && req.params.folder;
     const scope = req.routeContext && req.routeContext.scope ? req.routeContext.scope : (folderParam ? 'project' : 'global');
     const selectors = gatherSelectors(req.body);
-    const seen = new Set();
-    const targets = [];
-    const statsByProject = new Map();
+    const requestedProjects = new Map();
     const missingSelectors = [];
-
-    const addProject = (project) => {
-      if (!project) return;
-      if (project.status === 'canceled') return;
-      if (seen.has(project.id)) return;
-      seen.add(project.id);
-      targets.push(project);
-    };
 
     if (folderParam) {
       const project = projectsRepo.getByFolder(folderParam);
       if (!project) {
         return res.status(404).json({ error: 'Project not found' });
       }
-      addProject(project);
+      requestedProjects.set(project.id, project);
     }
 
     if (!folderParam && selectors.length) {
@@ -239,24 +268,14 @@ function revertChanges(req, res) {
           missingSelectors.push(selector);
           continue;
         }
-        addProject(project);
+        requestedProjects.set(project.id, project);
       }
     }
 
-    if (!folderParam && targets.length === 0) {
-      const aggregated = photosRepo.listKeepMismatchesByProject();
-      for (const row of aggregated) {
-        const project = projectsRepo.getById(row.project_id);
-        if (!project) continue;
-        addProject(project);
-        statsByProject.set(project.id, {
-          mismatch_jpg: Number(row.mismatch_jpg) || 0,
-          mismatch_raw: Number(row.mismatch_raw) || 0,
-        });
-      }
-    }
+    const projectIdsFilter = requestedProjects.size ? Array.from(requestedProjects.keys()) : null;
+    const mismatchPhotos = photosRepo.listKeepMismatchPhotos({ projectIds: projectIdsFilter });
 
-    if (!targets.length) {
+    if (!mismatchPhotos.length) {
       return res.json({
         updated_projects: 0,
         projects: [],
@@ -265,33 +284,74 @@ function revertChanges(req, res) {
       });
     }
 
+    const groupedByProject = new Map();
+    const ensureProject = (projectId) => {
+      if (!groupedByProject.has(projectId)) {
+        let project = requestedProjects.get(projectId);
+        if (!project) {
+          project = projectsRepo.getById(projectId);
+          if (!project || project.status === 'canceled') {
+            return null;
+          }
+        }
+        groupedByProject.set(projectId, {
+          project,
+          photos: [],
+        });
+      }
+      return groupedByProject.get(projectId);
+    };
+
+    for (const row of mismatchPhotos) {
+      const group = ensureProject(row.project_id);
+      if (!group) continue;
+      group.photos.push(row);
+    }
+
+    if (!groupedByProject.size) {
+      return res.json({
+        updated_projects: 0,
+        projects: [],
+        missing: missingSelectors.length ? missingSelectors : undefined,
+        message: 'No keep flag mismatches found',
+      });
+    }
+
+    const applyRevert = (photos) => {
+      let updated = 0;
+      let mismatch_jpg = 0;
+      let mismatch_raw = 0;
+      for (const photo of photos) {
+        const shouldKeepJpg = toBoolean(photo.jpg_available);
+        const shouldKeepRaw = toBoolean(photo.raw_available);
+        if (toBoolean(photo.keep_jpg) !== shouldKeepJpg) mismatch_jpg++;
+        if (toBoolean(photo.keep_raw) !== shouldKeepRaw) mismatch_raw++;
+        if (toBoolean(photo.keep_jpg) !== shouldKeepJpg || toBoolean(photo.keep_raw) !== shouldKeepRaw) {
+          photosRepo.updateKeepFlags(photo.id, {
+            keep_jpg: shouldKeepJpg,
+            keep_raw: shouldKeepRaw,
+          });
+          updated++;
+        }
+      }
+      return {
+        updated,
+        processed: photos.length,
+        mismatch_jpg,
+        mismatch_raw,
+      };
+    };
+
     if (scope === 'project') {
-      const project = targets[0];
-      const stats = computeMismatchStats(project);
-      return res.json({ updated: stats.updated, processed: stats.processed, mismatch_jpg: stats.mismatch_jpg, mismatch_raw: stats.mismatch_raw });
+      const projectEntry = groupedByProject.values().next().value;
+      const stats = applyRevert(projectEntry.photos);
+      return res.json(stats);
     }
 
     const updatedProjects = [];
-    const skipped = [];
-    for (const project of targets) {
-      const existing = statsByProject.get(project.id);
-      if (!existing && !photosRepo.listKeepMismatchesForProject(project.id).length) {
-        skipped.push({
-          project_id: project.id,
-          project_folder: project.project_folder,
-          project_name: project.project_name,
-        });
-        continue;
-      }
-      const stats = computeMismatchStats(project);
-      if (!stats.updated) {
-        skipped.push({
-          project_id: project.id,
-          project_folder: project.project_folder,
-          project_name: project.project_name,
-        });
-        continue;
-      }
+    for (const { project, photos } of groupedByProject.values()) {
+      const stats = applyRevert(photos);
+      if (!stats.updated) continue;
       updatedProjects.push({
         project_id: project.id,
         project_folder: project.project_folder,
@@ -306,9 +366,7 @@ function revertChanges(req, res) {
     return res.json({
       updated_projects: updatedProjects.length,
       projects: updatedProjects,
-      skipped: skipped.length ? skipped : undefined,
       missing: missingSelectors.length ? missingSelectors : undefined,
-      message: updatedProjects.length ? undefined : 'No keep flag mismatches found',
     });
   } catch (err) {
     log.error('revert_changes_failed', { error: err && err.message, stack: err && err.stack });

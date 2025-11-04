@@ -6,6 +6,7 @@ import { authFetch } from '../api/httpClient';
 import { usePublicHashContext } from '../contexts/PublicHashContext';
 import { isPublicPhoto } from '../utils/publicHash';
 import { useToast } from '../ui/toast/ToastContext';
+import { updateKeep } from '../api/keepApi';
 
 const PhotoViewer = ({
   projectData,
@@ -64,6 +65,23 @@ const toast = useToast();
 
 const photos = projectData?.photos || [];
 const currentPhoto = photos[currentIndex];
+
+  // Auto-advance if current photo is filtered out (e.g., planned for deletion in preview mode)
+  useEffect(() => {
+    if (photos.length === 0) {
+      // No photos left, close viewer
+      if (onClose) onClose();
+      return;
+    }
+    
+    // If current index is out of bounds, clamp to valid range
+    if (currentIndex >= photos.length) {
+      setCurrentIndex(Math.max(0, photos.length - 1));
+    } else if (currentIndex < 0 && photos.length > 0) {
+      setCurrentIndex(0);
+    }
+  }, [photos.length, currentIndex, onClose]);
+
   useEffect(() => {
     if (typeof onCurrentIndexChange === 'function') {
       onCurrentIndexChange(currentIndex, currentPhoto);

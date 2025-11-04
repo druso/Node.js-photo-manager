@@ -28,16 +28,51 @@ function startTask({ project_id = null, type, source = 'user', items = null, ten
   
   const payload = { task_id, task_type: type, source, ...extraPayload };
   let job;
-  
-  if (items && Array.isArray(items) && items.length > 0) {
-    job = jobsRepo.enqueueWithItems({ 
-      tenant_id, 
-      project_id, 
-      type: first.type, 
-      payload, 
-      items: items.map(fn => typeof fn === 'string' ? { filename: fn } : fn), 
+
+  const normalizeItems = () => {
+    if (!items || !Array.isArray(items) || items.length === 0) return null;
+
+    let defaultProjectHints = null;
+    if (project_id) {
+      const project = projectsRepo.getById(project_id);
+      if (project) {
+        defaultProjectHints = {
+          project_id: project.id,
+          project_folder: project.project_folder,
+          project_name: project.project_name,
+        };
+      }
+    }
+
+    return items.map((entry) => {
+      if (typeof entry === 'string') {
+        return defaultProjectHints ? { filename: entry, ...defaultProjectHints } : { filename: entry };
+      }
+
+      if (!entry || typeof entry !== 'object') {
+        return entry;
+      }
+
+      if (defaultProjectHints && entry.project_id == null && entry.project_folder == null) {
+        return { ...defaultProjectHints, ...entry };
+      }
+
+      return { ...entry };
+    });
+  };
+
+  const normalizedItems = normalizeItems();
+
+  if (normalizedItems && normalizedItems.length > 0) {
+    job = jobsRepo.enqueueWithItems({
+      tenant_id,
+      project_id,
+      type: first.type,
+      payload,
+      items: normalizedItems,
       priority: first.priority || 0,
-      scope: effectiveScope
+      scope: effectiveScope,
+      autoChunk: true,
     });
   } else {
     job = jobsRepo.enqueue({ 

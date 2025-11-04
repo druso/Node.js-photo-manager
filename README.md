@@ -29,7 +29,7 @@ This application helps photographers manage their photo collections by:
 - **Modular Architecture**: Both frontend and backend use modular architecture:
   - **Frontend**: Specialized hooks, services, and components for maintainability
   - **Backend**: Repository layer optimized into focused modules (photosRepo.js delegates to specialized photoCrud, photoFiltering, photoPagination, photoPendingOps, and photoQueryBuilders modules)
-  - **Job Pipeline**: Workers consume scope-aware jobs (`project`, `photo_set`, `global`) using shared helpers in `server/services/workers/shared/photoSetUtils.js` so cross-project operations stay consistent. See `JOBS_OVERVIEW.md` for the canonical catalog.
+  - **Job Pipeline**: Workers consume scope-aware jobs (`project`, `photo_set`, `global`) using shared helpers in `server/services/workers/shared/photoSetUtils.js` so cross-project operations stay consistent. Deletion tasks are now fully image-scoped: `tasksOrchestrator.startTask()` injects `{ project_id, project_folder, project_name }` hints into each `photo_set` job item, and `fileRemovalWorker` processes the explicit `photo_id` list before considering any project-wide scan fallback. SSE payloads for item updates include the `photo_id`, letting the client reconcile cross-project deletions and moves deterministically. See `JOBS_OVERVIEW.md` for the canonical catalog.
 
 ## API Quick Reference
 
@@ -238,7 +238,7 @@ Tip: In development, the Vite dev server runs on `5173`; the backend runs on `50
 ## Maintenance
 
 - Background maintenance keeps disk and database in sync via a unified hourly `maintenance` task per project, which encapsulates: `trash_maintenance` (100), `manifest_check` (95), `folder_check` (95), `manifest_cleaning` (80).
-- Manual reconciliation: `POST /api/projects/:folder/commit-changes` moves non‑kept files to `.trash` and enqueues the reconciliation steps. See the canonical jobs catalog in `JOBS_OVERVIEW.md`.
+- Manual reconciliation: `POST /api/projects/:folder/commit-changes` moves non‑kept files to `.trash` and enqueues the reconciliation steps. Global commits (`POST /api/photos/commit-changes`) now batch pending deletions into a single `change_commit_all` photo-set task with `{ photo_id, filename }` job items, preserving per-project summaries while letting the worker pipeline auto-chunk large sets. See the canonical jobs catalog in `JOBS_OVERVIEW.md`.
 - Worker pipeline uses two lanes: a priority lane (maintenance, deletion) and a normal lane. Keys: `pipeline.priority_lane_slots`, `pipeline.priority_threshold`. See details in `PROJECT_OVERVIEW.md`.
 
 ## Common Issues

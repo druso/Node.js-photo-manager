@@ -30,20 +30,107 @@ export function usePendingDeletes({
 }) {
   const isAllPhotosView = view?.project_filter === null;
 
-  const aggregateTotals = useMemo(() => {
-    const source = allPendingDeletes || {};
-    const set = source.byProject instanceof Set
-      ? new Set(source.byProject)
-      : new Set(Array.isArray(source.byProject) ? source.byProject : []);
-    return {
-      total: source.total ?? 0,
-      jpg: source.jpg ?? 0,
-      raw: source.raw ?? 0,
-      byProject: set
+  const sseData = useMemo(() => {
+    if (!pendingChangesSSE || typeof pendingChangesSSE !== 'object') return null;
+    const totals = pendingChangesSSE.totals;
+    const projects = Array.isArray(pendingChangesSSE.projects) ? pendingChangesSSE.projects : null;
+    const hasStructuredPayload = (totals && typeof totals === 'object') || projects;
+    if (!hasStructuredPayload) return null;
+
+    const normalizedTotals = {
+      total: Number(totals?.total) || 0,
+      jpg: Number(totals?.jpg) || 0,
+      raw: Number(totals?.raw) || 0,
     };
-  }, [allPendingDeletes]);
+
+    const projectTotals = {};
+    const activeFolders = [];
+
+    if (projects) {
+      for (const entry of projects) {
+        if (!entry || typeof entry.project_folder !== 'string') continue;
+        const total = Number(entry.pending_total) || 0;
+        const pendingJpg = Number(entry.pending_jpg) || 0;
+        const pendingRaw = Number(entry.pending_raw) || 0;
+        projectTotals[entry.project_folder] = {
+          total,
+          jpg: pendingJpg,
+          raw: pendingRaw,
+        };
+        if (total > 0) {
+          activeFolders.push(entry.project_folder);
+        }
+      }
+    }
+
+    return {
+      totals: normalizedTotals,
+      projectTotals,
+      activeFolders,
+    };
+  }, [pendingChangesSSE]);
+
+  const legacyFlags = useMemo(() => {
+    if (!pendingChangesSSE || typeof pendingChangesSSE !== 'object') return null;
+    if (sseData) return null;
+    return pendingChangesSSE;
+  }, [pendingChangesSSE, sseData]);
+
+  const aggregateTotals = useMemo(() => {
+    // Prioritize allPendingDeletes (can be force-reset) over SSE
+    const source = allPendingDeletes || {};
+    const hasExplicitData = source.total !== undefined || source.jpg !== undefined || source.raw !== undefined;
+    
+    if (hasExplicitData) {
+      const set = source.byProject instanceof Set
+        ? new Set(source.byProject)
+        : new Set(Array.isArray(source.byProject) ? source.byProject : []);
+      return {
+        total: source.total ?? 0,
+        jpg: source.jpg ?? 0,
+        raw: source.raw ?? 0,
+        byProject: set
+      };
+    }
+
+    // Fall back to SSE data if allPendingDeletes is not set
+    if (sseData) {
+      return {
+        total: sseData.totals.total,
+        jpg: sseData.totals.jpg,
+        raw: sseData.totals.raw,
+        byProject: new Set(sseData.activeFolders),
+      };
+    }
+
+    // Default to zero
+    return {
+      total: 0,
+      jpg: 0,
+      raw: 0,
+      byProject: new Set()
+    };
+  }, [allPendingDeletes, sseData]);
 
   const projectTotals = useMemo(() => {
+    if (sseData && selectedProject?.folder) {
+      const entry = sseData.projectTotals[selectedProject.folder];
+      if (!entry) {
+        return {
+          total: 0,
+          jpg: 0,
+          raw: 0,
+          byProject: new Set(),
+        };
+      }
+      return {
+        total: entry.total,
+        jpg: entry.jpg,
+        raw: entry.raw,
+        byProject: entry.total > 0 ? new Set([selectedProject.folder]) : new Set(),
+      };
+    }
+
     if (!projectPendingDeletes || !selectedProject?.folder) return null;
     const entry = projectPendingDeletes[selectedProject.folder];
     if (!entry) {
@@ -62,37 +149,57 @@ export function usePendingDeletes({
       raw: entry.raw ?? 0,
       byProject: set
     };
-  }, [projectPendingDeletes, selectedProject?.folder]);
+  }, [sseData, projectPendingDeletes, selectedProject?.folder]);
 
   const hasPendingDeletesAllSse = useMemo(() => {
-    if (!pendingChangesSSE || typeof pendingChangesSSE !== 'object') return false;
-    return Object.values(pendingChangesSSE).some(Boolean);
-  }, [pendingChangesSSE]);
+    if (sseData) {
+      return sseData.totals.total > 0 || sseData.activeFolders.length > 0;
+    }
+    if (legacyFlags) {
+      return Object.values(legacyFlags).some(Boolean);
+    }
+    return false;
+  }, [sseData, legacyFlags]);
 
   const hasPendingDeletesProjectSse = useMemo(() => {
-    if (!pendingChangesSSE || !selectedProject?.folder) return false;
-    return pendingChangesSSE[selectedProject.folder] === true;
-  }, [pendingChangesSSE, selectedProject?.folder]);
+    if (!selectedProject?.folder) return false;
+    if (sseData) {
+      const entry = sseData.projectTotals[selectedProject.folder];
+      return !!entry && entry.total > 0;
+    }
+    if (legacyFlags) {
+      return legacyFlags[selectedProject.folder] === true;
+    }
+    return false;
+  }, [sseData, legacyFlags, selectedProject?.folder]);
 
   const hasAggregatedAll = aggregateTotals.total > 0;
   const hasAggregatedProject = !!projectTotals && projectTotals.total > 0;
 
+  // Prioritize aggregated totals (which can be force-reset) over SSE
+  // Only fall back to SSE if aggregated totals are not available
   const hasPendingDeletes = (view !== undefined)
-    ? (isAllPhotosView ? (hasAggregatedAll || hasPendingDeletesAllSse) : (hasAggregatedProject || hasPendingDeletesProjectSse))
-    : (isAllMode ? (hasAggregatedAll || hasPendingDeletesAllSse) : (hasAggregatedProject || hasPendingDeletesProjectSse));
+    ? (isAllPhotosView 
+        ? (hasAggregatedAll || (aggregateTotals.total === 0 && aggregateTotals.byProject.size === 0 ? false : hasPendingDeletesAllSse))
+        : (hasAggregatedProject || (projectTotals && projectTotals.total === 0 && projectTotals.byProject.size === 0 ? false : hasPendingDeletesProjectSse)))
+    : (isAllMode 
+        ? (hasAggregatedAll || (aggregateTotals.total === 0 && aggregateTotals.byProject.size === 0 ? false : hasPendingDeletesAllSse))
+        : (hasAggregatedProject || (projectTotals && projectTotals.total === 0 && projectTotals.byProject.size === 0 ? false : hasPendingDeletesProjectSse)));
 
   const pendingProjectsCount = useMemo(() => {
     if (isAllPhotosView) {
       if (aggregateTotals.byProject.size > 0) return aggregateTotals.byProject.size;
-      if (!pendingChangesSSE || typeof pendingChangesSSE !== 'object') return 0;
-      return Object.values(pendingChangesSSE).filter(Boolean).length;
+      if (legacyFlags) {
+        return Object.values(legacyFlags).filter(Boolean).length;
+      }
+      return 0;
     }
     if (projectTotals && projectTotals.byProject.size > 0) return projectTotals.byProject.size;
-    if (pendingChangesSSE && selectedProject?.folder) {
-      return pendingChangesSSE[selectedProject.folder] ? 1 : 0;
+    if (legacyFlags && selectedProject?.folder) {
+      return legacyFlags[selectedProject.folder] ? 1 : 0;
     }
     return 0;
-  }, [aggregateTotals.byProject, isAllPhotosView, pendingChangesSSE, projectTotals, selectedProject?.folder]);
+  }, [aggregateTotals.byProject, isAllPhotosView, legacyFlags, projectTotals, selectedProject?.folder]);
 
   if (IS_DEV) {
     console.log('[usePendingDeletes]', {
@@ -101,7 +208,9 @@ export function usePendingDeletes({
       hasPendingDeletes,
       pendingProjectsCount,
       aggregateTotals,
-      projectTotals
+      projectTotals,
+      sse: sseData,
+      legacyFlags
     });
   }
 

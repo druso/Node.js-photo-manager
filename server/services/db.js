@@ -212,6 +212,9 @@ function applySchema(db) {
     try { log.warn('index_create_failed', { index: 'idx_projects_folder', error: e && e.message }); } catch {}
   }
 
+  // Note: pending_folder_rename and desired_folder columns removed (2025-11-04)
+  // Folder alignment is now handled by maintenance system, not via explicit flags
+
 }
 
 function withTransaction(fn) {

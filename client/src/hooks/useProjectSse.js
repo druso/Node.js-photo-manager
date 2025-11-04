@@ -57,11 +57,19 @@ export default function useProjectSse({
 
       // 1) Item-level updates without full refetch
       if (evt && evt.type === 'item' && evt.project_folder === selectedProject.folder) {
+        const targetId = typeof evt.photo_id === 'number' ? evt.photo_id : Number.isFinite(Number(evt.photo_id)) ? Number(evt.photo_id) : null;
+        const targetFilename = String(evt.filename || '');
+        const targetBase = stripKnownExt(targetFilename);
+
         setProjectData(prev => {
           if (!prev || !Array.isArray(prev.photos)) return prev;
-          const target = String(evt.filename || '');
-          const targetBase = stripKnownExt(target);
-          const idx = prev.photos.findIndex(p => (p.filename === target) || (stripKnownExt(p.filename) === targetBase));
+          const idx = prev.photos.findIndex(p => {
+            if (!p) return false;
+            if (targetId != null && Number.isFinite(Number(p.id)) && Number(p.id) === targetId) return true;
+            const existingFile = String(p.filename || '');
+            if (existingFile === targetFilename) return true;
+            return stripKnownExt(existingFile) === targetBase;
+          });
           if (idx === -1) return prev;
           const updated = { ...prev.photos[idx] };
           if (evt.thumbnail_status) updated.thumbnail_status = evt.thumbnail_status;
@@ -69,15 +77,20 @@ export default function useProjectSse({
           if (typeof evt.keep_jpg === 'boolean') updated.keep_jpg = evt.keep_jpg;
           if (typeof evt.keep_raw === 'boolean') updated.keep_raw = evt.keep_raw;
           if (evt.updated_at) updated.updated_at = evt.updated_at;
+          if (targetId != null) updated.id = targetId;
           const photos = prev.photos.slice();
           photos[idx] = updated;
           return { ...prev, photos };
         });
         mutatePagedPhotos(prev => {
           if (!Array.isArray(prev)) return prev;
-          const target = String(evt.filename || '');
-          const targetBase = stripKnownExt(target);
-          const idx = prev.findIndex(p => (p.filename === target) || (stripKnownExt(p.filename) === targetBase));
+          const idx = prev.findIndex(p => {
+            if (!p) return false;
+            if (targetId != null && Number.isFinite(Number(p.id)) && Number(p.id) === targetId) return true;
+            const existingFile = String(p.filename || '');
+            if (existingFile === targetFilename) return true;
+            return stripKnownExt(existingFile) === targetBase;
+          });
           if (idx === -1) return prev;
           const updated = { ...prev[idx] };
           if (evt.thumbnail_status) updated.thumbnail_status = evt.thumbnail_status;
@@ -85,6 +98,7 @@ export default function useProjectSse({
           if (typeof evt.keep_jpg === 'boolean') updated.keep_jpg = evt.keep_jpg;
           if (typeof evt.keep_raw === 'boolean') updated.keep_raw = evt.keep_raw;
           if (evt.updated_at) updated.updated_at = evt.updated_at;
+          if (targetId != null) updated.id = targetId;
           const next = prev.slice();
           next[idx] = updated;
           return next;
@@ -94,36 +108,68 @@ export default function useProjectSse({
 
       // 1b) Item removed: drop from list in-place (tolerant to extension differences)
       if (evt && evt.type === 'item_removed' && evt.project_folder === selectedProject.folder) {
+        const targetId = typeof evt.photo_id === 'number' ? evt.photo_id : Number.isFinite(Number(evt.photo_id)) ? Number(evt.photo_id) : null;
         const fname = String(evt.filename || '');
         const base = stripKnownExt(fname);
         setProjectData(prev => {
           if (!prev || !Array.isArray(prev.photos)) return prev;
-          const photos = prev.photos.filter(p => p.filename !== fname && stripKnownExt(p.filename) !== base);
+          const photos = prev.photos.filter(p => {
+            if (!p) return false;
+            if (targetId != null && Number.isFinite(Number(p.id)) && Number(p.id) === targetId) return false;
+            const existingFile = String(p.filename || '');
+            if (existingFile === fname) return false;
+            return stripKnownExt(existingFile) !== base;
+          });
           return { ...prev, photos };
         });
         mutatePagedPhotos(prev => {
           if (!Array.isArray(prev)) return prev;
-          return prev.filter(p => p.filename !== fname && stripKnownExt(p.filename) !== base);
+          return prev.filter(p => {
+            if (!p) return false;
+            if (targetId != null && Number.isFinite(Number(p.id)) && Number(p.id) === targetId) return false;
+            const existingFile = String(p.filename || '');
+            if (existingFile === fname) return false;
+            return stripKnownExt(existingFile) !== base;
+          });
         });
         return;
       }
 
       // 1c) Item moved into this project: update if exists (tolerant match), else soft refetch
       if (evt && evt.type === 'item_moved' && evt.project_folder === selectedProject.folder) {
+        const targetId = typeof evt.photo_id === 'number' ? evt.photo_id : Number.isFinite(Number(evt.photo_id)) ? Number(evt.photo_id) : null;
         const fname = String(evt.filename || '');
         const base = stripKnownExt(fname);
         const currentProjectData = projectDataRef.current;
         const currentPagedPhotos = pagedPhotosRef.current;
         const existsInProjectData = Array.isArray(currentProjectData?.photos)
-          ? currentProjectData.photos.findIndex(p => p.filename === fname || stripKnownExt(p.filename) === base) !== -1
+          ? currentProjectData.photos.findIndex(p => {
+              if (!p) return false;
+              if (targetId != null && Number.isFinite(Number(p.id)) && Number(p.id) === targetId) return true;
+              const existingFile = String(p.filename || '');
+              if (existingFile === fname) return true;
+              return stripKnownExt(existingFile) === base;
+            }) !== -1
           : false;
         const existsInPaged = Array.isArray(currentPagedPhotos)
-          ? currentPagedPhotos.findIndex(p => p.filename === fname || stripKnownExt(p.filename) === base) !== -1
+          ? currentPagedPhotos.findIndex(p => {
+              if (!p) return false;
+              if (targetId != null && Number.isFinite(Number(p.id)) && Number(p.id) === targetId) return true;
+              const existingFile = String(p.filename || '');
+              if (existingFile === fname) return true;
+              return stripKnownExt(existingFile) === base;
+            }) !== -1
           : false;
 
         setProjectData(prev => {
           if (!prev || !Array.isArray(prev.photos)) return prev;
-          const idx = prev.photos.findIndex(p => p.filename === fname || stripKnownExt(p.filename) === base);
+          const idx = prev.photos.findIndex(p => {
+            if (!p) return false;
+            if (targetId != null && Number.isFinite(Number(p.id)) && Number(p.id) === targetId) return true;
+            const existingFile = String(p.filename || '');
+            if (existingFile === fname) return true;
+            return stripKnownExt(existingFile) === base;
+          });
           if (idx === -1) return prev;
           const updated = { ...prev.photos[idx] };
           if (evt.thumbnail_status) updated.thumbnail_status = evt.thumbnail_status;
@@ -131,13 +177,20 @@ export default function useProjectSse({
           if (typeof evt.keep_jpg === 'boolean') updated.keep_jpg = evt.keep_jpg;
           if (typeof evt.keep_raw === 'boolean') updated.keep_raw = evt.keep_raw;
           if (evt.updated_at) updated.updated_at = evt.updated_at;
+          if (targetId != null) updated.id = targetId;
           const photos = prev.photos.slice();
           photos[idx] = updated;
           return { ...prev, photos };
         });
         mutatePagedPhotos(prev => {
           if (!Array.isArray(prev)) return prev;
-          const idx = prev.findIndex(p => p.filename === fname || stripKnownExt(p.filename) === base);
+          const idx = prev.findIndex(p => {
+            if (!p) return false;
+            if (targetId != null && Number.isFinite(Number(p.id)) && Number(p.id) === targetId) return true;
+            const existingFile = String(p.filename || '');
+            if (existingFile === fname) return true;
+            return stripKnownExt(existingFile) === base;
+          });
           if (idx === -1) return prev;
           const updated = { ...prev[idx] };
           if (evt.thumbnail_status) updated.thumbnail_status = evt.thumbnail_status;
@@ -145,6 +198,7 @@ export default function useProjectSse({
           if (typeof evt.keep_jpg === 'boolean') updated.keep_jpg = evt.keep_jpg;
           if (typeof evt.keep_raw === 'boolean') updated.keep_raw = evt.keep_raw;
           if (evt.updated_at) updated.updated_at = evt.updated_at;
+          if (targetId != null) updated.id = targetId;
           const next = prev.slice();
           next[idx] = updated;
           return next;

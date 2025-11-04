@@ -2,12 +2,12 @@ const path = require('path');
 const fs = require('fs-extra');
 const makeLogger = require('../../utils/logger2');
 const log = makeLogger('maintenance');
-const { getConfig } = require('../config');
 const projectsRepo = require('../repositories/projectsRepo');
 const photosRepo = require('../repositories/photosRepo');
 const jobsRepo = require('../repositories/jobsRepo');
+const { MANIFEST_FILENAME } = require('../projectManifest');
 const { emitJobUpdate } = require('../events');
-const { ensureProjectDirs, PROJECTS_DIR, statMtimeSafe, buildAcceptPredicate, moveToTrash } = require('../fsUtils');
+const { ensureProjectDirs, statMtimeSafe, buildAcceptPredicate, moveToTrash } = require('../fsUtils');
 
 function splitExtSets() {
   const { acceptedExtensions } = buildAcceptPredicate();
@@ -23,245 +23,495 @@ function splitExtSets() {
   return { jpg, raw, other };
 }
 
-async function runTrashMaintenance(job) {
-  const project = projectsRepo.getById(job.project_id);
-  if (!project) throw new Error('Project not found');
-  const projectPath = ensureProjectDirs(project.project_folder);
-  const trashPath = path.join(projectPath, '.trash');
-  await fs.ensureDir(trashPath);
-  const items = await fs.readdir(trashPath);
-  const now = Date.now();
-  const ttlMs = 24 * 60 * 60 * 1000; // 24h
-  let deleted = 0;
-  for (const name of items) {
-    const full = path.join(trashPath, name);
-    try {
-      const st = await fs.stat(full);
-      if (st.isFile()) {
-        const age = now - st.mtimeMs;
-        if (age >= ttlMs) { await fs.remove(full); deleted++; }
-      } else if (st.isDirectory()) {
-        // Clean nested entries as well
-        const m = statMtimeSafe(full) || new Date(0);
-        if (now - m.getTime() >= ttlMs) { await fs.remove(full); deleted++; }
-      }
-    } catch (e) {
-      log.warn('trash_maintenance_failed', { project_id: project.id, project_folder: project.project_folder, project_name: project.name, entry: name, error: e.message });
-    }
-  }
-  log.info('trash_maintenance_done', { project_id: project.id, project_folder: project.project_folder, project_name: project.name, deleted_files: deleted });
+function listActiveProjects() {
+  return projectsRepo
+    .list()
+    .filter(project => !project.status || project.status !== 'canceled');
 }
 
-async function runManifestCheck(job) {
-  const project = projectsRepo.getById(job.project_id);
-  if (!project) throw new Error('Project not found');
+function getProjectsForJob(job) {
+  if (job.project_id) {
+    const project = projectsRepo.getById(job.project_id);
+    if (!project) throw new Error('Project not found');
+    return [project];
+  }
+  return listActiveProjects();
+}
+
+function projectLogContext(project) {
+  return {
+    project_id: project.id,
+    project_folder: project.project_folder,
+    project_name: project.project_name,
+  };
+}
+
+async function fileExistsForBase(projectPath, base, extensions) {
+  for (const ext of extensions) {
+    const candidatePath = path.join(projectPath, `${base}${ext}`);
+    if (await fs.pathExists(candidatePath)) {
+      return true;
+    }
+    // Also guard against uppercase extensions
+    if (ext.toUpperCase() !== ext) {
+      const upperPath = path.join(projectPath, `${base}${ext.toUpperCase()}`);
+      if (await fs.pathExists(upperPath)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+async function findAvailableDuplicateBase({ base, project, projectPath, extensions }) {
+  let suffix = 1;
+  while (true) {
+    const candidateBase = `${base}_duplicate${suffix}`;
+    const dbConflict = photosRepo.getGlobalByFilename(candidateBase);
+    const projectConflict = photosRepo.getByProjectAndFilename(project.id, candidateBase);
+    const diskConflict = await fileExistsForBase(projectPath, candidateBase, extensions);
+    if (!dbConflict && !projectConflict && !diskConflict) {
+      return candidateBase;
+    }
+    suffix += 1;
+  }
+}
+
+function getTaskPayload(job) {
+  if (job && job.payload_json && job.payload_json.task_id && job.payload_json.task_type) {
+    const { task_id, task_type, source } = job.payload_json;
+    return { task_id, task_type, source: source || 'system' };
+  }
+  return null;
+}
+
+function enqueuePostprocess(job, project, bases, logEvent) {
+  if (!bases || bases.length === 0) return null;
+  const taskPayload = getTaskPayload(job);
+  const items = bases.map(base => ({ filename: base }));
+  try {
+    const result = jobsRepo.enqueueWithItems({
+      tenant_id: job.tenant_id,
+      project_id: project.id,
+      type: 'upload_postprocess',
+      payload: taskPayload,
+      items,
+      priority: 90,
+      scope: 'project',
+    });
+    const jobIds = Array.isArray(result) ? result.map(j => j && j.id).filter(Boolean) : result && result.id;
+    log.info(logEvent, { ...projectLogContext(project), job_id: jobIds, items: bases.length });
+    return result;
+  } catch (err) {
+    log.error('enqueue_postprocess_failed', { ...projectLogContext(project), error: err.message, items: bases.length });
+    return null;
+  }
+}
+
+
+async function runTrashMaintenance(job) {
+  const projects = getProjectsForJob(job);
+  let totalDeleted = 0;
+  for (const project of projects) {
+    try {
+      const projectPath = ensureProjectDirs(project.project_folder);
+      const trashPath = path.join(projectPath, '.trash');
+      await fs.ensureDir(trashPath);
+      const items = await fs.readdir(trashPath);
+      const now = Date.now();
+      const ttlMs = 24 * 60 * 60 * 1000; // 24h
+      let deleted = 0;
+      for (const name of items) {
+        const full = path.join(trashPath, name);
+        try {
+          const st = await fs.stat(full);
+          if (st.isFile()) {
+            const age = now - st.mtimeMs;
+            if (age >= ttlMs) { await fs.remove(full); deleted++; }
+          } else if (st.isDirectory()) {
+            // Clean nested entries as well
+            const m = statMtimeSafe(full) || new Date(0);
+            if (now - m.getTime() >= ttlMs) { await fs.remove(full); deleted++; }
+          }
+        } catch (e) {
+          log.warn('trash_maintenance_failed', { ...projectLogContext(project), entry: name, error: e.message });
+        }
+      }
+      totalDeleted += deleted;
+      log.info('trash_maintenance_done', { ...projectLogContext(project), deleted_files: deleted });
+    } catch (err) {
+      log.error('trash_maintenance_project_failed', { ...projectLogContext(project), error: err.message });
+    }
+  }
+  if (projects.length > 1) {
+    log.info('trash_maintenance_global_summary', { projects_processed: projects.length, total_deleted: totalDeleted });
+  }
+}
+
+async function ensureManifest(project) {
   const projectPath = ensureProjectDirs(project.project_folder);
-  
-  // NEW: Verify manifest exists and is valid
   const { readManifest, writeManifest } = require('../projectManifest');
   const manifestPath = path.join(projectPath, '.project.yaml');
-  
-  if (!fs.existsSync(manifestPath)) {
-    log.warn('manifest_missing', { 
-      project_id: project.id, 
-      project_folder: project.project_folder 
-    });
-    
-    // Regenerate manifest
+
+  if (!await fs.pathExists(manifestPath)) {
+    log.warn('manifest_missing', projectLogContext(project));
     writeManifest(project.project_folder, {
       name: project.project_name,
       id: project.id,
-      created_at: project.created_at
+      created_at: project.created_at,
     });
-    
-    log.info('manifest_regenerated', {
-      project_id: project.id,
-      project_folder: project.project_folder
+    log.info('manifest_regenerated', projectLogContext(project));
+    return projectPath;
+  }
+
+  const manifest = readManifest(project.project_folder);
+  if (manifest && manifest.id !== project.id) {
+    log.warn('manifest_id_mismatch', { ...projectLogContext(project), manifest_id: manifest.id });
+    writeManifest(project.project_folder, {
+      name: project.project_name,
+      id: project.id,
+      created_at: project.created_at,
     });
-  } else {
-    // Validate manifest matches DB
-    const manifest = readManifest(project.project_folder);
-    if (manifest && manifest.id !== project.id) {
-      log.warn('manifest_id_mismatch', {
-        project_id: project.id,
-        manifest_id: manifest.id,
-        project_folder: project.project_folder
-      });
+    log.info('manifest_corrected', projectLogContext(project));
+  }
+  return projectPath;
+}
+
+async function runManifestCheck(job) {
+  const projects = getProjectsForJob(job);
+  let totalChanged = 0;
+  for (const project of projects) {
+    try {
+      const projectPath = await ensureManifest(project);
+      const { jpg, raw, other } = splitExtSets();
+      const page = photosRepo.listPaged({ project_id: project.id, limit: 100000 });
+      let changed = 0;
+      for (const p of page.items) {
+        const base = p.filename;
+        const jpgExists = [...jpg].some(e => fs.existsSync(path.join(projectPath, `${base}.${e}`)) || fs.existsSync(path.join(projectPath, `${base}.${e.toUpperCase()}`)));
+        const rawExists = [...raw].some(e => fs.existsSync(path.join(projectPath, `${base}.${e}`)) || fs.existsSync(path.join(projectPath, `${base}.${e.toUpperCase()}`)));
+        const otherExists = [...other].some(e => fs.existsSync(path.join(projectPath, `${base}.${e}`)) || fs.existsSync(path.join(projectPath, `${base}.${e.toUpperCase()}`)));
+        if ((!!p.jpg_available) !== jpgExists || (!!p.raw_available) !== rawExists || (!!p.other_available) !== otherExists) {
+          photosRepo.upsertPhoto(project.id, {
+            manifest_id: p.manifest_id,
+            filename: p.filename,
+            basename: p.basename || p.filename,
+            ext: p.ext,
+            date_time_original: p.date_time_original,
+            jpg_available: jpgExists,
+            raw_available: rawExists,
+            other_available: otherExists,
+            keep_jpg: !!p.keep_jpg,
+            keep_raw: !!p.keep_raw,
+            thumbnail_status: p.thumbnail_status,
+            preview_status: p.preview_status,
+            orientation: p.orientation,
+            meta_json: p.meta_json,
+          });
+          log.warn('manifest_check_corrected', { ...projectLogContext(project), filename: base, jpg: jpgExists, raw: rawExists, other: otherExists });
+          changed++;
+        }
+      }
+      totalChanged += changed;
+      log.info('manifest_check_summary', { ...projectLogContext(project), updated_rows: changed });
+      if (changed > 0) {
+        emitJobUpdate({ type: 'manifest_changed', project_folder: project.project_folder, changed });
+      }
+    } catch (err) {
+      log.error('manifest_check_project_failed', { ...projectLogContext(project), error: err.message });
+    }
+  }
+  if (projects.length > 1) {
+    log.info('manifest_check_global_summary', { projects_processed: projects.length, total_changed: totalChanged });
+  }
+}
+
+async function runFolderCheck(job) {
+  const projects = getProjectsForJob(job);
+  let totalCreated = 0;
+  for (const project of projects) {
+    try {
+      const projectPath = await ensureManifest(project);
+      const { isAccepted } = buildAcceptPredicate();
+      const { jpg, raw } = splitExtSets();
+      const entries = await fs.readdir(projectPath);
+      const skip = new Set(['.thumb', '.preview', '.trash', MANIFEST_FILENAME]);
+      const discoveredBases = new Map();
+
+      for (const name of entries) {
+        if (skip.has(name)) continue;
+        const full = path.join(projectPath, name);
+        const st = await fs.stat(full);
+        if (!st.isFile()) continue;
+        const ext = path.extname(name).toLowerCase().replace(/^\./, '');
+        const base = path.parse(name).name;
+        if (isAccepted(name, '')) {
+          const rec = discoveredBases.get(base) || { jpg: false, raw: false, other: false, files: [] };
+          if (jpg.has(ext)) {
+            rec.jpg = true;
+            rec.files.push({ type: 'jpg', path: full, ext });
+          } else if (raw.has(ext)) {
+            rec.raw = true;
+            rec.files.push({ type: 'raw', path: full, ext });
+          } else {
+            rec.other = true;
+            rec.files.push({ type: 'other', path: full, ext });
+          }
+          discoveredBases.set(base, rec);
+        } else {
+          try {
+            moveToTrash(project.project_folder, name);
+            log.warn('folder_check_moved_to_trash', { ...projectLogContext(project), entry: name });
+          } catch (e) {
+            log.warn('folder_check_trash_move_failed', { ...projectLogContext(project), entry: name, error: e.message });
+          }
+        }
+      }
+
+      const toProcess = [];
+      let createdCount = 0;
+      for (const [base, availability] of discoveredBases.entries()) {
+        const existing = photosRepo.getByProjectAndFilename(project.id, base);
+        if (!existing) {
+          const primaryFile = availability.files && availability.files[0];
+          photosRepo.upsertPhoto(project.id, {
+            filename: base,
+            basename: base,
+            ext: primaryFile ? primaryFile.ext : null,
+            date_time_original: null,
+            jpg_available: !!availability.jpg,
+            raw_available: !!availability.raw,
+            other_available: !!availability.other,
+            keep_jpg: !!availability.jpg,
+            keep_raw: !!availability.raw,
+            thumbnail_status: null,
+            preview_status: null,
+            orientation: null,
+            meta_json: null,
+          });
+          toProcess.push(base);
+          createdCount++;
+        }
+      }
+
+      if (toProcess.length) {
+        enqueuePostprocess(job, project, toProcess, 'folder_check_enqueued_postprocess');
+      }
+      totalCreated += createdCount;
+      if (createdCount > 0) {
+        emitJobUpdate({ type: 'manifest_changed', project_folder: project.project_folder, created: createdCount });
+      }
+    } catch (err) {
+      log.error('folder_check_project_failed', { ...projectLogContext(project), error: err.message });
+    }
+  }
+  if (projects.length > 1) {
+    log.info('folder_check_global_summary', { projects_processed: projects.length, total_created: totalCreated });
+  }
+}
+
+async function runManifestCleaning(job) {
+  const projects = getProjectsForJob(job);
+  let totalRemoved = 0;
+  for (const project of projects) {
+    try {
+      const page = photosRepo.listPaged({ project_id: project.id, limit: 100000 });
+      let removed = 0;
+      const removedFilenames = [];
+      for (const p of page.items) {
+        if (!p.jpg_available && !p.raw_available) {
+          photosRepo.removeById(p.id);
+          removed++;
+          removedFilenames.push(p.filename);
+          emitJobUpdate({ type: 'item_removed', project_folder: project.project_folder, filename: p.filename });
+        }
+      }
+      totalRemoved += removed;
+      log.info('manifest_cleaning_summary', { ...projectLogContext(project), removed_rows: removed });
+      if (removed > 0) {
+        emitJobUpdate({ type: 'manifest_changed', project_folder: project.project_folder, removed, removed_filenames: removedFilenames });
+      }
+    } catch (err) {
+      log.error('manifest_cleaning_project_failed', { ...projectLogContext(project), error: err.message });
+    }
+  }
+  if (projects.length > 1) {
+    log.info('manifest_cleaning_global_summary', { projects_processed: projects.length, total_removed: totalRemoved });
+  }
+}
+
+async function runDuplicateResolution(job) {
+  const projects = getProjectsForJob(job);
+  const { isAccepted } = buildAcceptPredicate();
+  let totalRenamed = 0;
+
+  for (const project of projects) {
+    try {
+      const projectPath = await ensureManifest(project);
+      const entries = await fs.readdir(projectPath);
+      const skip = new Set(['.thumb', '.preview', '.trash']);
+      const baseGroups = new Map();
+
+      for (const name of entries) {
+        if (skip.has(name)) continue;
+        const full = path.join(projectPath, name);
+        const st = await fs.stat(full);
+        if (!st.isFile()) continue;
+        if (!isAccepted(name, '')) continue;
+
+        const base = path.parse(name).name;
+        if (!baseGroups.has(base)) baseGroups.set(base, []);
+        baseGroups.get(base).push(name);
+      }
+
+      let renamedInProject = 0;
+      const renamedBases = new Set();
+      for (const [base, filenames] of baseGroups.entries()) {
+        const existingInProject = photosRepo.getByProjectAndFilename(project.id, base);
+        if (existingInProject) continue;
+
+        const existingElsewhere = photosRepo.getGlobalByFilename(base, { exclude_project_id: project.id });
+        if (!existingElsewhere) continue;
+
+        const extensions = filenames.map(name => path.extname(name));
+        const candidateBase = await findAvailableDuplicateBase({ base, project, projectPath, extensions });
+        let renameFailures = 0;
+
+        for (const oldName of filenames) {
+          const ext = path.extname(oldName);
+          const newName = `${candidateBase}${ext}`;
+          const oldPath = path.join(projectPath, oldName);
+          const newPath = path.join(projectPath, newName);
+          try {
+            await fs.move(oldPath, newPath, { overwrite: false });
+            renamedInProject++;
+            totalRenamed++;
+            renamedBases.add(candidateBase);
+            log.info('duplicate_resolution_renamed', { ...projectLogContext(project), old_filename: oldName, new_filename: newName, conflict_project_id: existingElsewhere.project_id });
+          } catch (err) {
+            renameFailures++;
+            log.error('duplicate_resolution_rename_failed', { ...projectLogContext(project), old_filename: oldName, new_filename: newName, error: err.message });
+          }
+        }
+
+        if (renameFailures > 0) {
+          log.warn('duplicate_resolution_partial_failure', { ...projectLogContext(project), basename: base, attempted: filenames.length, failures: renameFailures });
+        }
+      }
+
+      if (renamedInProject > 0) {
+        if (renamedBases.size > 0) {
+          enqueuePostprocess(job, project, [...renamedBases], 'duplicate_resolution_enqueued_postprocess');
+        }
+        log.info('duplicate_resolution_project_summary', { ...projectLogContext(project), files_renamed: renamedInProject });
+      }
+    } catch (err) {
+      log.error('duplicate_resolution_project_failed', { ...projectLogContext(project), error: err.message });
+    }
+  }
+
+  if (projects.length > 1) {
+    log.info('duplicate_resolution_global_summary', { projects_processed: projects.length, total_renamed: totalRenamed });
+  }
+}
+
+/**
+ * Align folder names with project names
+ * Detects mismatches between project_name and project_folder, renames folders to match
+ */
+async function runFolderAlignment(job) {
+  const { generateUniqueFolderName } = require('../../utils/projects');
+  const { writeManifest } = require('../projectManifest');
+  const { getProjectPath } = require('../fsUtils');
+  
+  const projects = getProjectsForJob(job);
+  let totalAligned = 0;
+
+  for (const project of projects) {
+    try {
+      // Generate expected folder name from project name
+      const expectedFolder = generateUniqueFolderName(project.project_name);
       
-      // Regenerate with correct ID
-      writeManifest(project.project_folder, {
+      // If folder already matches, skip
+      if (project.project_folder === expectedFolder) {
+        continue;
+      }
+      
+      const oldPath = getProjectPath(project.project_folder);
+      const newPath = getProjectPath(expectedFolder);
+      
+      // Safety checks
+      if (!await fs.pathExists(oldPath)) {
+        log.warn('folder_alignment_source_missing', {
+          ...projectLogContext(project),
+          expected_folder: expectedFolder,
+          note: 'Source folder does not exist, skipping'
+        });
+        continue;
+      }
+      
+      if (await fs.pathExists(newPath)) {
+        log.warn('folder_alignment_target_exists', {
+          ...projectLogContext(project),
+          expected_folder: expectedFolder,
+          note: 'Target folder already exists, skipping to avoid collision'
+        });
+        continue;
+      }
+      
+      // Perform atomic rename
+      await fs.rename(oldPath, newPath);
+      
+      // Update database
+      projectsRepo.updateFolder(project.id, expectedFolder);
+      
+      // Update manifest in new location
+      writeManifest(expectedFolder, {
         name: project.project_name,
         id: project.id,
         created_at: project.created_at
       });
       
-      log.info('manifest_corrected', {
+      totalAligned++;
+      
+      log.info('folder_aligned', {
         project_id: project.id,
-        project_folder: project.project_folder
+        project_name: project.project_name,
+        old_folder: project.project_folder,
+        new_folder: expectedFolder
+      });
+      
+      // Emit SSE event for UI update
+      emitJobUpdate({
+        type: 'folder_renamed',
+        project_id: project.id,
+        old_folder: project.project_folder,
+        new_folder: expectedFolder,
+        project_name: project.project_name
+      });
+      
+    } catch (err) {
+      log.error('folder_alignment_failed', {
+        ...projectLogContext(project),
+        error: err.message,
+        stack: err.stack
       });
     }
   }
-  
-  // Continue with existing photo availability checks
-  const { jpg, raw, other } = splitExtSets();
-  const page = photosRepo.listPaged({ project_id: project.id, limit: 100000 });
-  let changed = 0;
-  for (const p of page.items) {
-    const base = p.filename;
-    // compute availability
-    const jpgExists = [...jpg].some(e => fs.existsSync(path.join(projectPath, `${base}.${e}`)) || fs.existsSync(path.join(projectPath, `${base}.${e.toUpperCase()}`)));
-    const rawExists = [...raw].some(e => fs.existsSync(path.join(projectPath, `${base}.${e}`)) || fs.existsSync(path.join(projectPath, `${base}.${e.toUpperCase()}`)));
-    const otherExists = [...other].some(e => fs.existsSync(path.join(projectPath, `${base}.${e}`)) || fs.existsSync(path.join(projectPath, `${base}.${e.toUpperCase()}`)));
-    if ((!!p.jpg_available) !== jpgExists || (!!p.raw_available) !== rawExists || (!!p.other_available) !== otherExists) {
-      photosRepo.upsertPhoto(project.id, {
-        manifest_id: p.manifest_id,
-        filename: p.filename,
-        basename: p.basename || p.filename,
-        ext: p.ext,
-        date_time_original: p.date_time_original,
-        jpg_available: jpgExists,
-        raw_available: rawExists,
-        other_available: otherExists,
-        keep_jpg: !!p.keep_jpg,
-        keep_raw: !!p.keep_raw,
-        thumbnail_status: p.thumbnail_status,
-        preview_status: p.preview_status,
-        orientation: p.orientation,
-        meta_json: p.meta_json,
-      });
-      log.warn('manifest_check_corrected', { project_id: project.id, project_folder: project.project_folder, project_name: project.name, filename: base, jpg: jpgExists, raw: rawExists, other: otherExists });
-      changed++;
-    }
-  }
-  log.info('manifest_check_summary', { project_id: project.id, project_folder: project.project_folder, project_name: project.name, updated_rows: changed });
-  if (changed > 0) {
-    emitJobUpdate({ type: 'manifest_changed', project_folder: project.project_folder, changed });
-  }
-}
 
-async function runFolderCheck(job) {
-  const project = projectsRepo.getById(job.project_id);
-  if (!project) throw new Error('Project not found');
-  const projectPath = ensureProjectDirs(project.project_folder);
-  
-  // NEW: Ensure manifest exists
-  const { readManifest, writeManifest } = require('../projectManifest');
-  const manifestPath = path.join(projectPath, '.project.yaml');
-  
-  if (!fs.existsSync(manifestPath)) {
-    writeManifest(project.project_folder, {
-      name: project.project_name,
-      id: project.id,
-      created_at: project.created_at
+  if (projects.length > 1) {
+    log.info('folder_alignment_global_summary', {
+      projects_processed: projects.length,
+      total_aligned: totalAligned
     });
-    
-    log.info('manifest_created_by_folder_check', {
-      project_id: project.id,
-      project_folder: project.project_folder
-    });
-  }
-  
-  const { isAccepted, acceptedExtensions } = buildAcceptPredicate();
-  const { jpg, raw } = splitExtSets();
-  const entries = await fs.readdir(projectPath);
-  const skip = new Set(['.thumb', '.preview', '.trash']);
-  const discoveredBases = new Map(); // base -> { jpg, raw, other }
-
-  for (const name of entries) {
-    if (skip.has(name)) continue;
-    const full = path.join(projectPath, name);
-    const st = await fs.stat(full);
-    if (!st.isFile()) continue;
-    const ext = path.extname(name).toLowerCase().replace(/^\./, '');
-    const base = path.parse(name).name;
-    if (isAccepted(name, '')) {
-      const rec = discoveredBases.get(base) || { jpg: false, raw: false, other: false };
-      if (jpg.has(ext)) rec.jpg = true; else if (raw.has(ext)) rec.raw = true; else rec.other = true;
-      discoveredBases.set(base, rec);
-    } else {
-      // Not accepted -> move to trash
-      try {
-        moveToTrash(project.project_folder, name);
-        log.warn('folder_check_moved_to_trash', { project_id: project.id, project_folder: project.project_folder, project_name: project.name, entry: name });
-      } catch (e) {
-        log.warn('folder_check_trash_move_failed', { project_id: project.id, project_folder: project.project_folder, project_name: project.name, entry: name, error: e.message });
-      }
-    }
-  }
-
-  const toProcess = [];
-  let createdCount = 0;
-  for (const [base, availability] of discoveredBases.entries()) {
-    const existing = photosRepo.getByProjectAndFilename(project.id, base);
-    if (!existing) {
-      // New base discovered on disk but not in manifest: create minimal row and schedule processing
-      photosRepo.upsertPhoto(project.id, {
-        filename: base,
-        basename: base,
-        ext: null,
-        date_time_original: null,
-        jpg_available: !!availability.jpg,
-        raw_available: !!availability.raw,
-        other_available: !!availability.other,
-        // keep flags default to availability
-        keep_jpg: !!availability.jpg,
-        keep_raw: !!availability.raw,
-        thumbnail_status: null,
-        preview_status: null,
-        orientation: null,
-        meta_json: null,
-      });
-      // Only enqueue postprocess for truly new bases
-      toProcess.push({ filename: base });
-      createdCount++;
-    } else {
-      // Existing record present: do not enqueue here. Availability corrections are handled by manifest_check; orphan cleanup by manifest_cleaning.
-    }
-  }
-
-  if (toProcess.length) {
-    const taskPayload = job.payload_json && job.payload_json.task_id && job.payload_json.task_type
-      ? { task_id: job.payload_json.task_id, task_type: job.payload_json.task_type, source: job.payload_json.source || 'system' }
-      : null;
-    const job2 = jobsRepo.enqueueWithItems({
-      tenant_id: job.tenant_id,
-      project_id: project.id,
-      type: 'upload_postprocess',
-      payload: taskPayload,
-      items: toProcess,
-      priority: 90,
-    });
-    log.info('folder_check_enqueued_postprocess', { project_id: project.id, project_folder: project.project_folder, project_name: project.name, job_id: job2.id, items: toProcess.length });
-  }
-  if (createdCount > 0) {
-    emitJobUpdate({ type: 'manifest_changed', project_folder: project.project_folder, created: createdCount });
-  }
-}
-
-async function runManifestCleaning(job) {
-  const project = projectsRepo.getById(job.project_id);
-  if (!project) throw new Error('Project not found');
-  const page = photosRepo.listPaged({ project_id: project.id, limit: 100000 });
-  let removed = 0;
-  const removedFilenames = [];
-  for (const p of page.items) {
-    if (!p.jpg_available && !p.raw_available) {
-      photosRepo.removeById(p.id);
-      removed++;
-      removedFilenames.push(p.filename);
-      // Emit targeted removal event so frontend can update in-place
-      emitJobUpdate({ type: 'item_removed', project_folder: project.project_folder, filename: p.filename });
-    }
-  }
-  log.info('manifest_cleaning_summary', { project_id: project.id, project_folder: project.project_folder, project_name: project.name, removed_rows: removed });
-  if (removed > 0) {
-    emitJobUpdate({ type: 'manifest_changed', project_folder: project.project_folder, removed, removed_filenames: removedFilenames });
   }
 }
 
 module.exports = {
   runTrashMaintenance,
+  runDuplicateResolution,
   runManifestCheck,
   runFolderCheck,
   runManifestCleaning,
+  runFolderAlignment,
 };

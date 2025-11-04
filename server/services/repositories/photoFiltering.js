@@ -479,8 +479,62 @@ function listSharedLinkPhotos({
   return { items, nextCursor, prevCursor, total };
 }
 
+/**
+ * List all photo keys (project_folder::filename) matching filters
+ * Lightweight query for "Select All" functionality - returns only identifiers, no metadata
+ * @param {Object} options - Filter options (same as listAll)
+ * @returns {Object} { keys: string[], total: number }
+ */
+function listAllKeys({
+  date_from = null,
+  date_to = null,
+  file_type = null,
+  keep_type = null,
+  orientation = null,
+  tags = null,
+  visibility = null,
+  public_link_id = null,
+  sort_by = 'date',
+  sort_dir = 'desc',
+} = {}) {
+  const db = getDb();
+
+  const baseFilters = {
+    date_from,
+    date_to,
+    file_type,
+    keep_type,
+    orientation,
+    tags,
+    visibility,
+    public_link_id,
+  };
+
+  const { whereSql, params } = buildAllPhotosWhere(baseFilters);
+
+  // Lightweight query - only fetch project_folder and filename
+  const rows = db
+    .prepare(`
+      SELECT p.project_folder, ph.filename
+      FROM photos ph
+      JOIN projects p ON p.id = ph.project_id
+      ${whereSql}
+      ORDER BY COALESCE(ph.date_time_original, ph.created_at) ${sort_dir === 'asc' ? 'ASC' : 'DESC'}, ph.id ${sort_dir === 'asc' ? 'ASC' : 'DESC'}
+    `)
+    .all(...params);
+
+  // Build composite keys
+  const keys = rows.map(row => `${row.project_folder}::${row.filename}`);
+
+  return {
+    keys,
+    total: keys.length,
+  };
+}
+
 module.exports = {
   listProjectFiltered,
   listAll,
   listSharedLinkPhotos,
+  listAllKeys,
 };

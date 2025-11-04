@@ -130,12 +130,6 @@ function App({ sharedLinkHash = null }) {
   const isSharedLinkMode = !!sharedLinkHash;
   const isAllMode = view?.project_filter === null;
 
-  console.log('[App.jsx] Shared link state:', {
-    sharedLinkHash,
-    isSharedLinkMode,
-    isAuthenticated,
-  });
-
   // Use shared link data hook when in shared mode
   const {
     photos: sharedPhotos,
@@ -301,24 +295,6 @@ function App({ sharedLinkHash = null }) {
       projectLocateTriedRef.current = false;
     }
   }, [selectedProject?.folder, activeFilters?.dateRange, activeFilters?.fileType, activeFilters?.keepType, activeFilters?.orientation]);
-
-  const {
-    pendingUpload,
-    showProjectSelection,
-    initialProject,
-    handleFilesDroppedInAllView,
-    handleProjectSelection: handleUploadProjectSelection,
-    handleProjectSelectionCancel,
-    clearPendingUpload,
-    openProjectSelection,
-    registerActiveProject,
-  } = useAllPhotosUploads({
-    onProjectChosen: (project, files) => {
-      if (!project?.folder) return null;
-      handleProjectSelect(project);
-      return { files, targetProject: project };
-    },
-  });
 
   // Project navigation service (must come before useModeSwitching)
   const { handleProjectSelect, toggleAllMode } = useProjectNavigation({
@@ -511,12 +487,18 @@ function App({ sharedLinkHash = null }) {
     // SSE data (real-time pending changes from backend)
     pendingChangesSSE: pendingChanges,
     
+    // Aggregated totals (from pollable API / optimistic state)
+    allPendingDeletes,
+    
+    // Per-project totals (when available)
+    projectPendingDeletes: projectData?.pending_deletes,
+    
     // Legacy properties (for backward compatibility)
     selectedProject,
   });
 
   // Photo data refresh logic extracted to custom hook
-  const { refreshPhotoData, refreshAllPhotos } = usePhotoDataRefresh({
+  const { refreshPhotoData, refreshAllPhotos, refreshPendingDeletes } = usePhotoDataRefresh({
     // Unified view context
     view,
     
@@ -529,6 +511,186 @@ function App({ sharedLinkHash = null }) {
     setAllPendingDeletes,
     selectedProject
   });
+
+  useEffect(() => {
+    if (!pendingChanges) return;
+
+    const totals = pendingChanges.totals || {};
+    const projectSummaries = Array.isArray(pendingChanges.projects) ? pendingChanges.projects : [];
+    const photoEntries = Array.isArray(pendingChanges.photos) ? pendingChanges.photos : [];
+    const previewFilterEnabled = activeFilters?.keepType === 'any_kept';
+
+    if (totals || projectSummaries.length || pendingChanges.flags) {
+      const total = Number(totals.total) || 0;
+      const jpg = Number(totals.jpg) || 0;
+      const raw = Number(totals.raw) || 0;
+      const nextByProject = new Set();
+
+      for (const entry of projectSummaries) {
+        if (!entry || typeof entry.project_folder !== 'string') continue;
+        const pendingTotal = Number(entry.pending_total) || 0;
+        if (pendingTotal > 0) nextByProject.add(entry.project_folder);
+      }
+
+      if (!projectSummaries.length && pendingChanges.flags && typeof pendingChanges.flags === 'object') {
+        for (const [folder, hasPending] of Object.entries(pendingChanges.flags)) {
+          if (hasPending && typeof folder === 'string' && folder.length) {
+            nextByProject.add(folder);
+          }
+        }
+      }
+
+      setAllPendingDeletes(prev => {
+        const prevTotal = prev?.total ?? 0;
+        const prevJpg = prev?.jpg ?? 0;
+        const prevRaw = prev?.raw ?? 0;
+        const prevSet = prev?.byProject instanceof Set ? prev.byProject : new Set(Array.isArray(prev?.byProject) ? prev.byProject : []);
+        const sameTotals = prevTotal === total && prevJpg === jpg && prevRaw === raw;
+        let sameProjects = prevSet.size === nextByProject.size;
+        if (sameProjects) {
+          for (const folder of nextByProject) {
+            if (!prevSet.has(folder)) {
+              sameProjects = false;
+              break;
+            }
+          }
+        }
+        if (sameTotals && sameProjects) {
+          return prev;
+        }
+        return {
+          total,
+          jpg,
+          raw,
+          byProject: nextByProject,
+        };
+      });
+    }
+
+    const updatesById = new Map();
+    if (photoEntries.length) {
+    for (const entry of photoEntries) {
+      if (!entry || typeof entry.photo_id !== 'number') continue;
+      updatesById.set(entry.photo_id, {
+        keep_jpg: entry.keep_jpg === true,
+        keep_raw: entry.keep_raw === true,
+        project_id: entry.project_id ?? null,
+      });
+    }
+
+    }
+
+    const selectedProjectId = selectedProject?.id ?? null;
+
+    setProjectData(prev => {
+      if (!prev || selectedProjectId == null) return prev;
+
+      let changed = false;
+      let photos = prev.photos;
+
+      if (Array.isArray(prev.photos) && updatesById.size) {
+        const nextUpdates = new Map();
+        for (const [photoId, payload] of updatesById.entries()) {
+          if (payload.project_id === selectedProjectId) {
+            nextUpdates.set(photoId, payload);
+          }
+        }
+        if (nextUpdates.size) {
+          photos = prev.photos.map(photo => {
+            if (!photo || typeof photo.id !== 'number') return photo;
+            const update = nextUpdates.get(photo.id);
+            if (!update) return photo;
+            const keepJpg = update.keep_jpg;
+            const keepRaw = update.keep_raw;
+            if (photo.keep_jpg === keepJpg && photo.keep_raw === keepRaw) return photo;
+            changed = true;
+            return { ...photo, keep_jpg: keepJpg, keep_raw: keepRaw };
+          });
+        }
+      }
+
+      let nextPendingDeletes = prev.pending_deletes;
+      if (Array.isArray(projectSummaries)) {
+        const summary = projectSummaries.find(entry => entry && entry.project_id === selectedProjectId);
+        if (summary) {
+          const updatedEntry = {
+            total: Number(summary.pending_total) || 0,
+            jpg: Number(summary.pending_jpg) || 0,
+            raw: Number(summary.pending_raw) || 0,
+          };
+          const folder = selectedProject?.folder;
+          if (folder) {
+            const current = prev.pending_deletes && prev.pending_deletes[folder];
+            const same = current && current.total === updatedEntry.total && current.jpg === updatedEntry.jpg && current.raw === updatedEntry.raw;
+            if (!same) {
+              nextPendingDeletes = {
+                ...(prev.pending_deletes || {}),
+                [folder]: updatedEntry,
+              };
+            }
+          }
+        }
+      }
+
+      if (!changed && nextPendingDeletes === prev.pending_deletes) return prev;
+      const next = { ...prev };
+      if (changed) next.photos = photos;
+      if (nextPendingDeletes !== prev.pending_deletes) next.pending_deletes = nextPendingDeletes;
+      return next;
+    });
+
+    if (updatesById.size) {
+      mutatePagedPhotos(prev => {
+        if (!Array.isArray(prev) || !prev.length) return prev;
+        let changed = false;
+        const mapped = prev.map(photo => {
+          if (!photo || typeof photo.id !== 'number') return photo;
+          const update = updatesById.get(photo.id);
+          if (!update) return photo;
+          const keepJpg = update.keep_jpg;
+          const keepRaw = update.keep_raw;
+          if (photo.keep_jpg === keepJpg && photo.keep_raw === keepRaw) return photo;
+          changed = true;
+          return { ...photo, keep_jpg: keepJpg, keep_raw: keepRaw };
+        });
+        let next = mapped;
+        if (previewFilterEnabled) {
+          const filtered = mapped.filter(item => item && (item.keep_jpg === true || item.keep_raw === true));
+          if (filtered.length !== mapped.length) {
+            next = filtered;
+            changed = true;
+          }
+        }
+        return changed ? next : prev;
+      });
+    }
+
+    if (updatesById.size) {
+      mutateAllPhotos(prev => {
+        if (!Array.isArray(prev) || !prev.length) return prev;
+        let changed = false;
+        const mapped = prev.map(photo => {
+          if (!photo || typeof photo.id !== 'number') return photo;
+          const update = updatesById.get(photo.id);
+          if (!update) return photo;
+          const keepJpg = update.keep_jpg;
+          const keepRaw = update.keep_raw;
+          if (photo.keep_jpg === keepJpg && photo.keep_raw === keepRaw) return photo;
+          changed = true;
+          return { ...photo, keep_jpg: keepJpg, keep_raw: keepRaw };
+        });
+        let next = mapped;
+        if (previewFilterEnabled) {
+          const filtered = mapped.filter(item => item && (item.keep_jpg === true || item.keep_raw === true));
+          if (filtered.length !== mapped.length) {
+            next = filtered;
+            changed = true;
+          }
+        }
+        return changed ? next : prev;
+      });
+    }
+  }, [pendingChanges, setAllPendingDeletes, mutatePagedPhotos, mutateAllPhotos, setProjectData, selectedProject, activeFilters?.keepType]);
 
 
   // Use custom hooks for commit/revert and URL sync
@@ -560,7 +722,8 @@ function App({ sharedLinkHash = null }) {
     mutateAllPhotos,
     refreshAllPhotos,
     fetchProjectData,
-    toast
+    toast,
+    setAllPendingDeletes
   });
 
   useUrlSync({
@@ -633,6 +796,7 @@ function App({ sharedLinkHash = null }) {
 
   // Event handlers service
   const {
+    handleProjectCreate,
     handleProjectSelection,
     handleSharedLinkHash,
     handlePhotosUploaded,
@@ -655,9 +819,31 @@ function App({ sharedLinkHash = null }) {
     
     // Functions
     fetchProjectData,
+    refreshPendingDeletes,
+    mutatePagedPhotos,
+    mutateAllPhotos,
     
     // Constants
     ALL_PROJECT_SENTINEL
+  });
+
+  const {
+    pendingUpload,
+    showProjectSelection,
+    initialProject,
+    handleFilesDroppedInAllView,
+    handleProjectSelection: handleUploadProjectSelection,
+    handleProjectSelectionCancel,
+    clearPendingUpload,
+    openProjectSelection,
+    registerActiveProject,
+  } = useAllPhotosUploads({
+    onProjectChosen: (project, files) => {
+      if (!project?.folder) return null;
+      handleProjectSelect(project);
+      return { files, targetProject: project };
+    },
+    onProjectCreate: handleProjectCreate,
   });
 
   // Selection mode handlers for M2 (must be after useEventHandlers)
@@ -981,6 +1167,8 @@ function App({ sharedLinkHash = null }) {
                       onTagsBulkUpdated={handleTagsBulkUpdated}
                       selection={selection}
                       setSelection={setSelection}
+                      activeFilters={activeFilters}
+                      allTotal={allTotal}
                     />
 
                     <div className="flex items-center gap-2">
@@ -1383,7 +1571,16 @@ function App({ sharedLinkHash = null }) {
               setShowOptionsModal(false);
             }}
             onCreateProject={async (name) => {
-              await handleProjectCreate(name);
+              const created = await handleProjectCreate(name);
+              if (created?.folder) {
+                toast.show({
+                  emoji: '📁',
+                  message: `Project "${created.name || name}" created`,
+                  variant: 'success',
+                });
+                pendingSelectProjectRef.current = created.folder;
+                updateProjectFilter(created.folder);
+              }
               setShowCreateProject(false);
               setShowOptionsModal(false);
             }}
@@ -1421,6 +1618,7 @@ function App({ sharedLinkHash = null }) {
               activeFilters={activeFilters}
               onFilterChange={setActiveFilters}
               onRevert={openRevertConfirm}
+              onCommit={handleCommitChanges}
             />
           )}
         </div>

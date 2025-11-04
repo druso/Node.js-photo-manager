@@ -4,7 +4,7 @@ const { runGenerateDerivatives } = require('./workers/derivativesWorker');
 const { runProjectStopProcesses, runProjectDeleteFiles, runProjectCleanupDb } = require('./workers/projectDeletionWorker');
 const { runProjectScavenge } = require('./workers/projectScavengeWorker');
 const { runImageMoveFiles } = require('./workers/imageMoveWorker');
-const { runTrashMaintenance, runManifestCheck, runFolderCheck, runManifestCleaning } = require('./workers/maintenanceWorker');
+const { runTrashMaintenance, runDuplicateResolution, runManifestCheck, runFolderCheck, runManifestCleaning, runFolderAlignment } = require('./workers/maintenanceWorker');
 const { runFileRemoval } = require('./workers/fileRemovalWorker');
 const { runFolderDiscovery } = require('./workers/folderDiscoveryWorker');
 const { emitJobUpdate } = require('./events');
@@ -95,6 +95,17 @@ async function handleJob(job, { heartbeatMs, maxAttemptsDefault, workerId }) {
       try { tasksOrchestrator.onJobCompleted(job); } catch {}
       return;
     }
+    if (job.type === 'duplicate_resolution') {
+      await runDuplicateResolution(job);
+      stopHeartbeat();
+      jobsRepo.complete(job.id);
+      {
+        const p = job.payload_json || {};
+        emitJobUpdate({ id: job.id, status: 'completed', task_id: p.task_id, task_type: p.task_type, source: p.source });
+      }
+      try { tasksOrchestrator.onJobCompleted(job); } catch {}
+      return;
+    }
     if (job.type === 'manifest_check') {
       await runManifestCheck(job);
       stopHeartbeat();
@@ -119,6 +130,17 @@ async function handleJob(job, { heartbeatMs, maxAttemptsDefault, workerId }) {
     }
     if (job.type === 'manifest_cleaning') {
       await runManifestCleaning(job);
+      stopHeartbeat();
+      jobsRepo.complete(job.id);
+      {
+        const p = job.payload_json || {};
+        emitJobUpdate({ id: job.id, status: 'completed', task_id: p.task_id, task_type: p.task_type, source: p.source });
+      }
+      try { tasksOrchestrator.onJobCompleted(job); } catch {}
+      return;
+    }
+    if (job.type === 'folder_alignment') {
+      await runFolderAlignment(job);
       stopHeartbeat();
       jobsRepo.complete(job.id);
       {
@@ -171,6 +193,19 @@ async function handleJob(job, { heartbeatMs, maxAttemptsDefault, workerId }) {
     // Folder discovery job type
     if (job.type === 'folder_discovery') {
       await runFolderDiscovery(job);
+      stopHeartbeat();
+      jobsRepo.complete(job.id);
+      {
+        const p = job.payload_json || {};
+        emitJobUpdate({ id: job.id, status: 'completed', task_id: p.task_id, task_type: p.task_type, source: p.source });
+      }
+      try { tasksOrchestrator.onJobCompleted(job); } catch {}
+      return;
+    }
+
+    // Folder rename job type (deferred project folder renaming)
+    if (job.type === 'folder_rename') {
+      await runFolderRename(job);
       stopHeartbeat();
       jobsRepo.complete(job.id);
       {

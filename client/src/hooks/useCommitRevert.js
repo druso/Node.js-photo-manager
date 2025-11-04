@@ -27,7 +27,8 @@ export const useCommitRevert = ({
   mutateAllPhotos,
   refreshAllPhotos,
   fetchProjectData,
-  toast
+  toast,
+  setAllPendingDeletes
 }) => {
   const [showCommitModal, setShowCommitModal] = useState(false);
   const [committing, setCommitting] = useState(false);
@@ -50,13 +51,27 @@ export const useCommitRevert = ({
   }, [view?.project_filter, isAllMode, selectedProject]);
 
   const openRevertConfirm = useCallback(() => {
-    if (!selectedProject) return;
+    // Use unified view context to determine if we're in All Photos view
+    const isAllPhotosView = view?.project_filter === null;
+    
+    // For backward compatibility, fall back to isAllMode if view context is not available
+    const inAllPhotosMode = (view !== undefined) ? isAllPhotosView : isAllMode;
+    
+    // Allow revert in All Photos mode or when a project is selected
+    if (!inAllPhotosMode && !selectedProject) return;
     try { revertOpenerElRef.current = document.activeElement; } catch {}
     setShowRevertModal(true);
-  }, [selectedProject]);
+  }, [view?.project_filter, isAllMode, selectedProject]);
 
   const confirmCommitChanges = useCallback(async (pendingDeleteTotals) => {
-    if (!selectedProject) return;
+    // Use unified view context to determine if we're in All Photos view
+    const isAllPhotosView = view?.project_filter === null;
+    
+    // For backward compatibility, fall back to isAllMode if view context is not available
+    const inAllPhotosMode = (view !== undefined) ? isAllPhotosView : isAllMode;
+    
+    // Allow commit in All Photos mode or when a project is selected
+    if (!inAllPhotosMode && !selectedProject) return;
     setCommitting(true);
     
     try {
@@ -116,9 +131,14 @@ export const useCommitRevert = ({
           
           if (inAllPhotosMode) {
             const data = await res.json().catch(() => ({}));
-            const queued = Array.isArray(data.projects) ? data.projects.length : 0;
-            if (!queued) {
-              // Use unified refresh function if available
+            const queued = Array.isArray(data?.projects) ? data.projects.length : 0;
+            const started = data && data.started === true;
+
+            if (started && setAllPendingDeletes) {
+              setAllPendingDeletes({ total: 0, jpg: 0, raw: 0, byProject: new Set() });
+            }
+
+            if (!queued && !started) {
               if (refreshPhotoData) {
                 await refreshPhotoData();
               } else {
@@ -156,7 +176,14 @@ export const useCommitRevert = ({
   }, [view?.project_filter, selectedProject, isAllMode, setProjectData, mutatePagedPhotos, mutateAllPhotos, toast, refreshPhotoData, refreshAllPhotos, fetchProjectData]);
 
   const confirmRevertChanges = useCallback(async (pendingDeleteTotals) => {
-    if (!selectedProject) return;
+    // Use unified view context to determine if we're in All Photos view
+    const isAllPhotosView = view?.project_filter === null;
+    
+    // For backward compatibility, fall back to isAllMode if view context is not available
+    const inAllPhotosMode = (view !== undefined) ? isAllPhotosView : isAllMode;
+    
+    // Allow revert in All Photos mode or when a project is selected
+    if (!inAllPhotosMode && !selectedProject) return;
     setReverting(true);
     
     try {
@@ -205,6 +232,16 @@ export const useCommitRevert = ({
             }));
           });
           
+          // Force-reset pending deletes to zero to hide commit bar immediately
+          if (setAllPendingDeletes) {
+            setAllPendingDeletes({ total: 0, jpg: 0, raw: 0, byProject: new Set() });
+          }
+          
+          setProjectData(prev => {
+            if (!prev) return prev;
+            return { ...prev, pending_deletes: {} };
+          });
+          
           // Use unified refresh function if available
           if (refreshPhotoData) {
             await refreshPhotoData();
@@ -234,7 +271,7 @@ export const useCommitRevert = ({
     } finally {
       setReverting(false);
     }
-  }, [view?.project_filter, selectedProject, isAllMode, setProjectData, mutatePagedPhotos, mutateAllPhotos, toast, refreshPhotoData, refreshAllPhotos]);
+  }, [view?.project_filter, selectedProject, isAllMode, setProjectData, mutatePagedPhotos, mutateAllPhotos, toast, refreshPhotoData, refreshAllPhotos, setAllPendingDeletes]);
 
   return {
     // Modal state

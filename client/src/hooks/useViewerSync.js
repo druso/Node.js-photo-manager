@@ -33,12 +33,21 @@ export default function useViewerSync({
   suppressUrlRef,
 }) {
   const viewerPhotos = useMemo(() => {
+    let photos;
     if (isAllMode || viewerState.fromAll) {
-      return (viewerList && viewerState.isOpen ? viewerList : allPhotos) || [];
+      photos = (viewerList && viewerState.isOpen ? viewerList : allPhotos) || [];
+    } else {
+      const pd = viewerList ? { photos: viewerList } : (filteredProjectData || projectData);
+      photos = (pd && Array.isArray(pd.photos)) ? pd.photos : [];
     }
-    const pd = viewerList ? { photos: viewerList } : (filteredProjectData || projectData);
-    return (pd && Array.isArray(pd.photos)) ? pd.photos : [];
-  }, [isAllMode, viewerState.fromAll, viewerList, viewerState.isOpen, allPhotos, filteredProjectData, projectData]);
+    
+    // Apply preview-mode filtering if keepType is any_kept
+    if (activeFilters?.keepType === 'any_kept' && Array.isArray(photos)) {
+      return photos.filter(p => p && (p.keep_jpg === true || p.keep_raw === true));
+    }
+    
+    return photos;
+  }, [isAllMode, viewerState.fromAll, viewerList, viewerState.isOpen, allPhotos, filteredProjectData, projectData, activeFilters?.keepType]);
 
   const viewerKey = useMemo(() => {
     const source = (isAllMode || viewerState.fromAll) ? 'all' : (selectedProject?.folder || 'none');

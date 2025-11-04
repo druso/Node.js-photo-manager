@@ -116,6 +116,20 @@ function createProjectFromFolder({ project_name, project_folder }) {
   return getById(id);
 }
 
+// ---- Folder Update Function (used by maintenance) ----
+
+function updateFolder(id, project_folder) {
+  const db = getDb();
+  const ts = nowISO();
+  db.prepare(`
+    UPDATE projects 
+    SET project_folder = ?, 
+        updated_at = ? 
+    WHERE id = ?
+  `).run(project_folder, ts, id);
+  return getById(id);
+}
+
 module.exports = {
   createProject,
   getById,
@@ -129,4 +143,5 @@ module.exports = {
   setStatus,
   archive,
   createProjectFromFolder,
+  updateFolder, // Used by maintenance for folder alignment
 };

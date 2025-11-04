@@ -1,5 +1,20 @@
 # Security Documentation
 
+## Latest Security Enhancements (2025-11)
+
+### Maintenance Reconciliation Pipeline (2025-11-05)
+- **Duplicate resolution**: Cross-project filename collision detection with deterministic `_duplicate{n}` renaming prevents accidental overwrites and maintains data integrity across project boundaries.
+- **Manifest lifecycle**: `.project.yaml` files are now preserved during maintenance scans (skipped by `folder_check`) and validated/repaired by `manifest_check`, ensuring filesystem-to-database reconciliation remains accurate.
+- **Pipeline delegation**: `folder_check` creates minimal photo records and delegates all metadata extraction and derivative generation to the existing `upload_postprocess` pipeline, eliminating code duplication and ensuring consistent security validation across all ingestion paths.
+- **Scope enforcement**: All maintenance jobs now require explicit `scope` parameter (`project`, `photo_set`, or `global`), preventing silent enqueue failures and improving audit trail visibility.
+- **Error visibility**: Added comprehensive error logging at job enqueue points to surface integration failures immediately, improving incident response time.
+
+**Security Impact**:
+- **Data Integrity**: Duplicate resolution prevents silent overwrites that could lead to data loss or confusion
+- **Audit Trail**: Explicit scope requirements and error logging improve forensic capabilities
+- **Attack Surface Reduction**: Single ingestion pipeline reduces code paths that need security review
+- **Consistency**: Manifest preservation ensures reconciliation operations remain idempotent and predictable
+
 ## Latest Security Enhancements (2025-10)
 
 ### Authentication Rollout (2025-10-04)
@@ -47,6 +62,11 @@
 **4. Pending Changes SSE Connection Caps** 🔧 *2-3h*
 - **Risk**: `/api/sse/pending-changes` has no per-IP connection limits; an attacker could open many EventSource connections and hold server resources
 - **Action**: Reuse `rateLimitSseConnections()` logic from `jobs.js` (per-IP counters + global cap) and log connection churn for monitoring
+
+**5. "Select All" Response Size Limits** 🔧 *2-3h*
+- **Risk**: `/api/photos/all-keys` returns unbounded arrays for large filtered datasets (e.g., 50k+ photos = ~1MB response)
+- **Current Mitigation**: Rate limited at 60 req/min per IP; frontend shows confirmation dialog for >1000 photos
+- **Action**: Consider adding server-side cap (e.g., max 10,000 keys) with error guidance to refine filters, or implement chunked streaming for very large result sets
 
 **5. Auth Ops Checklist** 🔧 *2-4h*
 - **Status**: ✅ Completed as part of Milestone 1.
@@ -129,7 +149,7 @@
 **Commit/Revert Endpoints**:
 - Project-scoped: `POST /api/projects/:folder/commit-changes` and `POST /api/projects/:folder/revert-changes`
 - Global: `POST /api/photos/commit-changes` and `POST /api/photos/revert-changes` (operates across multiple projects)
-- Commit is destructive: moves files to `.trash` and updates availability; ensure intent is authenticated/authorized in future multi-user mode.
+- Commit is destructive: moves files to `.trash` and updates availability; ensure intent is authenticated/authorized in future multi-user mode. The global commit endpoint now enqueues a single `change_commit_all` photo-set task populated with `{ photo_id, filename }` job items (auto-chunked at 2k per job) so workers delete exactly the authorized files while preserving per-item auditability. Orchestrator injects `{ project_id, project_folder, project_name }` hints into each job item so workers stay image-scoped without scanning entire projects.
 - Revert is non-destructive: resets `keep_*` to match `*_available`.
 - Global endpoints accept optional `{ projects: ["p1", "p2"] }` body to target specific projects; if omitted, auto-detects affected projects.
 - Rate limiting implemented: 10 requests per 5 minutes per IP on all commit, revert, delete, and rename endpoints.
@@ -139,10 +159,10 @@
 - `GET /api/jobs/stream` hardened with per‑IP connection cap (default 2), heartbeat every 25s, and idle timeout (default 5 min). Env overrides: `SSE_MAX_CONN_PER_IP`, `SSE_IDLE_TIMEOUT_MS`.
   - Client enforcement: the frontend maintains a single shared `EventSource` (see `client/src/api/jobsApi.js → openJobStream()`) persisted on `globalThis/window` to survive Vite HMR. This reduces parallel connections and helps avoid 429s while keeping server caps unchanged.
   - Dev guidance: close duplicate tabs and hard‑refresh if transient 429s appear during hot reloads; optionally raise `SSE_MAX_CONN_PER_IP` locally.
- - Keep flag updates (`PUT /api/projects/:folder/keep`) now emit `type: item` SSEs with `keep_jpg`/`keep_raw`. This reduces client refetch pressure and prevents UI desync; rate limits on destructive endpoints remain in effect.
+  - Keep flag updates (`PUT /api/projects/:folder/keep`) now emit `type: item` SSEs with `keep_jpg`/`keep_raw`. File removal and move workers now include `photo_id` in SSE payloads so clients can reconcile cross-project deletions deterministically. Rate limits on destructive endpoints remain in effect.
 
 **Image-Scoped Actions**:
-- Endpoints under `/api/photos` (`tags/add`, `tags/remove`, `keep`, `process`, `move`) accept `photo_id`-scoped batches for cross-project operations.
+- Endpoints under `/api/photos` (`tags/add`, `tags/remove`, `keep`, `process`, `move`, `delete`) accept `photo_id`-scoped batches for cross-project operations.
 - Protections: each route enforces item array validation, parameter coercion via `mustGetPhotoById()`, repository-layer parameterized queries, and per-IP rate limits (60–240 req/min depending on action).
 - Dry-run support allows administrators to preview effects (`dry_run=true`) without mutating state, reducing accidental destructive changes.
 - **Open risk**: batch sizes are currently unbounded and rely on upstream request-size limits; see Medium Priority item 3 for mitigation plan.
@@ -271,6 +291,37 @@ This ensures all functionality receives security review before deployment.
 ---
 
 ## Recent Development Notes
+
+### 2025-11-04 UTC — Simplified Project Rename with Maintenance-Based Folder Alignment
+
+- **Feature**: Simplified project rename to use maintenance-driven folder alignment
+- **Changes**: 
+  - Removed `pending_folder_rename` and `desired_folder` columns (no longer needed)
+  - Removed `folderRenameWorker.js` (replaced by maintenance-based approach)
+  - Simplified `PATCH /api/projects/:folder/rename` to only update display name
+  - Added `runFolderAlignment()` to maintenance worker
+  - Integrated `folder_alignment` into `maintenance_global` task (priority 96)
+  - Removed unused repository functions: `setPendingRename`, `clearPendingRename`, `listPendingRenames`
+- **Architecture**:
+  - **Rename API**: Updates `project_name` immediately (ACID transaction), non-blocking
+  - **Maintenance**: Hourly `folder_alignment` job detects mismatches and renames folders
+  - **Reconciliation**: Folder discovery handles external changes as before
+- **Security Assessment**:
+  - ✅ **Simpler attack surface**: Fewer code paths, no explicit flags to manipulate
+  - ✅ **ACID guarantees**: Database updates remain transactional
+  - ✅ **Idempotent operations**: Folder alignment is retry-safe
+  - ✅ **Safety checks**: Validates source exists and target doesn't exist before rename
+  - ✅ **Audit trail**: Comprehensive logging (`folder_aligned`, `folder_alignment_failed`)
+  - ✅ **Rate limiting preserved**: Rename endpoint maintains 10 req/5 min/IP limit
+  - ✅ **No data loss risk**: Folders continue working until alignment completes
+  - ✅ **SQL injection protection**: All queries use parameterized statements
+  - ✅ **Path traversal protection**: Folder names validated and confined to project directory
+  - ✅ **Reduced complexity**: Maintenance-driven approach is easier to audit and verify
+- **Risk**: None identified. This simplification reduces complexity while maintaining all consistency guarantees.
+- **Monitoring**: 
+  - Log events: `project_name_updated`, `folder_aligned`, `folder_alignment_failed`
+  - SSE events: `folder_renamed` emitted when alignment completes
+  - Alignment runs hourly as part of maintenance cycle
 
 All items from the previous cycle were assessed on 2025-08-20 UTC. Notes have been incorporated into this document (Security Overview and Suggested Interventions). No pending items remain here.
 

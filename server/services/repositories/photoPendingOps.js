@@ -107,6 +107,77 @@ function listPendingDeletesByProject({
 }
 
 /**
+ * List individual photos that have pending deletions
+ * @param {Object} options
+ * @param {number[]} [options.projectIds] - Limit to specific project ids
+ * @param {string} [options.date_from]
+ * @param {string} [options.date_to]
+ * @param {string} [options.file_type]
+ * @param {string} [options.orientation]
+ * @returns {Array}
+ */
+function listPendingDeletePhotos({ projectIds = null, date_from = null, date_to = null, file_type = null, orientation = null } = {}) {
+  const db = getDb();
+  const params = [];
+  const filters = [];
+
+  if (Array.isArray(projectIds) && projectIds.length) {
+    const placeholders = projectIds.map(() => '?').join(',');
+    filters.push(`ph.project_id IN (${placeholders})`);
+    params.push(...projectIds);
+  }
+
+  if (date_from) {
+    filters.push('ph.date_time_original >= ?');
+    params.push(date_from);
+  }
+  if (date_to) {
+    filters.push('ph.date_time_original <= ?');
+    params.push(`${date_to} 23:59:59`);
+  }
+
+  if (file_type && file_type !== 'any') {
+    if (file_type === 'jpg_only') {
+      filters.push('ph.jpg_available = 1 AND ph.raw_available = 0');
+    } else if (file_type === 'raw_only') {
+      filters.push('ph.raw_available = 1 AND ph.jpg_available = 0');
+    } else if (file_type === 'both') {
+      filters.push('ph.jpg_available = 1 AND ph.raw_available = 1');
+    }
+  }
+
+  if (orientation && orientation !== 'any') {
+    if (orientation === 'vertical') {
+      filters.push('ph.height > ph.width');
+    } else if (orientation === 'horizontal') {
+      filters.push('ph.width > ph.height');
+    }
+  }
+
+  const where = filters.length ? `AND ${filters.join(' AND ')}` : '';
+  return db.prepare(`
+    SELECT
+      ph.id,
+      ph.project_id,
+      ph.filename,
+      ph.basename,
+      ph.jpg_available,
+      ph.raw_available,
+      ph.keep_jpg,
+      ph.keep_raw
+    FROM photos ph
+    JOIN projects p ON p.id = ph.project_id
+    WHERE (p.status IS NULL OR p.status != 'canceled')
+      AND (
+        (ph.jpg_available = 1 AND ph.keep_jpg = 0)
+        OR (ph.raw_available = 1 AND ph.keep_raw = 0)
+      )
+      ${where}
+    ORDER BY p.updated_at DESC, ph.id ASC
+  `).all(...params);
+}
+
+/**
  * List photos with keep flag mismatches for a specific project
  * @param {number} project_id - Project ID
  * @returns {Array} Array of photos with keep flag mismatches
@@ -170,6 +241,45 @@ function listKeepMismatchesByProject({ project_id = null, project_folder = null 
 }
 
 /**
+ * List individual photos where keep flags do not match availability
+ * @param {Object} options
+ * @param {number[]} [options.projectIds]
+ * @returns {Array}
+ */
+function listKeepMismatchPhotos({ projectIds = null } = {}) {
+  const db = getDb();
+  const params = [];
+  const filters = [];
+
+  if (Array.isArray(projectIds) && projectIds.length) {
+    const placeholders = projectIds.map(() => '?').join(',');
+    filters.push(`ph.project_id IN (${placeholders})`);
+    params.push(...projectIds);
+  }
+
+  const where = filters.length ? `AND ${filters.join(' AND ')}` : '';
+  return db.prepare(`
+    SELECT
+      ph.id,
+      ph.project_id,
+      ph.filename,
+      ph.jpg_available,
+      ph.raw_available,
+      ph.keep_jpg,
+      ph.keep_raw
+    FROM photos ph
+    JOIN projects p ON p.id = ph.project_id
+    WHERE (p.status IS NULL OR p.status != 'canceled')
+      AND (
+        COALESCE(ph.keep_jpg, 0) != COALESCE(ph.jpg_available, 0)
+        OR COALESCE(ph.keep_raw, 0) != COALESCE(ph.raw_available, 0)
+      )
+      ${where}
+    ORDER BY p.updated_at DESC, ph.id ASC
+  `).all(...params);
+}
+
+/**
  * Count photos missing generated derivatives for a specific project
  * Missing asset = thumbnail or preview not marked generated
  */
@@ -191,7 +301,9 @@ function countMissingDerivativesForProject(project_id) {
 module.exports = {
   listPendingDeletesForProject,
   listPendingDeletesByProject,
+  listPendingDeletePhotos,
   listKeepMismatchesForProject,
   listKeepMismatchesByProject,
+  listKeepMismatchPhotos,
   countMissingDerivativesForProject
 };

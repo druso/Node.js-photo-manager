@@ -96,6 +96,14 @@ Tables and relationships:
   - Query params: `filename` or `name`, plus same filter params as above
   - Returns: page containing the specified photo with surrounding items
   - Used for deep-linking to specific photos in filtered views
+
+- All photo keys (for "Select All"): `GET /api/photos/all-keys`
+  - Query params: same filter params as `/api/photos` (`date_from`, `date_to`, `file_type`, `keep_type`, `orientation`, `tags`, `visibility`, `public_link_id`, `sort_by`, `sort_dir`)
+  - Returns: `{ keys: string[], total: number }` where keys are in format `"project_folder::filename"`
+  - Lightweight query returning only photo identifiers without metadata
+  - Used by frontend "Select All" to select all filtered photos across pagination
+  - No pagination - returns all matching keys in a single response
+  - Performance: ~200KB for 10,000 photos, <200ms query time
   - Public link filter behaves like the list endpoint: anonymous requests with `public_link_id` are clamped to public visibility, while admins see full results.
 
 - `tags`
@@ -455,10 +463,11 @@ SELECT * FROM jobs WHERE status = 'running' AND (strftime('%s','now') - strftime
 
 ### Destructive Ordering (Commit Changes)
 
-- On Commit, the system ensures the folder is the first point of change:
+- On Commit, the system immediately removes photo rows whose `keep_*` flags have both been cleared:
   1) Move non-kept files to `.trash` and remove JPG derivatives.
-  2) Update DB availability flags via `manifest_check`/`folder_check`.
-  3) Remove DB rows with no assets via `manifest_cleaning`.
+  2) Delete the corresponding DB record right away and emit `item_removed` SSE so clients drop thumbnails without waiting for maintenance.
+  3) For partial removals (e.g., RAW only), update DB availability flags to reflect the remaining assets.
+- Scheduled maintenance (`manifest_check`, `folder_check`, `manifest_cleaning`) still runs as a safeguard, but zombie rows are now eliminated during the original commit workflow.
 - This ordering guarantees that the DB never claims availability for files that no longer exist, and the frontend reflects changes incrementally without hard refreshes.
 
 ---
@@ -490,12 +499,13 @@ Deletions:
 - `GET /api/projects/:folder/preview/:filename` → serves generated preview JPG (same visibility gate as thumbnails)
 - `GET /api/photos` — keyset‑paginated list across all non‑archived projects (supports `limit`, `cursor`, `before_cursor`, `date_from`, `date_to`, `file_type`, `keep_type`, `orientation`, `tags`, `include=tags`)
 - `GET /api/photos/locate-page` — locate a specific photo and return its containing page (requires `project_folder` and `filename` or `name`; accepts the same optional filters as `/api/photos`, including `tags` and `include=tags`; returns `{ items, position, page_index, idx_in_items, next_cursor, prev_cursor, target }` and guarantees the target is within the filtered result set)
+- `GET /api/photos/all-keys` — lightweight query returning all photo keys matching filters (returns `{ keys: string[], total: number }`; used for "Select All" functionality; no pagination)
 - `GET /api/photos/pending-deletes` — aggregated pending deletion counts across all projects (supports date/file/orientation filters; returns `{ jpg, raw, total, byProject }`; ignores `keep_type` and always reports counts independent of the paginated grid filters)
-- POST `/api/photos/commit-changes` — global commit across multiple projects (accepts optional `{ projects }` body)
+- POST `/api/photos/commit-changes` — global commit across multiple projects. When no `{ projects }` override is supplied the backend aggregates all pending deletions, produces per-project summaries, and queues a single `change_commit_all` task with `{ photo_id, filename? }` job items (auto-chunked at 2k items per job).
 - POST `/api/photos/revert-changes` — global revert across multiple projects (accepts optional `{ projects }` body)
-### Payload Validation
+### Payload Validation & Job Items
 
-- All cross-project photo endpoints enforce the shared `MAX_ITEMS_PER_JOB` guardrail (currently 2,000 items). Validation lives in `server/routes/photosActions.js`; when clients exceed the limit they receive a `400` with guidance to reduce batch size. Internal orchestrators may pass `autoChunk: true` to `jobsRepo.enqueueWithItems()` so large operations are split into compliant job batches.
+- All cross-project photo endpoints enforce the shared `MAX_ITEMS_PER_JOB` guardrail (currently 2,000 items). Validation lives in `server/routes/photosActions.js`; when clients exceed the limit they receive a `400` with guidance to reduce batch size. Internal orchestrators pass `autoChunk: true` to `jobsRepo.enqueueWithItems()` so large operations are split into compliant job batches. For commit flows the orchestrator injects `{ photo_id, filename }` records so downstream workers (e.g., `file_removal`) can reconcile job items back to project context even when the job scope is `photo_set`.
 
 The SQLite database is located at `.db/user_0.sqlite` (separate from project content) and is automatically created on first run. Projects are stored in `.projects/user_0/<project_folder>/` with user-scoped isolation.
 

@@ -329,4 +329,57 @@ router.get('/photos', async (req, res) => {
   }
 });
 
+// GET /api/photos/all-keys - Get all photo keys matching filters (for "Select All" functionality)
+// Returns lightweight response with only project_folder::filename keys
+// Query parameters: same as /api/photos (date_from, date_to, file_type, keep_type, orientation, tags, visibility)
+router.get('/photos/all-keys', apiRateLimit, async (req, res) => {
+  try {
+    res.set('Cache-Control', 'no-store');
+    const q = req.query || {};
+
+    const date_from = typeof q.date_from === 'string' && q.date_from.length ? q.date_from : null;
+    const date_to = typeof q.date_to === 'string' && q.date_to.length ? q.date_to : null;
+    const file_type = typeof q.file_type === 'string' && q.file_type.length ? q.file_type : null;
+    const keep_type = typeof q.keep_type === 'string' && q.keep_type.length ? q.keep_type : null;
+    const orientation = typeof q.orientation === 'string' && q.orientation.length ? q.orientation : null;
+    const tags = typeof q.tags === 'string' && q.tags.length ? q.tags : null;
+    const sort_by = typeof q.sort_by === 'string' && q.sort_by.length ? q.sort_by : 'date';
+    const sort_dir = typeof q.sort_dir === 'string' && q.sort_dir.length ? q.sort_dir : 'desc';
+
+    const { value: visibilityValue, error: visibilityError } = normalizeVisibilityParam(q.visibility);
+    if (visibilityError) {
+      return res.status(400).json({ error: visibilityError });
+    }
+
+    let publicLinkId = null;
+    const public_link_hash = typeof q.public_link_id === 'string' && q.public_link_id.length ? q.public_link_id : null;
+    if (public_link_hash) {
+      const link = publicLinksRepo.getByHashedKey(public_link_hash);
+      if (!link) {
+        return res.status(404).json({ error: 'Public link not found' });
+      }
+      publicLinkId = link.id;
+    }
+
+    const result = photosRepo.listAllKeys({
+      date_from,
+      date_to,
+      file_type,
+      keep_type,
+      orientation,
+      tags,
+      visibility: visibilityValue,
+      public_link_id: publicLinkId,
+      sort_by,
+      sort_dir,
+    });
+
+    log.info('all_keys_success', { total: result.total, filters: { date_from, date_to, file_type, keep_type, orientation, tags } });
+    res.json(result);
+  } catch (err) {
+    log.error('all_keys_failed', { error: err && err.message, stack: err && err.stack });
+    res.status(500).json({ error: 'Failed to list photo keys' });
+  }
+});
+
 module.exports = router;

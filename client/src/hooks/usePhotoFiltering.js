@@ -75,10 +75,24 @@ export function usePhotoFiltering({
     if (activeFilters.keepType && activeFilters.keepType !== 'any') {
       const keepJpg = photo.keep_jpg;
       const keepRaw = photo.keep_raw;
-      
-      if (activeFilters.keepType === 'none' && (keepJpg !== false || keepRaw !== false)) return false;
-      if (activeFilters.keepType === 'jpg_only' && (keepJpg !== true || keepRaw !== false)) return false;
-      if (activeFilters.keepType === 'raw_jpg' && (keepJpg !== true || keepRaw !== true)) return false;
+      const actualJpg = keepJpg === true;
+      const actualRaw = keepRaw === true;
+      const explicitJpgFalse = keepJpg === false;
+      const explicitRawFalse = keepRaw === false;
+
+      if (activeFilters.keepType === 'none') {
+        const matchesNone = explicitJpgFalse && explicitRawFalse;
+        if (!matchesNone) return false;
+      } else if (activeFilters.keepType === 'jpg_only') {
+        const matchesJpgOnly = actualJpg && explicitRawFalse;
+        if (!matchesJpgOnly) return false;
+      } else if (activeFilters.keepType === 'raw_jpg') {
+        const matchesRawJpg = actualJpg && actualRaw;
+        if (!matchesRawJpg) return false;
+      } else if (activeFilters.keepType === 'any_kept') {
+        const matchesAnyKept = actualJpg || actualRaw;
+        if (!matchesAnyKept) return false;
+      }
     }
 
     // Visibility filter

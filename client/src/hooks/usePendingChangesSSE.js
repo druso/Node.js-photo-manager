@@ -6,13 +6,10 @@ const IS_DEV = Boolean(import.meta?.env?.DEV);
 
 /**
  * Hook to connect to SSE stream for real-time pending changes updates
- * Returns object with project_folder as key and boolean as value
- * 
- * Example: { "p15": true, "p7": false } means p15 has pending changes, p7 doesn't
+ * Returns the raw payload emitted by the backend, including totals, projects and photos arrays
  */
 export function usePendingChangesSSE() {
-  const [pendingChanges, setPendingChanges] = useState({});
-  const pendingOverridesRef = useRef(null);
+  const [pendingChanges, setPendingChanges] = useState(null);
   const [connected, setConnected] = useState(false);
   const eventSourceRef = useRef(null);
   const reconnectTimeoutRef = useRef(null);
@@ -52,7 +49,6 @@ export function usePendingChangesSSE() {
             if (IS_DEV) {
               console.log('[SSE] Received pending changes update:', data);
             }
-            pendingOverridesRef.current = null;
             setPendingChanges(data);
           } catch (error) {
             if (IS_DEV) {
@@ -102,17 +98,5 @@ export function usePendingChangesSSE() {
     };
   }, []);
 
-  const applyPendingOverride = (updater) => {
-    setPendingChanges(prev => {
-      const next = typeof updater === 'function' ? updater(prev) : updater;
-      pendingOverridesRef.current = next;
-      return next;
-    });
-  };
-
-  const clearPendingOverride = () => {
-    pendingOverridesRef.current = null;
-  };
-
-  return { pendingChanges, connected, applyPendingOverride, clearPendingOverride };
+  return { pendingChanges, connected };
 }

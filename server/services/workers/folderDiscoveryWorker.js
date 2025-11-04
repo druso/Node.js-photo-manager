@@ -131,7 +131,28 @@ async function reconcileWithManifest(folderName, folderPath, job) {
     
     if (!manifest) {
       log.warn('manifest_unreadable', { folder: folderName });
-      // Treat as folder without manifest
+      
+      // Check if project already exists by folder name
+      const existingProject = projectsRepo.getByFolder(folderName);
+      
+      if (existingProject) {
+        // Project exists but manifest is corrupted/missing - regenerate manifest
+        log.info('regenerating_manifest_for_existing_project', {
+          project_id: existingProject.id,
+          project_folder: folderName,
+          project_name: existingProject.project_name
+        });
+        
+        writeManifest(folderName, {
+          name: existingProject.project_name,
+          id: existingProject.id,
+          created_at: existingProject.created_at
+        });
+        
+        return 'reconciled';
+      }
+      
+      // No existing project - treat as folder without manifest
       await createFromFolder(folderName, folderPath, null, job);
       return 'created';
     }
@@ -142,25 +163,75 @@ async function reconcileWithManifest(folderName, folderPath, job) {
     if (project) {
       // Project exists - check if folder matches
       if (project.project_folder !== folderName) {
-        // Folder was renamed outside the app
-        log.warn('folder_renamed_externally', {
-          project_id: project.id,
-          old_folder: project.project_folder,
-          new_folder: folderName,
-          manifest_name: manifest.name
-        });
+        // Check if this is a pending rename completion
+        if (project.pending_folder_rename && project.desired_folder === folderName) {
+          // Discovery found the target folder - complete the pending rename
+          log.info('pending_rename_completed_by_discovery', {
+            project_id: project.id,
+            old_folder: project.project_folder,
+            new_folder: folderName,
+            manifest_name: manifest.name
+          });
+          
+          // Update folder and clear pending rename flag
+          projectsRepo.updateFolder(project.id, folderName);
+          projectsRepo.clearPendingRename(project.id);
+          
+          // Update manifest to remove pending_folder field
+          writeManifest(folderName, {
+            name: manifest.name || project.project_name,
+            id: project.id,
+            created_at: project.created_at
+          });
+          
+          // Emit SSE event for UI update
+          emitJobUpdate({
+            type: 'folder_renamed',
+            project_id: project.id,
+            old_folder: project.project_folder,
+            new_folder: folderName
+          });
+          
+          return 'reconciled';
+        }
         
-        // Update DB to match filesystem (filesystem is master)
-        projectsRepo.updateFolderAndName(
-          project.id,
-          folderName,
-          manifest.name || folderName
-        );
-        
-        log.info('project_reconciled', {
-          project_id: project.id,
-          folder: folderName
-        });
+        // Normal case: folder was renamed outside the app
+        if (!project.pending_folder_rename) {
+          log.warn('folder_renamed_externally', {
+            project_id: project.id,
+            old_folder: project.project_folder,
+            new_folder: folderName,
+            manifest_name: manifest.name
+          });
+          
+          // Update DB to match filesystem (filesystem is master)
+          projectsRepo.updateFolderAndName(
+            project.id,
+            folderName,
+            manifest.name || folderName
+          );
+          
+          log.info('project_reconciled', {
+            project_id: project.id,
+            folder: folderName
+          });
+        } else {
+          // Pending rename but folder doesn't match desired_folder
+          log.warn('folder_mismatch_with_pending_rename', {
+            project_id: project.id,
+            db_folder: project.project_folder,
+            desired_folder: project.desired_folder,
+            found_folder: folderName
+          });
+          
+          // Update DB to match filesystem (filesystem is master)
+          projectsRepo.updateFolderAndName(
+            project.id,
+            folderName,
+            manifest.name || folderName
+          );
+          projectsRepo.clearPendingRename(project.id);
+        }
       }
       
       return 'reconciled';

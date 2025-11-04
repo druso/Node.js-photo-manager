@@ -48,6 +48,8 @@
     "scope": "global",
     "steps": [
       { "type": "trash_maintenance", "priority": 100 },
+      { "type": "duplicate_resolution", "priority": 98 },
+      { "type": "folder_alignment", "priority": 96 },
       { "type": "manifest_check", "priority": 95 },
       { "type": "folder_check", "priority": 95 },
       { "type": "manifest_cleaning", "priority": 80 }

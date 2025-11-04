@@ -86,6 +86,7 @@ Jobs now support three scope types via the `scope` column:
 
 - **Global Maintenance** (`maintenance_global` task, scope: `global`)
   - `trash_maintenance` (100)
+  - `duplicate_resolution` (95)
   - `manifest_check` (95)
   - `folder_check` (95)
   - `manifest_cleaning` (80)
@@ -109,22 +110,29 @@ Jobs now support three scope types via the `scope` column:
 
 - trash_maintenance
   - Worker: `maintenanceWorker.runTrashMaintenance()`.
-  - Purpose: periodic cleanup and management of `.trash` directory.
+  - Purpose: periodic cleanup and management of `.trash` directory (TTL-based file removal).
   - Payload: none currently.
+
+- duplicate_resolution
+  - Worker: `maintenanceWorker.runDuplicateResolution()`.
+  - Purpose: detect cross-project filename collisions and rename duplicates with deterministic `_duplicate{n}` suffixes; enqueues `upload_postprocess` for renamed files.
+  - Payload: none currently.
+  - **Critical**: Must run before `folder_check` to avoid creating duplicate DB records.
 
 - manifest_check
   - Worker: `maintenanceWorker.runManifestCheck()`.
-  - Purpose: reconcile database vs on-disk state (idempotent).
+  - Purpose: reconcile database vs on-disk state (availability flags); ensures `.project.yaml` manifest exists and is correct.
   - Payload: none currently.
 
 - folder_check
   - Worker: `maintenanceWorker.runFolderCheck()`.
-  - Purpose: scan project folder for untracked files; enqueue `upload_postprocess` for accepted ones; move others to `.trash`.
+  - Purpose: scan project folder for untracked files; creates minimal DB records and enqueues `upload_postprocess` for metadata extraction and derivative generation; moves non-accepted files to `.trash`. Skips `.project.yaml` manifest files.
   - Payload: none currently.
+  - **Delegation**: Does NOT extract metadata directly—delegates all photo ingestion to `upload_postprocess` pipeline.
 
 - manifest_cleaning
   - Worker: `maintenanceWorker.runManifestCleaning()`.
-  - Purpose: periodic manifest/database cleanup.
+  - Purpose: removes DB records for photos with no available files (`jpg_available=false AND raw_available=false`).
   - Payload: none currently.
 
 - project_scavenge
@@ -159,6 +167,34 @@ Jobs now support three scope types via the `scope` column:
     - Client operations menu (move selected photos)
     - Uploads route when `reloadConflictsIntoThisProject=true` detects cross‑project conflicts (see `server/routes/uploads.js`).
   - Payload options: provided via task orchestration; individual filenames are carried as `job_items` with `filename` set to the base name (no extension).
+
+- folder_alignment (2025-11-04)
+  - Worker: `maintenanceWorker.runFolderAlignment()`.
+  - Purpose: Aligns project folder names with project display names during maintenance cycles.
+  - Trigger: 
+    - Runs hourly as part of `maintenance_global` task (priority 96)
+    - Can process single project (`project_id` set) or all projects (global scope)
+  - Safety checks:
+    - Source folder must exist (skips if missing)
+    - Target folder must not exist (skips if collision to avoid data loss)
+  - Behavior:
+    - Detects mismatches between `project_name` and `project_folder`
+    - Generates expected folder name using `generateUniqueFolderName()`
+    - Performs atomic `fs.rename()` operation
+    - Updates database with new folder path
+    - Rewrites `.project.yaml` manifest in new location
+    - Emits SSE `folder_renamed` event for UI updates
+  - Idempotent: Safe to retry; skips already-aligned folders
+  - Payload: none currently (uses `project_id` and database state).
+
+- folder_discovery
+  - Worker: `folderDiscoveryWorker.runFolderDiscovery()`.
+  - Purpose: automatically discover and index project folders in `.projects/user_0/`; reconcile with database state.
+  - Reconciliation scenarios:
+    1. New folder found → creates project record
+    2. External rename detected → updates DB to match filesystem
+    3. Missing folder → logs warning (project remains in DB)
+  - Payload: none currently.
 
 Note: Any other `type` will be failed by `workerLoop` as Unknown.
 
@@ -218,15 +254,19 @@ Note: Any other `type` will be failed by `workerLoop` as Unknown.
 
 ### Maintenance
 
-- Scheduler model (see `server/services/scheduler.js`):
-  - Kicks off the `maintenance` task hourly for each active (non‑archived) project.
+- **Scheduler model** (see `server/services/scheduler.js`):
+  - Kicks off the `maintenance_global` task hourly for system-wide reconciliation across all active (non‑archived) projects.
   - Separately kicks off the `project_scavenge` task hourly for archived projects to clean up leftover folders.
-- Task composition (see `server/services/task_definitions.json` → `maintenance.steps`):
-  - `trash_maintenance` (priority 100)
-  - `manifest_check` (priority 95)
-  - `folder_check` (priority 95)
-- Manual triggering: maintenance flows can be initiated via `server/routes/maintenance.js` where applicable.
-- Lane behavior: high priorities (>= threshold, default 90) run in the priority lane to keep reconciliation snappy even if normal jobs are long-running.
+- **Task composition** (see `server/services/task_definitions.json` → `maintenance_global.steps`):
+  - `trash_maintenance` (priority 100) - Clean `.trash` directories
+  - `duplicate_resolution` (priority 95) - Rename cross-project filename collisions with `_duplicate{n}` suffix
+  - `manifest_check` (priority 95) - Reconcile DB vs filesystem, ensure `.project.yaml` exists
+  - `folder_check` (priority 95) - Discover new files, create minimal records, enqueue `upload_postprocess`
+  - `manifest_cleaning` (priority 80) - Remove orphaned DB records
+- **Pipeline delegation**: `folder_check` creates minimal photo records (null metadata/derivatives) and delegates all ingestion to `upload_postprocess`, which handles EXIF extraction and derivative generation via `derivativesWorker`.
+- **Manifest lifecycle**: `.project.yaml` files are generated/repaired by `manifest_check` and preserved by `folder_check` (skipped during file scans).
+- **Manual triggering**: maintenance flows can be initiated via `server/routes/maintenance.js` where applicable.
+- **Lane behavior**: high priorities (>= threshold, default 90) run in the priority lane to keep reconciliation snappy even if normal jobs are long-running.
 
 ### Change Commit (Commit/Revert Toolbar)
 
@@ -283,6 +323,45 @@ Note: Any other `type` will be failed by `workerLoop` as Unknown.
   - `{ type: "item_removed", project_folder: <source>, filename, updated_at }` — remove from source UI lists.
   - `{ type: "item_moved", project_folder: <dest>, filename, thumbnail_status, preview_status, updated_at }` — add/update in destination with derivative statuses set to `generated` if a derivative was moved, `pending` if it must be regenerated, or `not_supported` for RAW.
 - Uploads integration: when posting to `POST /api/projects/:folder/upload` with multipart field `reloadConflictsIntoThisProject=true`, the server detects uploaded bases that exist in other projects and auto‑starts `image_move` into the current `:folder` for those bases.
+
+### Project Rename & Folder Alignment (2025-11-04)
+
+**Maintenance-Driven Consistency**: Simple, Non-Blocking Approach
+
+- **Endpoint**: `PATCH /api/projects/:folder/rename`
+  - Body: `{ new_name: string }`
+  - Rate limit: 10 req/5 min/IP
+
+**Rename API (Immediate, Non-Blocking)**
+- Updates `project_name` immediately in database (ACID transaction)
+- Updates `.project.yaml` manifest with new name
+- Returns success immediately - no blocking operations
+- No jobs enqueued, no flags set
+
+**Folder Alignment (Automatic, Hourly)**
+- Runs as part of `maintenance_global` task (priority 96)
+- Detects mismatches between `project_name` and `project_folder`
+- Generates expected folder name using `generateUniqueFolderName()`
+- Safety checks:
+  - Source folder must exist (skips if missing)
+  - Target folder must not exist (skips if collision)
+- Performs atomic `fs.rename()` operation
+- Updates database: `project_folder` → aligned folder name
+- Rewrites manifest in new location
+- Emits SSE event: `{ type: "folder_renamed", project_id, old_folder, new_folder }`
+
+**Consistency Guarantees**:
+- ✅ Display name updates are immediate and transactional (ACID)
+- ✅ Folder alignment happens automatically during maintenance
+- ✅ No blocking operations during rename API calls
+- ✅ All operations are idempotent and retry-safe
+- ✅ Handles external folder changes gracefully
+
+**User Experience**:
+- Immediate feedback: Project name changes instantly in UI
+- Background processing: Folder rename happens during next maintenance cycle (hourly)
+- No downtime: Project continues working with old folder until alignment completes
+- SSE updates: UI refreshes automatically when folder rename completes
 
 ---
 
