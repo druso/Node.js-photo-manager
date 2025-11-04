@@ -31,6 +31,7 @@ export default function useViewerSync({
   activeFilters,
   allDeepLinkRef,
   suppressUrlRef,
+  sharedLinkHash = null, // For shared link mode
 }) {
   const viewerPhotos = useMemo(() => {
     let photos;
@@ -82,6 +83,17 @@ export default function useViewerSync({
   const handleCloseViewer = useCallback(() => {
     const wasAll = !!(isAllMode || viewerState.fromAll);
     setViewerState(prev => ({ ...(prev || {}), isOpen: false, showInfo: false }));
+    
+    // Handle shared link mode
+    if (sharedLinkHash) {
+      const targetUrl = `/shared/${sharedLinkHash}`;
+      console.log('[handleCloseViewer] Closing shared link viewer, updating URL to:', targetUrl);
+      safePushState(targetUrl);
+      setViewerList(null);
+      return;
+    }
+    
+    // Normal mode
     const query = buildQueryString(activeFilters);
     const targetUrl = wasAll 
       ? `/all${query}`
@@ -92,7 +104,7 @@ export default function useViewerSync({
     console.log('[handleCloseViewer] Closing viewer, updating URL to:', targetUrl);
     safePushState(targetUrl);
     setViewerList(null);
-  }, [isAllMode, viewerState.fromAll, setViewerState, activeFilters, selectedProject?.folder, setViewerList]);
+  }, [isAllMode, viewerState.fromAll, setViewerState, activeFilters, selectedProject?.folder, setViewerList, sharedLinkHash]);
 
   const handleViewerIndexChange = useCallback((idx, photo) => {
     try {
@@ -104,8 +116,17 @@ export default function useViewerSync({
           try { console.debug('[deep-link] URL update blocked during resolution'); } catch {}
           return;
         }
-        const query = buildQueryString(activeFilters);
+        
         const nameForUrl = photo.basename || (photo.filename || '').replace(/\.[^/.]+$/, '');
+        
+        // Handle shared link mode
+        if (sharedLinkHash && nameForUrl) {
+          safePushState(`/shared/${sharedLinkHash}/${encodeURIComponent(nameForUrl)}`);
+          return;
+        }
+        
+        // Normal mode
+        const query = buildQueryString(activeFilters);
         if (isAllMode || viewerState.fromAll) {
           const pf = photo.project_folder || (selectedProject?.folder || '');
           if (pf && nameForUrl) {
@@ -116,7 +137,7 @@ export default function useViewerSync({
         }
       }
     } catch {}
-  }, [viewerState, isAllMode, activeFilters, allDeepLinkRef, suppressUrlRef, selectedProject?.folder]);
+  }, [viewerState, isAllMode, activeFilters, allDeepLinkRef, suppressUrlRef, selectedProject?.folder, sharedLinkHash]);
 
   return {
     viewerPhotos,

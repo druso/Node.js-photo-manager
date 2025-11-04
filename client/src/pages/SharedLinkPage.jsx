@@ -1,12 +1,13 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import AllPhotosPane from '../components/AllPhotosPane';
 import PhotoViewer from '../components/PhotoViewer';
 import { PublicHashProvider } from '../contexts/PublicHashContext';
 import { useSharedLinkData } from '../hooks/useSharedLinkData';
 
-function SharedLinkPage({ hashedKey }) {
+function SharedLinkPage({ hashedKey, initialPhotoName }) {
   const [viewerState, setViewerState] = useState({ isOpen: false, startIndex: 0 });
   const [viewerList, setViewerList] = useState([]);
+  const pendingOpenRef = useRef(initialPhotoName ? { filename: initialPhotoName } : null);
 
   // Use the same hook as authenticated users
   const {
@@ -32,14 +33,57 @@ function SharedLinkPage({ hashedKey }) {
     if (index !== -1) {
       setViewerList(photos);
       setViewerState({ isOpen: true, startIndex: index });
+      // Update URL to include photo name
+      const photoBasename = photo.filename.replace(/\.[^/.]+$/, '');
+      window.history.pushState({}, '', `/shared/${hashedKey}/${encodeURIComponent(photoBasename)}`);
     }
   };
 
   const handleCloseViewer = () => {
     setViewerState({ isOpen: false, startIndex: 0 });
+    // Return to shared link base URL
+    window.history.pushState({}, '', `/shared/${hashedKey}`);
   };
 
-  if (loading) {
+  const handleCurrentIndexChange = (newIndex, currentPhoto) => {
+    // Update URL when navigating between photos in viewer
+    if (currentPhoto) {
+      const photoBasename = currentPhoto.filename.replace(/\.[^/.]+$/, '');
+      window.history.replaceState({}, '', `/shared/${hashedKey}/${encodeURIComponent(photoBasename)}`);
+    }
+  };
+
+  // Deep linking: Open viewer if initialPhotoName is provided
+  useEffect(() => {
+    if (!pendingOpenRef.current || !photos.length || viewerState.isOpen) return;
+
+    const targetFilename = pendingOpenRef.current.filename;
+    const targetLower = targetFilename.toLowerCase();
+    
+    // Find photo by filename or basename (without extension)
+    const index = photos.findIndex(p => {
+      const fn = (p.filename || '').toLowerCase();
+      if (fn === targetLower) return true;
+      const base = fn.replace(/\.[^/.]+$/, '');
+      return base === targetLower;
+    });
+
+    if (index >= 0) {
+      console.log('[SharedLinkPage] Deep link found photo at index', index);
+      setViewerList(photos);
+      setViewerState({ isOpen: true, startIndex: index });
+      pendingOpenRef.current = null;
+    } else if (!hasMore && !loading) {
+      // Photo not found and no more pages to load
+      console.warn('[SharedLinkPage] Deep link photo not found:', targetFilename);
+      pendingOpenRef.current = null;
+    } else if (hasMore && !loading) {
+      // Continue loading more pages to find the photo
+      loadMore();
+    }
+  }, [photos, hasMore, loading, loadMore, viewerState.isOpen]);
+
+  if (loading && !photos.length) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="text-center">
@@ -122,6 +166,7 @@ function SharedLinkPage({ hashedKey }) {
             selectedPhotos={new Set()} // No selection for public
             onEnterSelectionMode={() => {}} // Public users can't enter selection mode
             loading={loading}
+            isPublicView={true}
           />
         </div>
 
@@ -136,7 +181,7 @@ function SharedLinkPage({ hashedKey }) {
             selectedPhotos={new Set()}
             onToggleSelect={() => {}}
             onKeepUpdated={() => {}}
-            onCurrentIndexChange={() => {}}
+            onCurrentIndexChange={handleCurrentIndexChange}
             fromAllMode={false}
             onRequestMove={() => {}}
             onShowInfoChange={() => {}}

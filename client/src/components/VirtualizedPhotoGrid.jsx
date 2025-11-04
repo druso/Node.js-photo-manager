@@ -26,6 +26,7 @@ const VirtualizedPhotoGrid = ({
   simplifiedMode = false,
   anchorIndex = null,
   onAnchored,
+  isPublicView = false,
 }) => {
   const containerRef = useRef(null);
   const [containerWidth, setContainerWidth] = useState(0);
@@ -659,8 +660,10 @@ const VirtualizedPhotoGrid = ({
                         }}
                         ref={(el) => observeCell(el, key)}
                       >
-                      {/* Gradient overlay for desktop hover - top 25% */}
-                      <div className="absolute inset-x-0 top-0 h-1/4 bg-gradient-to-b from-black/50 to-transparent opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none hidden sm:block" />
+                      {/* Gradient overlay for desktop hover - top 25% (hidden in public view) */}
+                      {!isPublicView && (
+                        <div className="absolute inset-x-0 top-0 h-1/4 bg-gradient-to-b from-black/50 to-transparent opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none hidden sm:block" />
+                      )}
 
                       <span
                         className={`absolute top-2 right-2 z-10 px-2 py-0.5 text-xs font-semibold rounded-full shadow-sm flex items-center gap-1 ${visibilityStyles}`}
@@ -678,30 +681,32 @@ const VirtualizedPhotoGrid = ({
                         {visibilityLabel}
                       </span>
                       
-                      {/* Selection toggle in top-left within gradient area */}
-                      <button
-                        type="button"
-                        aria-label={isSelected ? 'Deselect photo' : 'Select photo'}
-                        onClick={(e) => { 
-                          e.stopPropagation(); 
-                          onToggleSelection && onToggleSelection(photo); 
-                        }}
-                        className={`absolute top-2 left-2 z-10 flex items-center justify-center h-10 w-10 rounded-full border transition shadow-md
-                          ${isSelected
-                            ? 'bg-blue-600 text-white border-blue-600 opacity-100'
-                            : 'bg-white/90 text-gray-600 border-gray-300 opacity-0 sm:group-hover:opacity-100'}
-                        `}
-                      >
-                        {isSelected ? (
-                          // Check icon
-                          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="h-5 w-5">
-                            <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-7.25 7.25a1 1 0 01-1.414 0l-3-3a1 1 0 111.414-1.414L8.5 11.086l6.543-6.543a1 1 0 011.414 0z" clipRule="evenodd" />
-                          </svg>
-                        ) : (
-                          // Empty circle (no check)
-                          <span className="block h-5 w-5 rounded-full border-2 border-gray-400" />
-                        )}
-                      </button>
+                      {/* Selection toggle in top-left within gradient area (hidden in public view) */}
+                      {!isPublicView && (
+                        <button
+                          type="button"
+                          aria-label={isSelected ? 'Deselect photo' : 'Select photo'}
+                          onClick={(e) => { 
+                            e.stopPropagation(); 
+                            onToggleSelection && onToggleSelection(photo); 
+                          }}
+                          className={`absolute top-2 left-2 z-10 flex items-center justify-center h-10 w-10 rounded-full border transition shadow-md
+                            ${isSelected
+                              ? 'bg-blue-600 text-white border-blue-600 opacity-100'
+                              : 'bg-white/90 text-gray-600 border-gray-300 opacity-0 sm:group-hover:opacity-100'}
+                          `}
+                        >
+                          {isSelected ? (
+                            // Check icon
+                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="h-5 w-5">
+                              <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-7.25 7.25a1 1 0 01-1.414 0l-3-3a1 1 0 111.414-1.414L8.5 11.086l6.543-6.543a1 1 0 011.414 0z" clipRule="evenodd" />
+                            </svg>
+                          ) : (
+                            // Empty circle (no check)
+                            <span className="block h-5 w-5 rounded-full border-2 border-gray-400" />
+                          )}
+                        </button>
+                      )}
 
                       {visibleKeys.has(key) ? (
                         <Thumbnail

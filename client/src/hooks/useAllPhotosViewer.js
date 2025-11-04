@@ -8,6 +8,7 @@ export default function useAllPhotosViewer({
   projects,
   handleProjectSelect,
   pendingOpenRef,
+  sharedLinkHash = null, // For shared link mode
 }) {
   const buildSearchParams = useCallback(() => {
     const range = activeFilters?.dateRange || {};
@@ -33,13 +34,21 @@ export default function useAllPhotosViewer({
     setViewerState({ isOpen: true, startIndex: start, fromAll: true });
     
     try {
-      const search = buildSearchParams();
       const nameForUrl = photo.basename || (photo.filename || '').replace(/\.[^/.]+$/, '');
+      
+      // Handle shared link mode
+      if (sharedLinkHash) {
+        window.history.pushState({}, '', `/shared/${sharedLinkHash}/${encodeURIComponent(nameForUrl)}`);
+        return;
+      }
+      
+      // Normal all photos mode
+      const search = buildSearchParams();
       window.history.pushState({}, '', `/all/${encodeURIComponent(photo.project_folder)}/${encodeURIComponent(nameForUrl)}${search}`);
     } catch (err) {
       console.error('[useAllPhotosViewer] Error updating URL:', err);
     }
-  }, [allPhotos, buildSearchParams, setViewerList, setViewerState]);
+  }, [allPhotos, buildSearchParams, setViewerList, setViewerState, sharedLinkHash]);
 
   return { handleAllPhotoSelect };
 }

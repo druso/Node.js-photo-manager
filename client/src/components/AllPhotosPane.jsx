@@ -20,6 +20,7 @@ function AllPhotosPane({
   onToggleSelection,
   selectedPhotos,
   onEnterSelectionMode,
+  isPublicView = false,
 }) {
   return (
     <PhotoDisplay
@@ -43,6 +44,7 @@ function AllPhotosPane({
       onLoadPrev={onLoadPrev}
       anchorIndex={anchorIndex}
       onAnchored={onAnchored}
+      isPublicView={isPublicView}
     />
   );
 }

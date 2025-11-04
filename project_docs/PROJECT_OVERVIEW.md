@@ -29,13 +29,22 @@ The application is built around a few key concepts:
 *   **Unified Filtering System**: Both All Photos and Project views use identical server-side filtering with consistent "filtered of total" count displays. Active filters today cover date range, file type availability (JPG/RAW), keep flags, orientation, and text search. Future iterations will extend this to tags and visibility once the corresponding UI ships.
 *   **Cross-Project Visibility Operations (2025-10-07)**: The actions menu now supports previewing and applying visibility changes across both Project and All Photos contexts using the unified selection model. Bulk updates route through `useVisibilityMutation()` (dry-run aware) and call `POST /api/photos/visibility`, clearing selections and refreshing caches optimistically. Anonymous access remains limited to public thumbnails/previews; all mutating operations still require an authenticated admin session.
 
-*   **Shared Links Roadmap (In Progress)**: Shared links are under active development to enable curated public galleries. Current status:
+*   **Shared Links**: Shared links enable curated public galleries with full deep linking support. Current implementation:
 
-    - **Milestone 4 Phase 1 (2025-10-07)**: Server-side groundwork adds `public_links` schema tables, administrative APIs under `/api/public-links`, and `public_linksRepo` helpers. The CLI workflow for generating hashed keys is in place, but UI entry points are limited to internal tooling.
+    - **Server-side**: `public_links` schema tables, administrative APIs under `/api/public-links`, and `publicLinksRepo` helpers. Hashed key generation and management via CLI and admin UI.
 
-    - **Milestone 4 Phase 2 (Target)**: Planned dual-endpoint architecture (`/shared/api/:hashedKey` for public viewers and `/shared/api/:hashedKey/admin` for admins) with cursor pagination and conditional visibility filtering. Corresponding React hooks (`useSharedLinkData`) and pages (`SharedLinkPage.jsx`, `/sharedlinks` management view) remain TODO; see `tasks_new/user_auth_Milestone5.md` for tracked work.
+    - **Client-side**: Dual-endpoint architecture with `/shared/:hashedKey` for public viewers and authenticated admin access. React hooks (`useSharedLinkData`) and pages (`SharedLinkPage.jsx`, `/sharedlinks` management view) provide full functionality.
 
-    - **Milestone 5 (Planned)**: A unified share modal will integrate with `UnifiedSelectionModal.jsx` to manage link membership, auto-promote shared photos to `visibility='public'`, and provide optimistic UI updates. These behaviors are design goals and not yet available in the production build.
+    - **Deep Linking (2025-01-04)**: Full support for photo-level deep links with URL format `/shared/{token}/{photoBasename}`. Both authenticated and public users can:
+      - Access shared galleries via `/shared/{token}`
+      - Open specific photos via `/shared/{token}/{photo}` (works as entry point)
+      - Navigate between photos with URL updates (`replaceState`)
+      - Close viewer to return to `/shared/{token}` (`pushState`)
+      - Deep links automatically paginate to find target photo if not in initial page
+    
+    - **URL Synchronization**: Router matches both `/shared/{token}` and `/shared/{token}/{photo}` patterns. `useViewerSync` and `useAllPhotosViewer` hooks handle URL updates for shared link mode, ensuring consistent behavior across authenticated and public access.
+
+    - **Milestone 5 (Planned)**: A unified share modal will integrate with `UnifiedSelectionModal.jsx` to manage link membership, auto-promote shared photos to `visibility='public'`, and provide optimistic UI updates.
 
 *   **Worker Pipeline**: To ensure the UI remains responsive, time-consuming tasks like generating thumbnails and previews are handled asynchronously by a background worker pipeline. Each job now carries an explicit `scope` (`project`, `photo_set`, or `global`) so workers can operate on single projects, arbitrary photo collections, or system-wide maintenance alike. Shared helpers in `server/services/workers/shared/photoSetUtils.js` resolve job targets and group photo sets per project, keeping filesystem access safe for cross-project operations. The system includes specialized workers for image moves between projects, which update database records, move files and derivatives, and emit real-time SSE events to keep the UI synchronized. This system is designed to be extensible for future processing needs and the canonical job catalog lives in `JOBS_OVERVIEW.md`. **Photo-centric commits (2025‑10‑24)** now dispatch a single `change_commit_all` task containing per-photo job items aggregated across projects; the file removal worker consumes these `photo_set` batches, marking each job item by `photo_id` while still emitting project-level SSE updates.
 

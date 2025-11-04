@@ -196,23 +196,34 @@ Data access is through repository modules:
   - Icon-only actions: 📋 Copy, ✏️ Edit, 🔄 Regenerate, 🗑️ Delete (with tooltips)
   - Header with "Druso Photo Manager" title and "All Photos" navigation button
   - "Exit shared link" button in shared link view navigates here
-- `/shared/:hashedKey` - Public/Admin shared link page (Milestone 4 Phase 2: dual rendering)
-  - Routing in `client/src/main.jsx` matches 32-char base64url keys
+- `/shared/:hashedKey` - Public/Admin shared link page with deep linking support
+  - **Routing** in `client/src/main.jsx`:
+    - Matches pattern: `/shared/:hashedKey` and `/shared/:hashedKey/:photoName`
+    - Regex: `/^\/shared\/([a-zA-Z0-9_-]{32})(?:\/(.+))?$/`
+    - Extracts `hashedKey` (32-char base64url) and optional `photoName` for deep linking
+    - Passes both to `SharedLinkRoute` component
   - **Public users** (unauthenticated): Rendered by `SharedLinkPage.jsx`
     - Uses `useSharedLinkData` hook with `isAuthenticated: false`
     - Calls `/shared/api/:hashedKey` endpoint (public photos only)
     - Displays header with "Druso Photo Manager" + Login button
     - Shows photo grid using `AllPhotosPane` component (same as admin)
     - No admin controls (no upload, no operations menu, no selection)
-  - **Admin users** (authenticated): Rendered by `App.jsx` with `sharedLinkHash` prop
+    - **Deep linking**: Accepts `initialPhotoName` prop to auto-open viewer
+  - **Admin users** (authenticated): Rendered by `App.jsx` with `sharedLinkHash` and `initialPhotoName` props
     - Uses `useSharedLinkData` hook with `isAuthenticated: true`
     - Calls `/shared/api/:hashedKey/admin` endpoint (all photos including private)
     - Shows full UI with operations menu and selection capabilities
     - Upload button hidden in shared mode (`isAuthenticated && !isSharedLinkMode`)
     - "Exit shared link" button navigates to `/sharedlinks`
+    - **Deep linking**: Accepts `initialPhotoName` prop to auto-open viewer
+  - **URL Synchronization** (2025-01-04):
+    - Opening photo: `pushState` to `/shared/{token}/{photoBasename}`
+    - Navigating photos: `replaceState` to update photo in URL
+    - Closing viewer: `pushState` to `/shared/{token}`
+    - Deep links paginate automatically to find target photo
   - Both views use identical `AllPhotosPane` grid component for consistency
   - Integrates `PhotoViewer` with `isPublicView={true}` for public users
-  - No authentication required
+  - No authentication required for public access
 
 Notes:
 

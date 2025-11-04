@@ -9,7 +9,7 @@ import PhotoTableView from './PhotoTableView';
  * PhotoGridView.jsx has been REMOVED as virtualization is now the only grid implementation.
  * All grid-related changes should be made to VirtualizedPhotoGrid.jsx.
  */
-const PhotoDisplay = ({ viewMode, projectFolder, onPhotoSelect, projectData, selectedPhotos, onToggleSelection, onEnterSelectionMode, lazyLoadThreshold, sortKey, sortDir, onSortChange, sizeLevel, photos, hasMore, onLoadMore, dwellMs, simplifiedMode = false, anchorIndex = null, onAnchored, hasPrev = false, onLoadPrev }) => {
+const PhotoDisplay = ({ viewMode, projectFolder, onPhotoSelect, projectData, selectedPhotos, onToggleSelection, onEnterSelectionMode, lazyLoadThreshold, sortKey, sortDir, onSortChange, sizeLevel, photos, hasMore, onLoadMore, dwellMs, simplifiedMode = false, anchorIndex = null, onAnchored, hasPrev = false, onLoadPrev, isPublicView = false }) => {
   if (viewMode === 'grid') {
     return (
       <VirtualizedPhotoGrid
@@ -30,6 +30,7 @@ const PhotoDisplay = ({ viewMode, projectFolder, onPhotoSelect, projectData, sel
         simplifiedMode={simplifiedMode}
         anchorIndex={anchorIndex}
         onAnchored={onAnchored}
+        isPublicView={isPublicView}
       />
     );
   } else {

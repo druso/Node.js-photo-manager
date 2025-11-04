@@ -70,7 +70,7 @@ import { useSharedLinkData } from './hooks/useSharedLinkData';
 
 const ALL_PROJECT_SENTINEL = Object.freeze({ folder: '__all__', name: 'All Photos' });
 
-function App({ sharedLinkHash = null }) {
+function App({ sharedLinkHash = null, initialPhotoName = null }) {
   const { isAuthenticated } = useAuth();
   // Get app state with unified view context
   const {
@@ -352,6 +352,7 @@ function App({ sharedLinkHash = null }) {
     setViewerState,
     projects,
     handleProjectSelect,
+    sharedLinkHash,
   });
 
   // Toggle selection for All Photos mode (composite key to avoid collisions across projects)
@@ -896,9 +897,41 @@ function App({ sharedLinkHash = null }) {
     activeFilters,
     allDeepLinkRef,
     suppressUrlRef,
+    sharedLinkHash,
   });
 
   // Session viewer restoration removed - URL is single source of truth
+
+  // Shared link deep linking: Open viewer if initialPhotoName is provided
+  const sharedDeepLinkRef = useRef(initialPhotoName ? { filename: initialPhotoName } : null);
+  useEffect(() => {
+    if (!isSharedLinkMode || !sharedDeepLinkRef.current || !sharedPhotos.length || viewerState.isOpen) return;
+
+    const targetFilename = sharedDeepLinkRef.current.filename;
+    const targetLower = targetFilename.toLowerCase();
+    
+    // Find photo by filename or basename (without extension)
+    const index = sharedPhotos.findIndex(p => {
+      const fn = (p.filename || '').toLowerCase();
+      if (fn === targetLower) return true;
+      const base = fn.replace(/\.[^/.]+$/, '');
+      return base === targetLower;
+    });
+
+    if (index >= 0) {
+      console.log('[App] Shared link deep link found photo at index', index);
+      setViewerList(sharedPhotos);
+      setViewerState({ isOpen: true, startIndex: index });
+      sharedDeepLinkRef.current = null;
+    } else if (!sharedHasMore && !sharedLoading) {
+      // Photo not found and no more pages to load
+      console.warn('[App] Shared link deep link photo not found:', targetFilename);
+      sharedDeepLinkRef.current = null;
+    } else if (sharedHasMore && !sharedLoading) {
+      // Continue loading more pages to find the photo
+      sharedLoadMore();
+    }
+  }, [isSharedLinkMode, sharedPhotos, sharedHasMore, sharedLoading, sharedLoadMore, viewerState.isOpen, setViewerList, setViewerState]);
 
   // Filter calculations extracted to custom hook
   const { activeFilterCount, hasActiveFilters } = useFilterCalculations(activeFilters);

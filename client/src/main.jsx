@@ -43,7 +43,7 @@ function ProtectedApp({ sharedLinkHash = null }) {
   );
 }
 
-function SharedLinkRoute({ hashedKey }) {
+function SharedLinkRoute({ hashedKey, photoName }) {
   const { status } = useAuth();
 
   if (status === 'loading') {
@@ -60,14 +60,14 @@ function SharedLinkRoute({ hashedKey }) {
   if (status === 'authenticated') {
     return (
       <ToastProvider>
-        <App sharedLinkHash={hashedKey} />
+        <App sharedLinkHash={hashedKey} initialPhotoName={photoName} />
       </ToastProvider>
     );
   }
 
   return (
     <ToastProvider>
-      <SharedLinkPage hashedKey={hashedKey} />
+      <SharedLinkPage hashedKey={hashedKey} initialPhotoName={photoName} />
     </ToastProvider>
   );
 }
@@ -76,13 +76,15 @@ function SharedLinkRoute({ hashedKey }) {
 function Router() {
   const path = window.location.pathname;
   
-  const sharedLinkMatch = path.match(/^\/shared\/([a-zA-Z0-9_-]{32})$/);
+  // Match both /shared/{token} and /shared/{token}/{photo}
+  const sharedLinkMatch = path.match(/^\/shared\/([a-zA-Z0-9_-]{32})(?:\/(.+))?$/);
   
   if (sharedLinkMatch) {
     const hashedKey = sharedLinkMatch[1];
+    const photoName = sharedLinkMatch[2]; // Optional photo name for deep linking
     return (
       <AuthProvider>
-        <SharedLinkRoute hashedKey={hashedKey} />
+        <SharedLinkRoute hashedKey={hashedKey} photoName={photoName} />
       </AuthProvider>
     );
   }
