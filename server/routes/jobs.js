@@ -2,6 +2,7 @@ const express = require('express');
 const projectsRepo = require('../services/repositories/projectsRepo');
 const tasksOrchestrator = require('../services/tasksOrchestrator');
 const jobsRepo = require('../services/repositories/jobsRepo');
+const { DEFAULT_USER } = require('../services/fsUtils');
 const fs = require('fs');
 const path = require('path');
 const { onJobUpdate } = require('../services/events');
@@ -46,6 +47,25 @@ router.get('/projects/:folder/jobs', (req, res) => {
     return res.json({ jobs });
   } catch (err) {
     log.error('list_jobs_failed', { project_folder: req.params && req.params.folder, error: err && err.message, stack: err && err.stack });
+    return res.status(500).json({ error: 'Failed to list jobs' });
+  }
+});
+
+// GET /api/jobs -> list jobs for the authenticated tenant (all scopes)
+router.get('/jobs', (req, res) => {
+  try {
+    const { status, type, scope, limit, offset } = req.query;
+    const tenantId = DEFAULT_USER;
+    const jobs = jobsRepo.listByTenant(tenantId, {
+      status: status || undefined,
+      type: type || undefined,
+      scope: scope || undefined,
+      limit: limit ? Number(limit) : 50,
+      offset: offset ? Number(offset) : 0,
+    });
+    return res.json({ jobs });
+  } catch (err) {
+    log.error('list_jobs_tenant_failed', { error: err && err.message, stack: err && err.stack });
     return res.status(500).json({ error: 'Failed to list jobs' });
   }
 });

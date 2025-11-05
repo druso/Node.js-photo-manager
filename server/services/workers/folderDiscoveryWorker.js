@@ -400,6 +400,7 @@ async function createFromFolder(folderName, folderPath, existingManifest, job) {
 
 /**
  * Extract EXIF metadata from an image file
+ * Prefers DateTimeOriginal, falls back to CreateDate, then ModifyDate
  */
 async function extractMetadata(filePath) {
   try {
@@ -408,8 +409,13 @@ async function extractMetadata(filePath) {
     const result = parser.parse();
     
     if (result && result.tags) {
+      // Prefer DateTimeOriginal (when photo was taken), fall back to CreateDate, then ModifyDate
+      const captureTimestamp = result.tags.DateTimeOriginal || result.tags.CreateDate || result.tags.ModifyDate || null;
+      
       const metadata = {
-        date_time_original: result.tags.DateTimeOriginal || null,
+        date_time_original: captureTimestamp,
+        create_date: result.tags.CreateDate || null,
+        modify_date: result.tags.ModifyDate || null,
         orientation: result.tags.Orientation || null,
         camera_make: result.tags.Make || null,
         make: result.tags.Make || null,
@@ -422,7 +428,7 @@ async function extractMetadata(filePath) {
       Object.keys(metadata).forEach(k => metadata[k] === null && delete metadata[k]);
       
       return {
-        date_time_original: metadata.date_time_original ? new Date(metadata.date_time_original * 1000).toISOString() : null,
+        date_time_original: captureTimestamp ? new Date(captureTimestamp * 1000).toISOString() : null,
         orientation: metadata.orientation || null,
         meta_json: Object.keys(metadata).length > 0 ? JSON.stringify(metadata) : null
       };

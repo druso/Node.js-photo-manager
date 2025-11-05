@@ -1,16 +1,16 @@
 import { useCallback, useState } from 'react';
-import { dryRunPhotosVisibility, updatePhotosVisibility } from '../api/photosApi';
+import { updatePhotosVisibility } from '../api/photosApi';
 import { useToast } from '../ui/toast/ToastContext';
 
 /**
- * Bulk visibility mutation hook with dry-run support.
+ * Bulk visibility mutation hook.
  */
 export default function useVisibilityMutation({ onMutate, onSettled } = {}) {
   const toast = useToast();
-  const [state, setState] = useState({ status: 'idle', lastPreview: null, error: null });
+  const [state, setState] = useState({ status: 'idle', error: null });
 
   const reset = useCallback(() => {
-    setState({ status: 'idle', lastPreview: null, error: null });
+    setState({ status: 'idle', error: null });
   }, []);
 
   const buildPayload = useCallback((items, visibility) => {
@@ -18,36 +18,6 @@ export default function useVisibilityMutation({ onMutate, onSettled } = {}) {
       .filter((item) => Number.isFinite(item?.id))
       .map((item) => ({ photo_id: Number(item.id), visibility }));
   }, []);
-
-  const preview = useCallback(async (items, visibility) => {
-    const payload = buildPayload(items, visibility);
-    if (!payload.length) {
-      const err = new Error('No valid photo IDs supplied');
-      toast?.show?.({
-        emoji: '⚠️',
-        message: 'Select photos with known IDs to preview visibility changes.',
-        variant: 'warning',
-      });
-      throw err;
-    }
-
-    setState((prev) => ({ ...prev, status: 'previewing', error: null }));
-    try {
-      const res = await dryRunPhotosVisibility(payload);
-      const perItem = Array.isArray(res?.dry_run?.per_item) ? res.dry_run.per_item : [];
-      const changedIdSet = new Set(perItem.map((entry) => entry.photo_id));
-      const changedItems = items
-        .filter((item) => changedIdSet.has(item.id))
-        .map((item) => ({ ...item, visibility }));
-      setState({ status: 'previewed', lastPreview: res, error: null });
-      return { raw: res, changedItems, visibility };
-    } catch (err) {
-      const message = err?.message || 'Visibility preview failed';
-      setState({ status: 'error', lastPreview: null, error: message });
-      toast?.show?.({ emoji: '⚠️', message, variant: 'error' });
-      throw err;
-    }
-  }, [buildPayload, toast]);
 
   const apply = useCallback(async (items, visibility) => {
     const payload = buildPayload(items, visibility);
@@ -69,7 +39,7 @@ export default function useVisibilityMutation({ onMutate, onSettled } = {}) {
         .filter((item) => (item.visibility || 'private') !== visibility)
         .map((item) => ({ ...item, visibility }));
       const result = { raw: res, changedItems, visibility };
-      setState({ status: 'success', lastPreview: null, error: null });
+      setState({ status: 'success', error: null });
       onSettled?.(result);
       toast?.show?.({
         emoji: '✅',
@@ -79,7 +49,7 @@ export default function useVisibilityMutation({ onMutate, onSettled } = {}) {
       return result;
     } catch (err) {
       const message = err?.message || 'Failed to update visibility';
-      setState({ status: 'error', lastPreview: null, error: message });
+      setState({ status: 'error', error: message });
       toast?.show?.({ emoji: '⚠️', message, variant: 'error' });
       throw err;
     }
@@ -87,7 +57,6 @@ export default function useVisibilityMutation({ onMutate, onSettled } = {}) {
 
   return {
     state,
-    preview,
     apply,
     reset,
   };

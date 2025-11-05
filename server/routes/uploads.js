@@ -188,14 +188,20 @@ router.post('/:folder/upload', async (req, res) => {
           log.debug('defer_thumbnail_generation', { project_id: project.id, project_folder: project.project_folder, project_name: project.project_name, filename: sanitizedName, is_raw: isRawFile });
 
           // Extract EXIF for non-RAW
+          // Prefer DateTimeOriginal, fall back to CreateDate, then ModifyDate
           let metadata = {};
           if (!isRawFile) {
             try {
               const parser = exifParser.create(file.buffer);
               const result = parser.parse();
               if (result && result.tags) {
+                // Prefer DateTimeOriginal (when photo was taken), fall back to CreateDate, then ModifyDate
+                const captureTimestamp = result.tags.DateTimeOriginal || result.tags.CreateDate || result.tags.ModifyDate || null;
+                
                 metadata = {
-                  date_time_original: result.tags.DateTimeOriginal ? new Date(result.tags.DateTimeOriginal * 1000).toISOString() : null,
+                  date_time_original: captureTimestamp ? new Date(captureTimestamp * 1000).toISOString() : null,
+                  create_date: result.tags.CreateDate || null,
+                  modify_date: result.tags.ModifyDate || null,
                   camera_model: result.tags.Model || null,
                   camera_make: result.tags.Make || null,
                   make: result.tags.Make || null,

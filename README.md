@@ -83,7 +83,7 @@ This application helps photographers manage their photo collections by:
     - Optional: `limit(1-300)`, `date_from`, `date_to`, `file_type`, `keep_type`, `orientation`, `tags`, `include=tags`
     - Returns: `{ items, position, page_index, idx_in_items, next_cursor, prev_cursor, target, limit, date_from?, date_to? }`
     - Notes: 404 if not found/filtered out; 409 if basename is ambiguous; Cache-Control: `no-store`; rate limit: 60 req/min per IP
-  - `POST /api/photos/visibility` — admin-only bulk update with dry-run preview support; used by the All Photos actions menu to toggle `visibility` across projects. Body: `{ items: [{ photo_id, visibility }], dry_run?: boolean }`
+  - `POST /api/photos/visibility` — admin-only bulk update used by the All Photos actions menu to toggle `visibility` across projects. Body: `{ items: [{ photo_id, visibility }] }`
 
 - **Image-scoped Endpoints (Universal)**
   - `POST /api/photos/tags/add` — add tags to photos by photo_id
@@ -206,7 +206,7 @@ Tip: In development, the Vite dev server runs on `5173`; the backend runs on `50
   - SSE events reconcile keep flag changes immediately. The client normalizes filenames (strips known photo extensions) so updates apply whether the DB stored filenames with or without extensions.
   - **Visibility Controls**: The actions menu in both Project and All Photos views now supports dry-run previews and bulk apply for `public`/`private` using `POST /api/photos/visibility`. Operations require an authenticated admin session; successes clear selections and refresh cached listings via optimistic updates.
 - **Robust Lazy-loading Grid**: Smooth thumbnail loading with no random blanks
-  - The photo grid uses a single `IntersectionObserver` with a small positive root margin and a short dwell to avoid flicker.
+  - The photo grid uses a single `IntersectionObserver` with configurable off-screen buffers (default: 1 full viewport height) to ensure images and pagination load well before visibility, providing seamless scrolling with no visible "pop-in" effects. Buffer size is configurable via `config.json` (`photo_grid.eager_load_buffer_vh`, default: 100).
   - It rebinds observation when DOM nodes change across re-renders and uses a ref-backed visibility set to avoid stale-closure misses.
   - Diagnostics: enable `localStorage.setItem('debugThumbs','1')` to log thumbnail load/retry/fail events from `client/src/components/Thumbnail.jsx`.
   - Developer note: the UI employs a windowed pager (`client/src/utils/pagedWindowManager.js`) with bidirectional keyset pagination (`cursor`/`before_cursor`) and head/tail eviction. Server responses include `total` and `unfiltered_total` so the UI can render "filtered of total" consistently across All Photos and Project views. `useProjectPagination()` / `useAllPhotosPagination()` strip `"any"` sentinel filter values before calling the APIs and expose `mutatePagedPhotos()` / `mutateAllPhotos()` to keep optimistic updates in sync.

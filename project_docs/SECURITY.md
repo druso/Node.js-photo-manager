@@ -2,6 +2,17 @@
 
 ## Latest Security Enhancements (2025-11)
 
+### Metadata Extraction Improvement (2025-11-05)
+- **Enhanced timestamp fallback**: EXIF extraction now uses a fallback hierarchy (`DateTimeOriginal` → `CreateDate` → `ModifyDate`) instead of only checking `DateTimeOriginal`. This ensures more accurate photo capture timestamps when primary EXIF field is missing or corrupted.
+- **Audit trail preservation**: All available EXIF timestamp fields (`date_time_original`, `create_date`, `modify_date`) are now stored in `meta_json` for forensic analysis and timestamp verification.
+- **Consistent extraction logic**: Both upload path (`server/routes/uploads.js`) and maintenance path (`server/services/workers/folderDiscoveryWorker.js`) use identical fallback logic, eliminating inconsistencies between ingestion methods.
+
+**Security Impact**:
+- **Data Integrity**: More reliable timestamp extraction reduces risk of incorrect photo ordering and filtering
+- **Audit Capability**: Preserved EXIF fields enable verification of photo capture times and detection of timestamp manipulation
+- **Consistency**: Unified extraction logic across ingestion paths reduces attack surface and simplifies security review
+- **No Authorization Impact**: Changes are purely metadata extraction improvements within existing access controls
+
 ### Photo Grid Sorting and Pagination Fix (2025-11-04)
 - **Sort-aware cursor pagination**: Fixed cursor-based pagination to respect sort direction in SQL WHERE clauses. The `buildAllPhotosWhere` function now uses direction-aware comparison operators (DESC: `<` for older, ASC: `>` for newer), preventing pagination failures and item deduplication when sorting in ascending order.
 - **Input validation**: Sort parameters (`sort`, `dir`) are normalized and validated on the backend before constructing SQL queries, preventing potential SQL injection through sort field manipulation.
@@ -175,7 +186,7 @@
 **Image-Scoped Actions**:
 - Endpoints under `/api/photos` (`tags/add`, `tags/remove`, `keep`, `process`, `move`, `delete`) accept `photo_id`-scoped batches for cross-project operations.
 - Protections: each route enforces item array validation, parameter coercion via `mustGetPhotoById()`, repository-layer parameterized queries, and per-IP rate limits (60–240 req/min depending on action).
-- Dry-run support allows administrators to preview effects (`dry_run=true`) without mutating state, reducing accidental destructive changes.
+- `POST /api/photos/visibility` no longer exposes a dry-run mode; operators must rely on selection context to avoid accidental bulk changes.
 - **Open risk**: batch sizes are currently unbounded and rely on upstream request-size limits; see Medium Priority item 3 for mitigation plan.
 
 **All Photos (cross-project)**:

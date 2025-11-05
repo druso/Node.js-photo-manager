@@ -19,11 +19,10 @@
  */
 import { authFetch } from './httpClient';
 
-export async function updatePhotosVisibility(items, options = {}) {
+export async function updatePhotosVisibility(items) {
   const payload = {
     items,
   };
-  if (options.dryRun) payload.dry_run = true;
 
   const res = await authFetch('/api/photos/visibility', {
     method: 'POST',
@@ -38,10 +37,6 @@ export async function updatePhotosVisibility(items, options = {}) {
     throw err;
   }
   return res.json();
-}
-
-export async function dryRunPhotosVisibility(items) {
-  return updatePhotosVisibility(items, { dryRun: true });
 }
 
 export async function fetchPublicImageMetadata(filename) {

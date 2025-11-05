@@ -27,7 +27,7 @@ The application is built around a few key concepts:
 *   **Unified View Architecture**: There is NO conceptual distinction between "All Photos" and "Project" views. A Project view is simply the All Photos view with a project filter applied. This architectural principle is enforced throughout the codebase with a unified view context (`view.project_filter === null` for All Photos mode, or a project folder string for Project mode), unified selection model (`PhotoRef` objects), and unified modal states. The codebase has been fully refactored to use this single source of truth, eliminating duplicate code paths and ensuring consistent behavior across the application.
 
 *   **Unified Filtering and Sorting System**: Both All Photos and Project views use identical server-side filtering and sorting with consistent "filtered of total" count displays. Active filters cover date range, file type availability (JPG/RAW), keep flags, orientation, and text search. Sorting supports three fields (date, filename, file_size) with both ascending and descending order. Sort parameters are synchronized with the URL (`?sort=name&dir=asc`) and persist across page reloads. When sort order changes, pagination resets to the first page and scroll position returns to top. Future iterations will extend filtering to tags and visibility once the corresponding UI ships.
-*   **Cross-Project Visibility Operations (2025-10-07)**: The actions menu now supports previewing and applying visibility changes across both Project and All Photos contexts using the unified selection model. Bulk updates route through `useVisibilityMutation()` (dry-run aware) and call `POST /api/photos/visibility`, clearing selections and refreshing caches optimistically. Anonymous access remains limited to public thumbnails/previews; all mutating operations still require an authenticated admin session.
+*   **Cross-Project Visibility Operations (2025-10-07)**: The actions menu now supports previewing and applying visibility changes across both Project and All Photos contexts using the unified selection model. Bulk updates route through `useVisibilityMutation()` and call `POST /api/photos/visibility` introduces bulk visibility management with rate limiting. The handler in `server/routes/photosActions.js` revalidates payloads and emits SSE item updates to keep clients synchronized. Asset routes in `server/routes/assets.js` return 404 for private photos unless a valid admin JWT is supplied.
 
 *   **Shared Links**: Shared links enable curated public galleries with full deep linking support. Current implementation:
 
@@ -184,6 +184,31 @@ Projects are stored on disk under `<repoRoot>/.projects/user_0/<project_folder>/
 
 Path resolution is centralized in `server/services/fsUtils.js` via `getProjectPath(folder, user='user_0')` which returns `.projects/user_0/<folder>/`. All routes and workers use this function to ensure consistent path handling.
 
+#### Filesystem Layout & Storage
+
+- **SQLite databases** live under `<repoRoot>/.db/` with one file per user (for example `user_0.sqlite`). The location is derived from `DB_DIR` in `server/services/db.js` and is created automatically when the server boots if it does not yet exist.
+- **Project content** is rooted at `<repoRoot>/.projects/<user>/`. Today only `DEFAULT_USER = 'user_0'` is active, but the folder structure is already user-scoped for future multi-user support (`server/services/fsUtils.js`).
+- **Per-project structure** is enforced by `ensureProjectDirs()` and includes the `.thumb/`, `.preview/`, `.trash/`, and `.project.yaml` entries. Missing directories are created on demand before any writes.
+- **Manifests (`.project.yaml`)** capture `{ name, id, created_at, version }` for each project. They are written during project creation and kept in sync by maintenance jobs (see below) using `writeManifest()` in `server/services/projectManifest.js`.
+
+#### Folder Discovery & Maintenance Cadence
+
+The scheduler (`server/services/scheduler.js`) enqueues a global `folder_discovery` job on a configurable cadence so the system can pick up folders that appear outside of the UI. The interval defaults to 5 minutes (`folder_discovery.interval_minutes` in `config.default.json`) and can be overridden in `config.json` for development (often set to 1 minute). Each run:
+
+1. Scans `.projects/<user>/` for folders while skipping internal directories such as `.thumb`, `.preview`, and `.trash`.
+2. Reconciles manifests by regenerating `.project.yaml` if missing or outdated.
+3. Creates new projects for previously unseen folders and queues derivative generation for any new files.
+
+Hourly maintenance tasks (`maintenance_global`) still handle derivative reconciliation, manifest validation, duplicate detection, and trash cleanup in the background, keeping the filesystem and database in lockstep.
+
+#### Migration Notes & Troubleshooting
+
+- The current layout is a **fresh-start design** with no backward-compatibility layer. Legacy installs that stored the database inside `.projects/` are not supported; folder discovery will re-index everything into the new structure instead of running migration scripts.
+- Typical filesystem issues and recovery steps:
+  - **Database not found** → ensure `.db/user_0.sqlite` exists; the server creates it on startup when permissions allow.
+  - **Projects not discovered** → confirm new folders live inside `.projects/user_0/` and wait for the discovery interval (or restart the server to trigger an immediate run).
+  - **Thumbnail/preview 404s** → verify the photo was indexed; discovery plus `upload_postprocess` regenerate derivatives automatically.
+
 Filename normalization for asset endpoints preserves non-image suffixes (e.g., `.com` in `manage.kmail-lists.com`) and strips only known image/raw extensions (`jpg`, `jpeg`, `raw`, `arw`, `cr2`, `nef`, `dng`). Derivatives are named `<base>.jpg` in `.thumb/` and `.preview/`.
 
 Utilities: see `server/utils/projects.js` for `makeProjectFolderName()`, `isCanonicalProjectFolder()`, and `parseProjectIdFromFolder()`.
@@ -296,6 +321,15 @@ The main App.jsx component underwent extensive refactoring to improve maintainab
 - **Sort Change Detection**: Added logic to detect sort changes and reset the appropriate manager
 - **Consistent Behavior**: Both All Photos and Project views now use the same pagination code path with identical behavior
 
+#### **Critical Pagination Invariants (see `PAGINATION_IMPLEMENTATION.md` for full context)**
+
+- **Backend cursors** &mdash; `photoFiltering.listAll()` must always emit a `prev_cursor` whenever the client provides a `cursor`, ensuring backward navigation remains available even after window eviction during forward paging. @server/services/repositories/photoFiltering.js#134-388
+- **Initial load lock** &mdash; `useAllPhotosPagination.loadInitial()` guards against concurrent executions (e.g., Strict Mode double invokes) with a `loadingLockRef`, preserving dedupe state inside `PagedWindowManager`. @client/src/hooks/useAllPhotosPagination.js#232-277
+- **Dual status reset paths** &mdash; `VirtualizedPhotoGrid` resets pagination status in both the pending-load effect and the scroll-anchor restoration effect so pagination never stays stuck in a loading state. @client/src/components/VirtualizedPhotoGrid.jsx#148-371
+- **Scroll-anchor dependencies** &mdash; The restoration effect depends on `[photos, totalHeight]` (not just `photos.length`), guaranteeing it runs when eviction keeps list length steady. @client/src/components/VirtualizedPhotoGrid.jsx#148-371
+
+> **Tip**: The deep-dive checklist and bug history live in `project_docs/PAGINATION_IMPLEMENTATION.md`. Treat that file as the source of truth when touching pagination logic.
+
 #### **Architecture Improvements**
 - **Better Separation of Concerns**: Complex logic isolated into focused, reusable hooks
 - **Enhanced Reusability**: Hooks can be reused across components and tested independently
@@ -316,7 +350,7 @@ The main App.jsx component underwent extensive refactoring to improve maintainab
 ### Photo Management
 *   **Multi-format Support**: Handles JPG, PNG, TIFF, and various RAW formats (CR2, NEF, ARW, DNG)
 *   **Project Organization**: Photos are organized into projects (albums/shoots)
-*   **Metadata Extraction**: Automatic EXIF data parsing for timestamps, camera settings, etc.
+*   **Metadata Extraction**: Automatic EXIF data parsing for timestamps, camera settings, etc. Timestamp extraction uses a fallback hierarchy: `DateTimeOriginal` (preferred - actual capture time) → `CreateDate` → `ModifyDate` → database `created_at` (ingestion time). All available EXIF timestamp fields are preserved in `meta_json` for audit purposes.
 *   **Keep/Discard System**: Deterministic handling of RAW+JPG pairs. By default, `keep_jpg` and `keep_raw` mirror actual file availability and are automatically realigned during uploads and post‑processing. Users can change intent and later Commit or Revert.
   - Preview Mode filters (`File types to keep`) now match only photos where keep flags are explicitly set: `any_kept` means `keep_jpg === true || keep_raw === true`; `none` means both flags are explicitly `false`.
 
@@ -809,7 +843,7 @@ These endpoints operate on photos by their unique `photo_id` regardless of which
 
 The grid is built for very large datasets with stable scroll and bidirectional pagination.
 
-- **Virtualized rows**: `client/src/components/VirtualizedPhotoGrid.jsx` computes justified rows based on measured container width and per-item aspect ratios derived from EXIF metadata. This eliminates layout shifts and minimizes overdraw. Cells are lazily hydrated using a single `IntersectionObserver` with a short dwell to avoid flicker.
+- **Virtualized rows**: `client/src/components/VirtualizedPhotoGrid.jsx` computes justified rows based on measured container width and per-item aspect ratios derived from EXIF metadata. This eliminates layout shifts and minimizes overdraw. Cells are lazily hydrated using a single `IntersectionObserver` with a short dwell to avoid flicker. **Eager loading buffer (2025-01-05)**: The grid uses configurable off-screen buffers (default: 1 full viewport height) to ensure images and pagination load well before visibility, providing seamless scrolling with no visible "pop-in" effects. Buffer size is controlled via `config.json` (`photo_grid.eager_load_buffer_vh`, default: 100).
 - **Pagination strategy**: The client uses a windowed pager (`client/src/utils/pagedWindowManager.js`) that keeps a small number of pages in memory and evicts from head/tail as you scroll. It supports both forward (`cursor`) and backward (`before_cursor`) keyset pagination and automatically updates outer cursors when pages are added or evicted.
 - **Scroll anchoring & guards**: `VirtualizedPhotoGrid.jsx` captures a visible cell before pagination (`findScrollAnchor`) and restores it after new data renders, combining double `requestAnimationFrame` with `restoreScrollAnchor()` so the viewport stays stable. A lightweight state machine (`paginationStatus`, `pendingLoadRef`, guard refs) gates `onLoadPrev`/`onLoadMore`, while manual “Load Previous/More” buttons provide accessible fallbacks alongside the intersection-observed sentinel.
 - **Cursors**: The server returns base64 cursors encoding `{ taken_at, id }` in DESC order by `taken_at := coalesce(date_time_original, created_at), id`. Responses include both `nextCursor`/`prevCursor` (project) and `next_cursor`/`prev_cursor` (all-photos) depending on endpoint.

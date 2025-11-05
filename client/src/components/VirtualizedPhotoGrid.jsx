@@ -23,6 +23,7 @@ const VirtualizedPhotoGrid = ({
   hasPrev = false,
   onLoadPrev,
   dwellMs = 300,
+  eagerLoadBufferVh = 100,
   simplifiedMode = false,
   anchorIndex = null,
   onAnchored,
@@ -422,7 +423,9 @@ const VirtualizedPhotoGrid = ({
       if (statusRef.current !== 'idle') return;
       
       const y = window.scrollY || document.documentElement.scrollTop || 0;
-      if (y <= 400) {
+      const viewportHeight = window.innerHeight || 0;
+      // Trigger when user is within 1 viewport height from top (eager loading)
+      if (y <= viewportHeight) {
         const now = Date.now();
         if (now - loadPrevGuardRef.current > 500) {
           loadPrevGuardRef.current = now;
@@ -452,6 +455,12 @@ const VirtualizedPhotoGrid = ({
     if (!el) return;
     let obs;
     try {
+      // Calculate viewport height in pixels for rootMargin (IntersectionObserver doesn't support vh units)
+      const viewportHeightPx = window.innerHeight || 0;
+      const bufferMultiplier = Math.max(0, Number(eagerLoadBufferVh) || 100) / 100;
+      const bufferPx = Math.round(viewportHeightPx * bufferMultiplier);
+      const rootMargin = `${bufferPx}px 0px`;
+      
       obs = new IntersectionObserver((entries) => {
         for (const entry of entries) {
           if (entry.isIntersecting && statusRef.current === 'idle') {
@@ -472,7 +481,7 @@ const VirtualizedPhotoGrid = ({
             }
           }
         }
-      }, { root: null, rootMargin: '200px 0px', threshold: 0.01 });
+      }, { root: null, rootMargin, threshold: 0.01 });
       obs.observe(el);
     } catch {}
     return () => { try { obs && obs.disconnect(); } catch {} };
@@ -481,6 +490,13 @@ const VirtualizedPhotoGrid = ({
   // Setup IntersectionObserver for dwell-based visibility of thumbnails
   useEffect(() => {
     if (ioRef.current) return; // init once
+    
+    // Calculate viewport height in pixels for rootMargin (IntersectionObserver doesn't support vh units)
+    const viewportHeightPx = window.innerHeight || 0;
+    const bufferMultiplier = Math.max(0, Number(eagerLoadBufferVh) || 100) / 100;
+    const bufferPx = Math.round(viewportHeightPx * bufferMultiplier);
+    const rootMargin = `${bufferPx}px 0px`;
+    
     ioRef.current = new IntersectionObserver((entries) => {
       for (const entry of entries) {
         const key = entry.target.getAttribute('data-key');
@@ -500,7 +516,7 @@ const VirtualizedPhotoGrid = ({
           if (tid) { clearTimeout(tid); dwellTimersRef.current.delete(key); }
         }
       }
-    }, { root: null, rootMargin: '50px 0px', threshold: 0.01 });
+    }, { root: null, rootMargin, threshold: 0.01 });
     return () => {
       if (ioRef.current) { ioRef.current.disconnect(); ioRef.current = null; }
       for (const tid of dwellTimersRef.current.values()) clearTimeout(tid);

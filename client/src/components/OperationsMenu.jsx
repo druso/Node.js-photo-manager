@@ -113,7 +113,7 @@ export default function OperationsMenu({
     return collectProjectSelection();
   };
 
-  const handleVisibilityChange = async (visibility, { dryRun = false } = {}) => {
+  const handleVisibilityChange = async (visibility) => {
     if (selectionIsEmpty) return;
     const selectedItems = collectSelectedItems();
     if (!selectedItems.length) {
@@ -125,21 +125,6 @@ export default function OperationsMenu({
 
     try {
       setBusy(true);
-      if (dryRun) {
-        const preview = await visibilityMutation.preview(selectedItems, visibility);
-        const count = preview?.changedItems?.length || 0;
-        if (count > 0) {
-          toast?.show({
-            emoji: '👀',
-            message: `${count} photo${count === 1 ? '' : 's'} would switch to ${visibility}.`,
-            variant: 'notification',
-          });
-        } else {
-          toast?.show?.({ emoji: 'ℹ️', message: 'No visibility changes needed.', variant: 'info' });
-        }
-        return;
-      }
-
       const result = await visibilityMutation.apply(selectedItems, visibility);
       const changed = Array.isArray(result?.changedItems) ? result.changedItems : [];
       if (changed.length && typeof onVisibilityBulkUpdated === 'function') {
@@ -160,9 +145,7 @@ export default function OperationsMenu({
       }
     } catch (err) {
       console.error('Visibility update failed', err);
-      if (toast?.show) {
-        toast.show({ emoji: '⚠️', message: err?.message || 'Failed to update visibility.', variant: 'error' });
-      }
+      toast?.show?.({ emoji: '⚠️', message: err?.message || 'Failed to update visibility.', variant: 'error' });
     } finally {
       setBusy(false);
     }
@@ -387,16 +370,6 @@ export default function OperationsMenu({
               Share…
             </button>
             <div className="mt-3 grid grid-cols-2 gap-2">
-              <button
-                onClick={() => handleVisibilityChange('public', { dryRun: true })}
-                disabled={busy || selectionIsEmpty}
-                className="px-2 py-1.5 text-sm rounded-md border border-blue-200 bg-blue-50 text-blue-700 disabled:bg-gray-200 disabled:text-gray-500"
-              >Preview → Public</button>
-              <button
-                onClick={() => handleVisibilityChange('private', { dryRun: true })}
-                disabled={busy || selectionIsEmpty}
-                className="px-2 py-1.5 text-sm rounded-md border border-purple-200 bg-purple-50 text-purple-700 disabled:bg-gray-200 disabled:text-gray-500"
-              >Preview → Private</button>
               <button
                 onClick={() => handleVisibilityChange('public')}
                 disabled={busy || selectionIsEmpty}

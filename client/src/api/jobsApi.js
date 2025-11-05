@@ -30,6 +30,19 @@ export async function listJobs(folder, { status, type, limit = 50, offset = 0 } 
   return res.json(); // { jobs }
 }
 
+export async function listTenantJobs({ status, type, scope, limit = 50, offset = 0 } = {}) {
+  const params = new URLSearchParams();
+  if (status) params.set('status', status);
+  if (type) params.set('type', type);
+  if (scope) params.set('scope', scope);
+  if (limit != null) params.set('limit', String(limit));
+  if (offset != null) params.set('offset', String(offset));
+  const qs = params.toString() ? `?${params.toString()}` : '';
+  const res = await authFetch(`/api/jobs${qs}`);
+  if (!res.ok) throw new Error(`listTenantJobs failed: ${res.status}`);
+  return res.json();
+}
+
 export async function getJob(id) {
   const res = await authFetch(`/api/jobs/${encodeURIComponent(id)}`);
   if (!res.ok) throw new Error(`getJob failed: ${res.status}`);

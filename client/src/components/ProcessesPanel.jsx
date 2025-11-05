@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { listJobs, openJobStream, fetchTaskDefinitions } from '../api/jobsApi';
+import { listTenantJobs, openJobStream, fetchTaskDefinitions } from '../api/jobsApi';
 
-export default function ProcessesPanel({ projectFolder, onClose, embedded = false }) {
+export default function ProcessesPanel({ onClose, embedded = false }) {
   const [jobs, setJobs] = useState([]);
   const [filter, setFilter] = useState({ status: '', type: '' });
   const [loading, setLoading] = useState(false);
@@ -10,10 +10,9 @@ export default function ProcessesPanel({ projectFolder, onClose, embedded = fals
   const esCloseRef = useRef(null);
 
   const refresh = async () => {
-    if (!projectFolder) return;
     setLoading(true);
     try {
-      const { jobs } = await listJobs(projectFolder, {
+      const { jobs } = await listTenantJobs({
         status: filter.status || undefined,
         type: filter.type || undefined,
         limit: 50,
@@ -27,7 +26,7 @@ export default function ProcessesPanel({ projectFolder, onClose, embedded = fals
     }
   };
 
-  useEffect(() => { refresh(); }, [projectFolder, filter.status, filter.type]);
+  useEffect(() => { refresh(); }, [filter.status, filter.type]);
 
   // Load task definitions once
   useEffect(() => {
@@ -57,7 +56,7 @@ export default function ProcessesPanel({ projectFolder, onClose, embedded = fals
       }
     });
     return () => { if (esCloseRef.current) { esCloseRef.current(); esCloseRef.current = null; } };
-  }, [projectFolder]);
+  }, []);
 
   const statusBadge = (s) => {
     const map = {

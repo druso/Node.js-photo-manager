@@ -29,11 +29,17 @@ This architecture maintains full backward compatibility while significantly impr
 Tables and relationships:
 
 - `projects`
-  - Columns: `id` (INTEGER PK), `project_name` (TEXT), `project_folder` (TEXT UNIQUE), `created_at` (TEXT), `updated_at` (TEXT), `schema_version` (TEXT NULL), `status` (TEXT NULL), `archived_at` (TEXT NULL)
+  - Columns: `id` (INTEGER PK), `project_name` (TEXT), `project_folder` (TEXT UNIQUE), `created_at` (TEXT), `updated_at` (TEXT), `schema_version` (TEXT NULL), `status` (TEXT NULL), `archived_at` (TEXT NULL), `manifest_version` (TEXT DEFAULT '1.0')
   - `status`: when `'canceled'` the project is considered archived/soft-deleted and is hidden from frontend lists and detail endpoints. The row is retained for audit.
   - `archived_at`: timestamp when the project was soft-deleted.
-  - Indexes: `CREATE INDEX IF NOT EXISTS idx_projects_status ON projects(status)`
-  - `project_folder` format: `p<id>` (canonical on-disk folder; immutable, decoupled from display name)
+  - `manifest_version`: version tag for the `.project.yaml` manifest stored alongside the project folder.
+  - Indexes: `CREATE INDEX IF NOT EXISTS idx_projects_status ON projects(status)`, `CREATE INDEX IF NOT EXISTS idx_projects_folder ON projects(project_folder)`
+  - `project_folder` format: sanitized, human-readable folder names derived from `project_name` (with `(n)` suffix resolution for duplicates). Folders remain unique and immutable once assigned.
+  - **Maintenance-Based Folder Alignment** (2025-11-04):
+    - Rename API updates `project_name` immediately (non-blocking).
+    - Hourly `folder_alignment` maintenance task detects mismatches between `project_name` and `project_folder` and renames folders atomically using `generateUniqueFolderName()` safeguards.
+    - Safety checks skip missing sources or colliding targets, logging warnings instead of aborting the run.
+    - Post-alignment, the worker updates the DB, rewrites the manifest, and emits `folder_renamed` SSE payloads so the UI refreshes live.
 
 - `photos`
   - Columns (selected): `id`, `project_id` (FK), `filename`, `basename`, `ext`, `created_at`, `updated_at`,
@@ -52,6 +58,7 @@ Tables and relationships:
   - `taken_at := coalesce(date_time_original, created_at)` is the canonical timestamp for ordering and filtering in
     `GET /api/photos` and `GET /api/photos/locate-page`.
   - Date filters `date_from`/`date_to` operate on `taken_at`.
+  - `date_time_original` extraction follows EXIF fallback order `DateTimeOriginal → CreateDate → ModifyDate`. All harvested timestamps are preserved in `meta_json` for auditing.
 
 - `photo_public_hashes`
   - Purpose: stores Option A public asset hashes for each `photos.id`

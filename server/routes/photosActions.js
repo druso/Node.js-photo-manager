@@ -289,11 +289,8 @@ router.post(
     try {
       const items = ensureItemsArray(req.body);
       validatePayloadSize(items);
-      const dryRun = parseDryRun(req.body);
-
       let updated = 0;
       const errors = [];
-      const dry = dryRun ? { per_item: [], updated: 0 } : null;
       const allowedVisibilities = new Set(['public', 'private']);
 
       for (const it of items) {
@@ -305,14 +302,6 @@ router.post(
           const normalized = String(it.visibility || '').trim().toLowerCase();
           if (!allowedVisibilities.has(normalized)) {
             throw new Error('visibility must be "public" or "private"');
-          }
-
-          if (dryRun) {
-            if ((photo.visibility || 'private') !== normalized) {
-              dry.per_item.push({ photo_id: photo.id, current: photo.visibility || 'private', visibility: normalized });
-              dry.updated++;
-            }
-            continue;
           }
 
           if ((photo.visibility || 'private') === normalized) {
@@ -340,10 +329,7 @@ router.post(
         }
       }
 
-      const payload = dryRun
-        ? { updated: dry.updated, dry_run: dry, errors: errors.length ? errors : undefined }
-        : { updated, errors: errors.length ? errors : undefined };
-      res.json(payload);
+      res.json({ updated, errors: errors.length ? errors : undefined });
     } catch (err) {
       log.error('visibility_update_failed', { error: err && err.message, stack: err && err.stack });
       res.status(err.status || 500).json({ error: err.message || 'Failed to update visibility' });

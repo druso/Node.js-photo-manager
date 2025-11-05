@@ -83,6 +83,7 @@ const MainContentRenderer = ({
         onAnchored={() => {}}
         lazyLoadThreshold={config?.photo_grid?.lazy_load_threshold ?? 100}
         dwellMs={config?.photo_grid?.dwell_ms ?? 300}
+        eagerLoadBufferVh={config?.photo_grid?.eager_load_buffer_vh ?? 100}
         onPhotoSelect={handleAllPhotoSelect}
         onToggleSelection={handleToggleSelectionAll}
         selectedPhotos={allSelectedKeys}
@@ -109,6 +110,7 @@ const MainContentRenderer = ({
         onAnchored={() => setAllGridAnchorIndex(null)}
         lazyLoadThreshold={config?.photo_grid?.lazy_load_threshold ?? 100}
         dwellMs={config?.photo_grid?.dwell_ms ?? 300}
+        eagerLoadBufferVh={config?.photo_grid?.eager_load_buffer_vh ?? 100}
         onPhotoSelect={handleAllPhotoSelect}
         onToggleSelection={handleToggleSelectionAll}
         selectedPhotos={allSelectedKeys}
@@ -129,6 +131,7 @@ const MainContentRenderer = ({
         selectedPhotos={selectedPhotos}
         lazyLoadThreshold={config?.photo_grid?.lazy_load_threshold ?? 100}
         dwellMs={config?.photo_grid?.dwell_ms ?? 300}
+        eagerLoadBufferVh={config?.photo_grid?.eager_load_buffer_vh ?? 100}
         sortKey={sortKey}
         sortDir={sortDir}
         onSortChange={onSortChange}

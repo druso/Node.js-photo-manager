@@ -2,7 +2,8 @@
   "photo_grid": {
     "lazy_load_threshold": 100,
     "page_size": 250,
-    "dwell_ms": 300
+    "dwell_ms": 300,
+    "eager_load_buffer_vh": 100
   },
   "keyboard_shortcuts": {
     "next_photo": "ArrowRight",

@@ -229,29 +229,6 @@ describe('assets visibility enforcement', { concurrency: false }, () => {
     });
   });
 
-  test('POST /api/photos/visibility supports dry run without mutation', async () => {
-    await withAuthEnv({}, async () => {
-      const { privatePhotoId, cleanup } = seedVisibilityFixtures();
-      const app = createTestApp();
-      const token = tokenService.issueAccessToken({ sub: 'admin-test' });
-      try {
-        const res = await request(app)
-          .post('/api/photos/visibility')
-          .set('Authorization', `Bearer ${token}`)
-          .send({ dry_run: true, items: [{ photo_id: privatePhotoId, visibility: 'public' }] });
-
-        assert.equal(res.status, 200);
-        assert.equal(res.body.updated, 1);
-        assert.ok(Array.isArray(res.body.dry_run?.per_item));
-
-        const row = getDb().prepare('SELECT visibility FROM photos WHERE id = ?').get(privatePhotoId);
-        assert.equal(row.visibility, 'private');
-      } finally {
-        cleanup();
-      }
-    });
-  });
-
   test('public thumbnails reject missing hash', async () => {
     await withAuthEnv({}, async () => {
       const { projectFolder, cleanup } = seedVisibilityFixtures();

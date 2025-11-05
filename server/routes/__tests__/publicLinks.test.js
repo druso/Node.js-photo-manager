@@ -202,6 +202,10 @@ describe('Public Links Admin Endpoints', { concurrency: false }, () => {
         })
         .expect(201);
 
+      if (res.body?.id) {
+        createdData.linkIds.push(res.body.id);
+      }
+
       assert.ok(res.body.id);
       assert.ok(res.body.hashed_key);
       assert.equal(res.body.hashed_key.length, 32);
