@@ -4,17 +4,15 @@ const express = require('express');
 const cookieParser = require('cookie-parser');
 const request = require('supertest');
 const path = require('node:path');
-const fs = require('fs-extra');
-
 const { withAuthEnv, loadFresh } = require('../../services/auth/__tests__/testUtils');
-const { getDb } = require('../../services/db');
+const { createFixtureTracker } = require('../../tests/utils/dataFixtures');
 const tokenService = require('../../services/auth/tokenService');
-
-const PROJECTS_ROOT = path.join(__dirname, '../../..', '.projects', 'user_0');
 
 function loadRel(modulePath) {
   return loadFresh(path.join(__dirname, modulePath));
 }
+
+const fixtures = createFixtureTracker();
 
 function createTestApp() {
   const app = express();
@@ -39,77 +37,8 @@ function createTestApp() {
   return app;
 }
 
-const createdData = {
-  projectIds: [],
-  projectFolders: [],
-  linkIds: [],
-};
-
-function cleanupTestData() {
-  const db = getDb();
-
-  try {
-    db.pragma('wal_checkpoint(TRUNCATE)');
-  } catch (err) {
-    // Ignore
-  }
-
-  const maxRetries = 5;
-  let retries = 0;
-  while (retries < maxRetries) {
-    try {
-      if (createdData.linkIds.length > 0) {
-        const placeholders = createdData.linkIds.map(() => '?').join(',');
-        db.prepare(`DELETE FROM photo_public_links WHERE public_link_id IN (${placeholders})`).run(...createdData.linkIds);
-        db.prepare(`DELETE FROM public_links WHERE id IN (${placeholders})`).run(...createdData.linkIds);
-      }
-
-      if (createdData.projectIds.length > 0) {
-        const placeholders = createdData.projectIds.map(() => '?').join(',');
-        db.prepare(`DELETE FROM photo_public_hashes WHERE photo_id IN (SELECT id FROM photos WHERE project_id IN (${placeholders}))`).run(...createdData.projectIds);
-        db.prepare(`DELETE FROM photos WHERE project_id IN (${placeholders})`).run(...createdData.projectIds);
-        db.prepare(`DELETE FROM projects WHERE id IN (${placeholders})`).run(...createdData.projectIds);
-      }
-
-      break;
-    } catch (err) {
-      if (err.code === 'SQLITE_BUSY' || err.code === 'SQLITE_BUSY_SNAPSHOT') {
-        retries += 1;
-        if (retries < maxRetries) {
-          const delay = 50 * Math.pow(2, retries);
-          const start = Date.now();
-          while (Date.now() - start < delay) {
-            // busy wait
-          }
-        } else {
-          console.error('Cleanup failed after retries:', err.message);
-        }
-      } else {
-        throw err;
-      }
-    }
-  }
-
-  if (fs.existsSync(PROJECTS_ROOT)) {
-    for (const folder of createdData.projectFolders) {
-      const projectDir = path.join(PROJECTS_ROOT, folder);
-      try {
-        if (fs.existsSync(projectDir)) {
-          fs.removeSync(projectDir);
-        }
-      } catch (err) {
-        // Ignore
-      }
-    }
-  }
-
-  createdData.projectIds = [];
-  createdData.projectFolders = [];
-  createdData.linkIds = [];
-}
-
 function seedTestData() {
-  cleanupTestData();
+  fixtures.cleanup();
 
   const projectsRepo = loadRel('../../services/repositories/projectsRepo');
   const photosRepo = loadRel('../../services/repositories/photosRepo');
@@ -117,8 +46,7 @@ function seedTestData() {
 
   const ts = Date.now() + Math.random();
   const project = projectsRepo.createProject({ project_name: `Photos Public Link Test ${ts}` });
-  createdData.projectIds.push(project.id);
-  createdData.projectFolders.push(project.project_folder);
+  fixtures.registerProject(project);
 
   const publicLinkedPhoto = photosRepo.upsertPhoto(project.id, {
     filename: 'public-linked.jpg',
@@ -160,7 +88,7 @@ function seedTestData() {
   });
 
   const link = publicLinksRepo.create({ title: 'Filter Test Link', description: 'Test description' });
-  createdData.linkIds.push(link.id);
+  fixtures.registerLink(link);
 
   publicLinksRepo.associatePhotos(link.id, [publicLinkedPhoto.id, privateLinkedPhoto.id]);
 
@@ -175,7 +103,7 @@ function seedTestData() {
 
 describe('GET /api/photos with public_link_id filter', { concurrency: false }, () => {
   after(() => {
-    cleanupTestData();
+    fixtures.cleanup();
   });
 
   afterEach(async () => {

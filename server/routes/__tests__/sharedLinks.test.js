@@ -4,16 +4,14 @@ const express = require('express');
 const cookieParser = require('cookie-parser');
 const request = require('supertest');
 const path = require('node:path');
-const fs = require('fs-extra');
-
 const { withAuthEnv, loadFresh } = require('../../services/auth/__tests__/testUtils');
-const { getDb } = require('../../services/db');
-
-const PROJECTS_ROOT = path.join(__dirname, '../../..', '.projects', 'user_0');
+const { createFixtureTracker } = require('../../tests/utils/dataFixtures');
 
 function loadRel(modulePath) {
   return loadFresh(path.join(__dirname, modulePath));
 }
+
+const fixtures = createFixtureTracker();
 
 function createTestApp() {
   const app = express();
@@ -30,86 +28,8 @@ function createTestApp() {
   return app;
 }
 
-// Track created data for cleanup
-const createdData = {
-  projectIds: [],
-  projectFolders: [],
-  linkIds: []
-};
-
-function cleanupTestData() {
-  const db = getDb();
-  
-  // Force a WAL checkpoint to release locks
-  try {
-    db.pragma('wal_checkpoint(TRUNCATE)');
-  } catch (e) {
-    // Ignore checkpoint errors
-  }
-  
-  // Simple approach: just run the deletes with retries
-  const maxRetries = 5;
-  let retries = 0;
-  
-  while (retries < maxRetries) {
-    try {
-      // Clean up only data we created
-      if (createdData.linkIds.length > 0) {
-        const linkPlaceholders = createdData.linkIds.map(() => '?').join(',');
-        db.prepare(`DELETE FROM photo_public_links WHERE public_link_id IN (${linkPlaceholders})`).run(...createdData.linkIds);
-        db.prepare(`DELETE FROM public_links WHERE id IN (${linkPlaceholders})`).run(...createdData.linkIds);
-      }
-      
-      if (createdData.projectIds.length > 0) {
-        const projectPlaceholders = createdData.projectIds.map(() => '?').join(',');
-        db.prepare(`DELETE FROM photo_public_hashes WHERE photo_id IN (SELECT id FROM photos WHERE project_id IN (${projectPlaceholders}))`).run(...createdData.projectIds);
-        db.prepare(`DELETE FROM photos WHERE project_id IN (${projectPlaceholders})`).run(...createdData.projectIds);
-        db.prepare(`DELETE FROM projects WHERE id IN (${projectPlaceholders})`).run(...createdData.projectIds);
-      }
-      
-      // Success - break out of retry loop
-      break;
-    } catch (err) {
-      if (err.code === 'SQLITE_BUSY' || err.code === 'SQLITE_BUSY_SNAPSHOT') {
-        retries++;
-        if (retries < maxRetries) {
-          // Wait exponentially longer each retry
-          const delay = 50 * Math.pow(2, retries);
-          const start = Date.now();
-          while (Date.now() - start < delay) {
-            // Busy wait
-          }
-        } else {
-          console.error('Cleanup failed after retries:', err.message);
-        }
-      } else {
-        throw err;
-      }
-    }
-  }
-  
-  // Clean up filesystem folders
-  if (fs.existsSync(PROJECTS_ROOT)) {
-    for (const folder of createdData.projectFolders) {
-      const projectDir = path.join(PROJECTS_ROOT, folder);
-      try {
-        if (fs.existsSync(projectDir)) {
-          fs.removeSync(projectDir);
-        }
-      } catch (err) {
-        // Ignore cleanup errors
-      }
-    }
-  }
-  
-  // Reset tracking
-  createdData.projectIds = [];
-  createdData.projectFolders = [];
-  createdData.linkIds = [];
-}
-
 function seedTestData() {
-  cleanupTestData();
+  fixtures.cleanup();
 
   // Load repositories
   const projectsRepo = loadRel('../../services/repositories/projectsRepo');
@@ -120,8 +40,7 @@ function seedTestData() {
   // Create test project with unique name
   const testId = Date.now() + Math.random();
   const project = projectsRepo.createProject({ project_name: `Test Project ${testId}` });
-  createdData.projectIds.push(project.id);
-  createdData.projectFolders.push(project.project_folder);
+  fixtures.registerProject(project);
 
   // Create test photos
   const publicPhoto1 = photosRepo.upsertPhoto(project.id, {
@@ -168,7 +87,7 @@ function seedTestData() {
     title: 'Test Gallery',
     description: 'Test Description'
   });
-  createdData.linkIds.push(link.id);
+  fixtures.registerLink(link);
 
   // Associate all photos (including private)
   publicLinksRepo.associatePhotos(link.id, [publicPhoto1.id, publicPhoto2.id, privatePhoto.id]);
@@ -183,7 +102,7 @@ function seedTestData() {
 describe('Shared Links Public Endpoints', { concurrency: false }, () => {
   // Ensure cleanup after all tests
   after(() => {
-    cleanupTestData();
+    fixtures.cleanup();
   });
 
   // Add delay between tests to avoid SQLITE_BUSY
@@ -273,14 +192,13 @@ describe('Shared Links Public Endpoints', { concurrency: false }, () => {
 
   test('Pagination works correctly', async () => {
     await withAuthEnv({}, async () => {
-      cleanupTestData();
+      fixtures.cleanup();
 
       // Create project
       const projectsRepo = loadRel('../../services/repositories/projectsRepo');
       const testId = Date.now() + Math.random();
       const project = projectsRepo.createProject({ project_name: `Test Project ${testId}` });
-      createdData.projectIds.push(project.id);
-      createdData.projectFolders.push(project.project_folder);
+      fixtures.registerProject(project);
 
       // Create many public photos
       const photosRepo = loadRel('../../services/repositories/photosRepo');
@@ -304,7 +222,7 @@ describe('Shared Links Public Endpoints', { concurrency: false }, () => {
       // Create link and associate photos
       const publicLinksRepo = loadRel('../../services/repositories/publicLinksRepo');
       const link = publicLinksRepo.create({ title: 'Test Gallery', description: 'Test' });
-      createdData.linkIds.push(link.id);
+      fixtures.registerLink(link);
       publicLinksRepo.associatePhotos(link.id, photoIds);
 
       const app = createTestApp();
@@ -333,12 +251,12 @@ describe('Shared Links Public Endpoints', { concurrency: false }, () => {
 
   test('Returns empty array when link has no photos', async () => {
     await withAuthEnv({}, async () => {
-      cleanupTestData();
+      fixtures.cleanup();
 
       // Create link without photos
       const publicLinksRepo = loadRel('../../services/repositories/publicLinksRepo');
       const link = publicLinksRepo.create({ title: 'Empty Gallery', description: 'Test' });
-      createdData.linkIds.push(link.id);
+      fixtures.registerLink(link);
 
       const app = createTestApp();
 
@@ -354,14 +272,13 @@ describe('Shared Links Public Endpoints', { concurrency: false }, () => {
 
   test('Returns empty array when all photos are private', async () => {
     await withAuthEnv({}, async () => {
-      cleanupTestData();
+      fixtures.cleanup();
 
       // Create project
       const projectsRepo = loadRel('../../services/repositories/projectsRepo');
       const testId = Date.now() + Math.random();
       const project = projectsRepo.createProject({ project_name: `Test Project ${testId}` });
-      createdData.projectIds.push(project.id);
-      createdData.projectFolders.push(project.project_folder);
+      fixtures.registerProject(project);
 
       // Create only private photos
       const photosRepo = loadRel('../../services/repositories/photosRepo');
@@ -381,7 +298,7 @@ describe('Shared Links Public Endpoints', { concurrency: false }, () => {
       // Create link and associate private photo
       const publicLinksRepo = loadRel('../../services/repositories/publicLinksRepo');
       const link = publicLinksRepo.create({ title: 'Test Gallery', description: 'Test' });
-      createdData.linkIds.push(link.id);
+      fixtures.registerLink(link);
       publicLinksRepo.associatePhotos(link.id, [privatePhoto.id]);
 
       const app = createTestApp();
@@ -401,7 +318,7 @@ describe('Shared Links Public Endpoints', { concurrency: false }, () => {
 describe('Shared Links Admin Endpoint', { concurrency: false }, () => {
   // Ensure cleanup after all tests
   after(() => {
-    cleanupTestData();
+    fixtures.cleanup();
   });
 
   // Add delay between tests to avoid SQLITE_BUSY
@@ -477,14 +394,13 @@ describe('Shared Links Admin Endpoint', { concurrency: false }, () => {
 
   test('Admin endpoint pagination works correctly', async () => {
     await withAuthEnv({}, async () => {
-      cleanupTestData();
+      fixtures.cleanup();
 
       // Create project
       const projectsRepo = loadRel('../../services/repositories/projectsRepo');
       const testId = Date.now() + Math.random();
       const project = projectsRepo.createProject({ project_name: `Test Project ${testId}` });
-      createdData.projectIds.push(project.id);
-      createdData.projectFolders.push(project.project_folder);
+      fixtures.registerProject(project);
 
       // Create mix of public and private photos
       const photosRepo = loadRel('../../services/repositories/photosRepo');
@@ -508,7 +424,7 @@ describe('Shared Links Admin Endpoint', { concurrency: false }, () => {
       // Create link and associate all photos
       const publicLinksRepo = loadRel('../../services/repositories/publicLinksRepo');
       const link = publicLinksRepo.create({ title: 'Test Gallery', description: 'Test' });
-      createdData.linkIds.push(link.id);
+      fixtures.registerLink(link);
       publicLinksRepo.associatePhotos(link.id, photoIds);
 
       const tokenService = loadRel('../../services/auth/tokenService');

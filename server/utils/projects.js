@@ -138,25 +138,6 @@ function isLegacyProjectFolder(folder) {
 }
 
 /**
- * Parse project ID from old-style p<id> folder name
- * @param {string} folder - The folder name
- * @returns {number|null} Project ID or null if not legacy format
- */
-function parseProjectIdFromFolder(folder) {
-  const m = /^p(\d+)$/.exec(String(folder));
-  return m ? Number(m[1]) : null;
-}
-
-/**
- * Legacy function - kept for backward compatibility during transition
- * @deprecated Use generateUniqueFolderName instead
- */
-function makeProjectFolderName(project_name, id) {
-  // During transition, still support old format
-  return `p${id}`;
-}
-
-/**
  * Legacy function - kept for backward compatibility
  * @deprecated Use isLegacyProjectFolder instead
  */
@@ -183,19 +164,6 @@ function isCanonicalProjectFolder(folder) {
   return sanitized.length <= 240;
 }
 
-/**
- * Legacy slugify function - kept for reference
- * @deprecated Not used in new folder naming
- */
-function slugify(name) {
-  return String(name)
-    .normalize('NFKD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^a-zA-Z0-9\s-_]/g, '')
-    .trim()
-    .replace(/\s+/g, '_');
-}
-
 module.exports = {
   // New functions
   sanitizeFolderName,
@@ -203,9 +171,6 @@ module.exports = {
   findNextAvailableName,
   isLegacyProjectFolder,
   
-  // Legacy functions (for backward compatibility)
-  makeProjectFolderName,
+  // Legacy function (still used for validation)
   isCanonicalProjectFolder,
-  parseProjectIdFromFolder,
-  slugify,
 };

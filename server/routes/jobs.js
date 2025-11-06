@@ -105,7 +105,10 @@ router.get('/jobs/stream', (req, res) => {
     try { res.end(); } catch (_) {}
   }, idleTimeoutMs);
 
+  let cleanupDone = false;
   function cleanup() {
+    if (cleanupDone) return;
+    cleanupDone = true;
     clearInterval(heartbeat);
     clearTimeout(idleTimer);
     off();

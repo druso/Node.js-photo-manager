@@ -48,38 +48,6 @@ router.get('/', async (req, res) => {
   }
 });
 
-// PATCH /api/projects/:id - rename display name only (legacy - name only, no folder change)
-// Limit: 10 requests per 5 minutes per IP
-router.patch('/:id', rateLimit({ windowMs: 5 * 60 * 1000, max: 10 }), async (req, res) => {
-  try {
-    const id = Number(req.params.id);
-    if (!Number.isInteger(id) || id <= 0) {
-      return res.status(400).json({ error: 'Invalid project id' });
-    }
-    const { name } = req.body || {};
-    if (!name || String(name).trim() === '') {
-      return res.status(400).json({ error: 'Project name is required' });
-    }
-    const existing = projectsRepo.getById(id);
-    if (!existing) {
-      return res.status(404).json({ error: 'Project not found' });
-    }
-    const updated = projectsRepo.updateName(id, String(name));
-    return res.json({
-      message: 'Project renamed successfully',
-      project: {
-        name: updated.project_name,
-        folder: updated.project_folder,
-        created_at: updated.created_at,
-        updated_at: updated.updated_at,
-      }
-    });
-  } catch (err) {
-    log.error('project_rename_failed', { error: err && err.message, stack: err && err.stack, project_id: req.params && req.params.id });
-    res.status(500).json({ error: 'Failed to rename project' });
-  }
-});
-
 // PATCH /api/projects/:folder/rename - rename project
 // Updates display name only - maintenance will align folder name automatically
 // Limit: 10 requests per 5 minutes per IP
@@ -211,9 +179,6 @@ router.get('/:folder', async (req, res) => {
         photos_missing_derivatives: missingDerivatives,
       },
       recent_activity: recent,
-      feature_flags: {
-        legacy_manifest_enabled: false,
-      },
       links: {
         photos: `/api/projects/${encodeURIComponent(project.project_folder)}/photos`,
         locate_page: `/api/projects/${encodeURIComponent(project.project_folder)}/photos/locate-page`,

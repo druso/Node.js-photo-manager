@@ -2,6 +2,27 @@
 
 ## Latest Security Enhancements (2025-11)
 
+### Code Optimization and Technical Debt Reduction (2025-11-06)
+- **Legacy code removal**: Removed unused legacy project rename endpoint (`PATCH /api/projects/:id`) and helper functions (`makeProjectFolderName`, `parseProjectIdFromFolder`, `slugify`), reducing attack surface by ~95 lines of unmaintained code.
+- **SSE connection hardening**: Added cleanup guard in `/api/jobs/stream` to prevent Express 5 double-close events from corrupting connection counters, improving DoS resistance.
+- **Documentation alignment**: Updated all API documentation to reflect current codebase state, removing references to deprecated endpoints and improving security review accuracy.
+
+**Security Impact**:
+- **Reduced Attack Surface**: Removed 3 unused helper functions and 1 legacy endpoint that could have been exploited if discovered
+- **Improved Reliability**: SSE cleanup guard prevents connection counter corruption that could lead to false 429 errors or connection leaks
+- **Better Auditability**: Documentation now accurately reflects codebase, making security reviews more effective
+- **No Breaking Changes**: All removals were unused code paths, no functionality affected
+
+### Test Fixture Cleanup Hardening (2025-11-06)
+- **Shared fixture tracker**: Backend integration tests now use `server/tests/utils/dataFixtures.js` to register all created projects, public links, and filesystem folders.
+- **Automated teardown**: `fixtures.cleanup()` centralizes WAL checkpoints, SQLite deletion retries, and filesystem removal, ensuring no test artifacts remain after suite execution.
+- **Consistency across suites**: `sharedLinks`, `publicLinks`, and `photosPublicLink` suites were refactored to rely on the tracker, eliminating bespoke cleanup helpers and reducing the chance of residual data impacting subsequent tests.
+
+**Security Impact**:
+- **Data Hygiene**: Prevents lingering public links or project folders that could expose test data.
+- **Repeatable Runs**: Reliable teardown avoids stateful interference that might mask regressions during security-critical test scenarios.
+- **Auditability**: Centralized logging/cleanup makes it easier to verify that security-sensitive resources are removed between runs.
+
 ### Metadata Extraction Improvement (2025-11-05)
 - **Enhanced timestamp fallback**: EXIF extraction now uses a fallback hierarchy (`DateTimeOriginal` → `CreateDate` → `ModifyDate`) instead of only checking `DateTimeOriginal`. This ensures more accurate photo capture timestamps when primary EXIF field is missing or corrupted.
 - **Audit trail preservation**: All available EXIF timestamp fields (`date_time_original`, `create_date`, `modify_date`) are now stored in `meta_json` for forensic analysis and timestamp verification.
@@ -12,6 +33,15 @@
 - **Audit Capability**: Preserved EXIF fields enable verification of photo capture times and detection of timestamp manipulation
 - **Consistency**: Unified extraction logic across ingestion paths reduces attack surface and simplifies security review
 - **No Authorization Impact**: Changes are purely metadata extraction improvements within existing access controls
+
+### Tenant-wide Processes Panel (2025-11-05)
+- **Global job listing**: The admin UI Processes panel now always queries `GET /api/jobs`, the tenant-scoped listing backed by `jobsRepo.listByTenant()`, instead of mixing project-scoped requests. This reuses the existing authenticated route guarded by `authenticateAdmin`.
+- **Error elimination**: Removes 404s triggered by the `__all__` sentinel when using project endpoints from the All Photos view, keeping monitoring consistent across contexts.
+
+**Security Impact**:
+- **Scope consistency**: No new endpoints were introduced; the change standardizes client usage of the already hardened tenant-wide listing.
+- **Auth unchanged**: Access still requires an authenticated admin session; no additional data exposure occurs.
+- **Operational clarity**: Using a single endpoint simplifies auditing and monitoring of job access patterns.
 
 ### Photo Grid Sorting and Pagination Fix (2025-11-04)
 - **Sort-aware cursor pagination**: Fixed cursor-based pagination to respect sort direction in SQL WHERE clauses. The `buildAllPhotosWhere` function now uses direction-aware comparison operators (DESC: `<` for older, ASC: `>` for newer), preventing pagination failures and item deduplication when sorting in ascending order.

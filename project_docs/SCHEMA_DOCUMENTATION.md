@@ -34,7 +34,7 @@ Tables and relationships:
   - `archived_at`: timestamp when the project was soft-deleted.
   - `manifest_version`: version tag for the `.project.yaml` manifest stored alongside the project folder.
   - Indexes: `CREATE INDEX IF NOT EXISTS idx_projects_status ON projects(status)`, `CREATE INDEX IF NOT EXISTS idx_projects_folder ON projects(project_folder)`
-  - `project_folder` format: sanitized, human-readable folder names derived from `project_name` (with `(n)` suffix resolution for duplicates). Folders remain unique and immutable once assigned.
+  - `project_folder` format: sanitized, human-readable folder names derived from `project_name` (with `(n)` suffix resolution for duplicates). Fresh installs no longer assign `p<id>` folders, but maintenance still recognises legacy folders that follow that pattern.
   - **Maintenance-Based Folder Alignment** (2025-11-04):
     - Rename API updates `project_name` immediately (non-blocking).
     - Hourly `folder_alignment` maintenance task detects mismatches between `project_name` and `project_folder` and renames folders atomically using `generateUniqueFolderName()` safeguards.
@@ -279,7 +279,7 @@ Project-related endpoints return consistent shapes including the immutable numer
 
 - List projects: `GET /api/projects`
   - Returns: `[{ id, name, folder, created_at, updated_at }, ...]`
-  - Notes: `folder` is the canonical `p<id>`; `name` is the display name.
+  - Notes: `folder` is the canonical folder slug (sanitized human-readable form for new projects; legacy `p<id>` folders remain valid).
 
 - Project detail: `GET /api/projects/:folder`
   - Returns: `{ id, name, folder, created_at, updated_at, photos: [...] }`
@@ -292,20 +292,6 @@ Project-related endpoints return consistent shapes including the immutable numer
   - Tag filtering: `tags=portrait,-rejected` includes photos with 'portrait' tag and excludes those with 'rejected' tag (same semantics as All Photos)
   - Optional tag inclusion: `include=tags` adds a `tags: string[]` property to each item
   - `total`: count of photos matching current filters, `unfiltered_total`: total photos in project
-
-- Rename project: `PATCH /api/projects/:id`
-  - Payload: `{ name: string }`
-  - Returns: `{ message, project: { id?, name, folder, created_at, updated_at } }`
-  - Behavior: updates only the display name; `folder` remains `p<id>` and does not change.
-
-### Optional Helper: parseProjectIdFromFolder(folder)
-
-An optional utility function that parses the numeric project id from a canonical folder string `p<id>`. It simplifies cases where only the folder is known but the `id` is desired for logging or quick lookups. See implementation in `server/utils/projects.js`.
-
-Example behavior:
-```js
-parseProjectIdFromFolder('p12') // => 12
-```
 
 ### Async Jobs (Queue)
 
@@ -322,8 +308,11 @@ Durable background jobs are stored in two tables: `jobs` and `job_items`.
   - Progress: `progress_total` and `progress_done` are nullable; workers should set both (or leave null for indeterminate).
   - Payload: arbitrary JSON (stringified) for worker‑specific params.
   - Priority: higher `priority` values are claimed first; ties break on oldest `created_at`.
-    The worker loop implements two lanes with separate capacity: a priority lane (claims with `priority >= threshold`) and a normal lane.
-    See `pipeline.priority_lane_slots` and `pipeline.priority_threshold` in configuration.
+  - The worker loop implements two lanes with separate capacity: a priority lane (claims with `priority >= threshold`) and a normal lane.
+  - Source of truth: `server/services/db.js` (DDL), repositories in `server/services/repositories/jobsRepo.js`.
+  - Worker loop: `server/services/workerLoop.js` dispatches by `job.type` to worker modules under `server/services/workers/`, using shared helpers in `server/services/workers/shared/photoSetUtils.js` to resolve targets based on scope.
+  - Claiming: `jobsRepo.claimNext({ minPriority?, maxPriority? })` lets the worker select from a priority range (used by the two lanes).
+  - Tenant-wide listing: the admin API `GET /api/jobs` returns all jobs for the authenticated tenant (`DEFAULT_USER` in single-tenant deployments) and is now the canonical source consumed by the Processes panel in both Project and All Photos contexts.
 
 - `job_items`
   - Columns: `id`, `tenant_id`, `job_id` (FK), `photo_id` (FK nullable), `filename`, `status`, `message`,
