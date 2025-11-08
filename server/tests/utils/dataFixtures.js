@@ -1,8 +1,9 @@
 const path = require('node:path');
 const fs = require('fs-extra');
-const { getDb } = require('../../services/db');
+const { getDb, resolveDbPath } = require('../../services/db');
+const { ensureUserRoot, DEFAULT_USER } = require('../../services/fsUtils');
 
-const PROJECTS_ROOT = path.join(__dirname, '..', '..', '..', '.projects', 'user_0');
+const PROJECTS_ROOT = ensureUserRoot(DEFAULT_USER);
 const DEFAULT_MAX_RETRIES = 5;
 
 function ensureProjectsRoot() {
@@ -124,6 +125,27 @@ function createFixtureTracker() {
         }
       } catch (_) {
         // ignore filesystem cleanup errors
+      }
+    }
+
+    try {
+      if (fs.existsSync(PROJECTS_ROOT) && fs.readdirSync(PROJECTS_ROOT).length === 0) {
+        fs.removeSync(PROJECTS_ROOT);
+      }
+      const projectsTestRoot = path.dirname(PROJECTS_ROOT);
+      if (process.env.NODE_ENV === 'test' && fs.existsSync(projectsTestRoot) && fs.readdirSync(projectsTestRoot).length === 0) {
+        fs.removeSync(projectsTestRoot);
+      }
+    } catch (_) {
+      // ignore root cleanup errors
+    }
+
+    const testDbPath = resolveDbPath();
+    if (process.env.NODE_ENV === 'test' && fs.existsSync(testDbPath)) {
+      try {
+        fs.removeSync(testDbPath);
+      } catch (_) {
+        // ignore DB cleanup errors
       }
     }
 

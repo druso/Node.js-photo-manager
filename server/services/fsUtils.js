@@ -3,8 +3,16 @@ const fs = require('fs-extra');
 const { getConfig } = require('./config');
 
 const PROJECT_ROOT = path.join(__dirname, '..', '..');
-const PROJECTS_DIR = path.join(PROJECT_ROOT, '.projects');
+const PROJECTS_DIR = process.env.NODE_ENV === 'test'
+  ? path.join(PROJECT_ROOT, '.projects-test')
+  : path.join(PROJECT_ROOT, '.projects');
 const DEFAULT_USER = 'user_0';
+
+function ensureUserRoot(user = DEFAULT_USER) {
+  const userRoot = path.join(PROJECTS_DIR, user);
+  fs.ensureDirSync(userRoot);
+  return userRoot;
+}
 
 /**
  * Get the absolute path to a project folder
@@ -21,11 +29,12 @@ function getProjectPath(projectOrFolder, user = DEFAULT_USER) {
     throw new Error('Invalid project or folder name');
   }
   
-  return path.join(PROJECTS_DIR, user, projectFolder);
+  const userRoot = ensureUserRoot(user);
+  return path.join(userRoot, projectFolder);
 }
 
-function ensureProjectDirs(projectFolder) {
-  const projectPath = getProjectPath(projectFolder);
+function ensureProjectDirs(projectFolder, user = DEFAULT_USER) {
+  const projectPath = getProjectPath(projectFolder, user);
   fs.ensureDirSync(projectPath);
   fs.ensureDirSync(path.join(projectPath, '.thumb'));
   fs.ensureDirSync(path.join(projectPath, '.preview'));
@@ -33,8 +42,8 @@ function ensureProjectDirs(projectFolder) {
   return projectPath;
 }
 
-function moveToTrash(projectFolder, relPath) {
-  const projectPath = ensureProjectDirs(projectFolder);
+function moveToTrash(projectFolder, relPath, user = DEFAULT_USER) {
+  const projectPath = ensureProjectDirs(projectFolder, user);
   const src = path.join(projectPath, relPath);
   const dest = path.join(projectPath, '.trash', path.basename(relPath));
   if (!fs.existsSync(src)) return false;
@@ -105,6 +114,7 @@ function statMtimeSafe(fullPath) {
 module.exports = {
   PROJECTS_DIR,
   DEFAULT_USER,
+  ensureUserRoot,
   getProjectPath,
   ensureProjectDirs,
   moveToTrash,

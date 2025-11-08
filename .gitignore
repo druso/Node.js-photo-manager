@@ -1,6 +1,8 @@
 # Local project data (do not commit large/binary project assets)
 .projects/
+.projects-test/
 .db/
+photo_manager.test.db
 projects/
 uploads/
 thumbnails/

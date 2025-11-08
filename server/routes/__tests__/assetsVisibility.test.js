@@ -1,4 +1,4 @@
-const { describe, test } = require('node:test');
+const { describe, test, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
 const express = require('express');
 const cookieParser = require('cookie-parser');
@@ -9,11 +9,13 @@ const fs = require('fs-extra');
 const { withAuthEnv, loadFresh } = require('../../services/auth/__tests__/testUtils');
 const { getDb } = require('../../services/db');
 const tokenService = require('../../services/auth/tokenService');
-
-const PROJECTS_ROOT = path.join(__dirname, '../../..', '.projects', 'user_0');
+const { ensureProjectDirs } = require('../../services/fsUtils');
+const { createFixtureTracker } = require('../../tests/utils/dataFixtures');
 const JPEG_BYTES = Buffer.from([0xff, 0xd8, 0xff, 0xd9]);
 
 const publicAssetHashes = loadRel('../../services/publicAssetHashes');
+
+let fixtures;
 
 function loadRel(modulePath) {
   return loadFresh(path.join(__dirname, modulePath));
@@ -52,17 +54,17 @@ function createTestApp() {
 function seedVisibilityFixtures() {
   const db = getDb();
   const ts = new Date().toISOString();
-  const projectFolder = `pvis_${Date.now()}`;
+  const unique = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  const projectFolder = `pvis_${unique}`;
   const projectName = `Visibility Test ${projectFolder}`;
-
-  fs.ensureDirSync(path.join(__dirname, '../../..', '.projects'));
-  fs.ensureDirSync(PROJECTS_ROOT);
 
   const projectInfo = db.prepare(`
     INSERT INTO projects (project_folder, project_name, created_at, updated_at, schema_version, status, archived_at)
     VALUES (?, ?, ?, ?, NULL, NULL, NULL)
   `).run(projectFolder, projectName, ts, ts);
   const projectId = projectInfo.lastInsertRowid;
+
+  fixtures.registerProject({ id: projectId, project_folder: projectFolder });
 
   const insertPhoto = db.prepare(`
     INSERT INTO photos (
@@ -129,9 +131,7 @@ function seedVisibilityFixtures() {
     'private'
   );
 
-  const projectDir = path.join(PROJECTS_ROOT, projectFolder);
-  fs.ensureDirSync(path.join(projectDir, '.thumb'));
-  fs.ensureDirSync(path.join(projectDir, '.preview'));
+  const projectDir = ensureProjectDirs(projectFolder);
   const publicThumbPath = path.join(projectDir, '.thumb', 'public.jpg');
   const privateThumbPath = path.join(projectDir, '.thumb', 'private.jpg');
   fs.writeFileSync(publicThumbPath, JPEG_BYTES);
@@ -142,155 +142,123 @@ function seedVisibilityFixtures() {
   const publicHashes = loadRel('../../services/publicAssetHashes');
   const hashRecord = publicHashes.ensureHashForPhoto(publicInfo.lastInsertRowid);
 
-  const cleanup = () => {
-    const dbCleanup = getDb();
-    dbCleanup.prepare('DELETE FROM photos WHERE project_id = ?').run(projectId);
-    dbCleanup.prepare('DELETE FROM projects WHERE id = ?').run(projectId);
-    fs.removeSync(projectDir);
-  };
-
   return {
     projectId,
     projectFolder,
     publicPhotoId: publicInfo.lastInsertRowid,
     publicHash: hashRecord?.hash || null,
     privatePhotoId: privateInfo.lastInsertRowid,
-    cleanup,
   };
 }
 
 describe('assets visibility enforcement', { concurrency: false }, () => {
+  beforeEach(() => {
+    fixtures = createFixtureTracker();
+  });
+
+  afterEach(() => {
+    fixtures.cleanup();
+  });
+
   test('public thumbnails stream without authentication', async () => {
     await withAuthEnv({}, async () => {
-      const { projectFolder, publicHash, cleanup } = seedVisibilityFixtures();
+      const { projectFolder, publicHash } = seedVisibilityFixtures();
       const app = createTestApp();
-      try {
-        const url = `/api/projects/${projectFolder}/thumbnail/public.jpg${publicHash ? `?hash=${encodeURIComponent(publicHash)}` : ''}`;
-        const res = await request(app).get(url);
-        assert.equal(res.status, 200);
-        assert.equal(res.headers['content-type'], 'image/jpeg');
-        assert.ok(res.body.length > 0);
-      } finally {
-        cleanup();
-      }
+      const url = `/api/projects/${projectFolder}/thumbnail/public.jpg${publicHash ? `?hash=${encodeURIComponent(publicHash)}` : ''}`;
+      const res = await request(app).get(url);
+      assert.equal(res.status, 200);
+      assert.equal(res.headers['content-type'], 'image/jpeg');
+      assert.ok(res.body.length > 0);
     });
   });
 
   test('private thumbnails return 404 for anonymous requests', async () => {
     await withAuthEnv({}, async () => {
-      const { projectFolder, cleanup } = seedVisibilityFixtures();
+      const { projectFolder } = seedVisibilityFixtures();
       const app = createTestApp();
-      try {
-        const res = await request(app).get(`/api/projects/${projectFolder}/thumbnail/private.jpg`);
-        assert.equal(res.status, 404);
-      } finally {
-        cleanup();
-      }
+      const res = await request(app).get(`/api/projects/${projectFolder}/thumbnail/private.jpg`);
+      assert.equal(res.status, 404);
     });
   });
 
   test('private thumbnails stream for authenticated admins', async () => {
     await withAuthEnv({}, async () => {
-      const { projectFolder, cleanup } = seedVisibilityFixtures();
+      const { projectFolder } = seedVisibilityFixtures();
       const app = createTestApp();
       const token = tokenService.issueAccessToken({ sub: 'admin-test' });
-      try {
-        const res = await request(app)
-          .get(`/api/projects/${projectFolder}/thumbnail/private.jpg`)
-          .set('Authorization', `Bearer ${token}`);
-        assert.equal(res.status, 200);
-        assert.equal(res.headers['content-type'], 'image/jpeg');
-        assert.ok(res.body.length > 0);
-      } finally {
-        cleanup();
-      }
+      const res = await request(app)
+        .get(`/api/projects/${projectFolder}/thumbnail/private.jpg`)
+        .set('Authorization', `Bearer ${token}`);
+      assert.equal(res.status, 200);
+      assert.equal(res.headers['content-type'], 'image/jpeg');
+      assert.ok(res.body.length > 0);
     });
   });
 
   test('POST /api/photos/visibility updates visibility when authorized', async () => {
     await withAuthEnv({}, async () => {
-      const { projectFolder, privatePhotoId, cleanup } = seedVisibilityFixtures();
+      const { projectFolder, privatePhotoId } = seedVisibilityFixtures();
       const app = createTestApp();
       const token = tokenService.issueAccessToken({ sub: 'admin-test' });
-      try {
-        const res = await request(app)
-          .post('/api/photos/visibility')
-          .set('Authorization', `Bearer ${token}`)
-          .send({ items: [{ photo_id: privatePhotoId, visibility: 'public' }] });
+      const res = await request(app)
+        .post('/api/photos/visibility')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ items: [{ photo_id: privatePhotoId, visibility: 'public' }] });
 
-        assert.equal(res.status, 200);
-        assert.equal(res.body.updated, 1);
+      assert.equal(res.status, 200);
+      assert.equal(res.body.updated, 1);
 
-        const row = getDb().prepare('SELECT visibility FROM photos WHERE id = ?').get(privatePhotoId);
-        assert.equal(row.visibility, 'public');
-      } finally {
-        cleanup();
-      }
+      const row = getDb().prepare('SELECT visibility FROM photos WHERE id = ?').get(privatePhotoId);
+      assert.equal(row.visibility, 'public');
     });
   });
 
   test('public thumbnails reject missing hash', async () => {
     await withAuthEnv({}, async () => {
-      const { projectFolder, cleanup } = seedVisibilityFixtures();
+      const { projectFolder } = seedVisibilityFixtures();
       const app = createTestApp();
-      try {
-        const res = await request(app).get(`/api/projects/${projectFolder}/thumbnail/public.jpg`);
-        assert.equal(res.status, 401);
-        assert.equal(res.body?.reason, 'missing');
-      } finally {
-        cleanup();
-      }
+      const res = await request(app).get(`/api/projects/${projectFolder}/thumbnail/public.jpg`);
+      assert.equal(res.status, 401);
+      assert.equal(res.body?.reason, 'missing');
     });
   });
 
   test('public thumbnails reject invalid hash', async () => {
     await withAuthEnv({}, async () => {
-      const { projectFolder, cleanup } = seedVisibilityFixtures();
+      const { projectFolder } = seedVisibilityFixtures();
       const app = createTestApp();
-      try {
-        const res = await request(app).get(`/api/projects/${projectFolder}/thumbnail/public.jpg?hash=${encodeURIComponent('not-a-valid-hash')}`);
-        assert.equal(res.status, 401);
-        assert.equal(res.body?.reason, 'mismatch');
-      } finally {
-        cleanup();
-      }
+      const res = await request(app).get(`/api/projects/${projectFolder}/thumbnail/public.jpg?hash=${encodeURIComponent('not-a-valid-hash')}`);
+      assert.equal(res.status, 401);
+      assert.equal(res.body?.reason, 'mismatch');
     });
   });
 
   test('GET /api/projects/image/:filename responds with public metadata', async () => {
     await withAuthEnv({}, async () => {
-      const { projectFolder, cleanup } = seedVisibilityFixtures();
+      const { projectFolder } = seedVisibilityFixtures();
       const app = createTestApp();
-      try {
-        const res = await request(app).get(`/api/projects/image/public.jpg`);
-        assert.equal(res.status, 200);
-        assert.equal(res.body?.photo?.project_folder, projectFolder);
-        assert.equal(typeof res.body?.photo?.hash, 'string');
-        assert.equal(res.body?.photo?.visibility, 'public');
-        assert.equal(typeof res.body?.assets?.thumbnail_url, 'string');
-      } finally {
-        cleanup();
-      }
+      const res = await request(app).get(`/api/projects/image/public.jpg`);
+      assert.equal(res.status, 200);
+      assert.equal(res.body?.photo?.project_folder, projectFolder);
+      assert.equal(typeof res.body?.photo?.hash, 'string');
+      assert.equal(res.body?.photo?.visibility, 'public');
+      assert.equal(typeof res.body?.assets?.thumbnail_url, 'string');
     });
   });
 
   test('GET /api/projects/image/:filename enforces visibility', async () => {
     await withAuthEnv({}, async () => {
-      const { cleanup } = seedVisibilityFixtures();
+      seedVisibilityFixtures();
       const app = createTestApp();
-      try {
-        const res = await request(app).get(`/api/projects/image/private.jpg`);
-        assert.equal(res.status, 401);
-        assert.equal(res.body?.visibility, 'private');
-      } finally {
-        cleanup();
-      }
+      const res = await request(app).get(`/api/projects/image/private.jpg`);
+      assert.equal(res.status, 401);
+      assert.equal(res.body?.visibility, 'private');
     });
   });
 
   test('rotateDueHashes refreshes expired hashes', async () => {
     await withAuthEnv({}, async () => {
-      const { publicPhotoId, cleanup } = seedVisibilityFixtures();
+      const { publicPhotoId } = seedVisibilityFixtures();
       const originalNow = new Date('2025-01-01T00:00:00.000Z');
       const lateNow = new Date('2025-02-15T00:00:00.000Z');
       publicAssetHashes.__setNowProvider(() => originalNow);
@@ -308,7 +276,6 @@ describe('assets visibility enforcement', { concurrency: false }, () => {
         assert.ok(new Date(refreshed.expires_at).getTime() > lateNow.getTime());
       } finally {
         publicAssetHashes.__setNowProvider(() => new Date());
-        cleanup();
       }
     });
   });

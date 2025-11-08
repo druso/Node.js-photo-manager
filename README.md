@@ -31,6 +31,13 @@ This application helps photographers manage their photo collections by:
   - **Backend**: Repository layer optimized into focused modules (photosRepo.js delegates to specialized photoCrud, photoFiltering, photoPagination, photoPendingOps, and photoQueryBuilders modules)
   - **Job Pipeline**: Workers consume scope-aware jobs (`project`, `photo_set`, `global`) using shared helpers in `server/services/workers/shared/photoSetUtils.js` so cross-project operations stay consistent. Deletion tasks are now fully image-scoped: `tasksOrchestrator.startTask()` injects `{ project_id, project_folder, project_name }` hints into each `photo_set` job item, and `fileRemovalWorker` processes the explicit `photo_id` list before considering any project-wide scan fallback. SSE payloads for item updates include the `photo_id`, letting the client reconcile cross-project deletions and moves deterministically. See `JOBS_OVERVIEW.md` for the canonical catalog.
 
+### Testing
+
+- Run `npm test` to execute the full Node.js test runner suite serially (`--test-concurrency=1`).
+- Tests rely on admin auth secrets; export `AUTH_ADMIN_BCRYPT_HASH`, `AUTH_JWT_SECRET_ACCESS`, `AUTH_JWT_SECRET_REFRESH` before running.
+- Suites must respect the isolation contract (`.projects-test/` for folders, `.db/photo_manager.test.db` for SQLite). Use `createFixtureTracker()` and `withAuthEnv()` helpers from `server/tests/utils`.
+- See `project_docs/TESTING_OVERVIEW.md` for helper catalog, targeted run examples, coverage expectations, and CI behavior.
+
 ## API Quick Reference
 
 - **Projects**

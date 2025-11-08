@@ -3,6 +3,9 @@ const assert = require('node:assert/strict');
 const path = require('node:path');
 const { withAuthEnv, loadFresh } = require('../../auth/__tests__/testUtils');
 const { getDb } = require('../../db');
+const { ensureProjectDirs } = require('../../fsUtils');
+const { createProject } = require('../../repositories/projectsRepo');
+const { createFixtureTracker } = require('../../../tests/utils/dataFixtures');
 
 function loadRel(modulePath) {
   return loadFresh(path.join(__dirname, modulePath));
@@ -10,9 +13,11 @@ function loadRel(modulePath) {
 
 describe('Jobs Repository - Basic Operations', { concurrency: false }, () => {
   let cleanupFns = [];
+  let fixtures;
 
   beforeEach(() => {
     cleanupFns = [];
+    fixtures = createFixtureTracker();
     // Clean up ALL jobs before each test to prevent pollution
     const db = getDb();
     db.prepare('DELETE FROM job_items').run();
@@ -20,26 +25,85 @@ describe('Jobs Repository - Basic Operations', { concurrency: false }, () => {
   });
 
   afterEach(() => {
+    fixtures.cleanup();
     const db = getDb();
     // Clean up all test jobs and items
     db.prepare('DELETE FROM job_items WHERE job_id IN (SELECT id FROM jobs WHERE type LIKE ?)').run('test_%');
     db.prepare('DELETE FROM jobs WHERE type LIKE ?').run('test_%');
-    
+
     for (const fn of cleanupFns.reverse()) {
       try { fn(); } catch {}
     }
     cleanupFns = [];
   });
 
+  function makeProject(nameSuffix = 'default') {
+    const projectName = `Jobs Repo ${nameSuffix} ${Date.now()}`;
+    const project = createProject({ project_name: projectName });
+    fixtures.registerProject(project);
+    ensureProjectDirs(project.project_folder);
+    return project;
+  }
+
+  function createPhotos(project, filenames) {
+    const db = getDb();
+    return filenames.map((filename, index) => {
+      const now = new Date(Date.now() + index).toISOString();
+      const info = db.prepare(`
+        INSERT INTO photos (
+          project_id,
+          manifest_id,
+          filename,
+          basename,
+          ext,
+          created_at,
+          updated_at,
+          date_time_original,
+          jpg_available,
+          raw_available,
+          other_available,
+          keep_jpg,
+          keep_raw,
+          thumbnail_status,
+          preview_status,
+          orientation,
+          meta_json,
+          visibility
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        project.id,
+        `${project.id}:${filename}`,
+        filename,
+        path.parse(filename).name,
+        path.extname(filename),
+        now,
+        now,
+        now,
+        1,
+        0,
+        0,
+        1,
+        0,
+        'generated',
+        'generated',
+        null,
+        null,
+        'private'
+      );
+      return { id: info.lastInsertRowid, filename };
+    });
+  }
+
   test('enqueue creates a new job with pending status', async () => {
     await withAuthEnv({}, async () => {
       const jobsRepo = loadRel('../../repositories/jobsRepo');
-      
+      const project = makeProject('enqueue');
+
       const job = jobsRepo.enqueue({
         tenant_id: 'user_0',
         type: 'test_task',
         scope: 'project',
-        project_id: 1,
+        project_id: project.id,
         priority: 50,
       });
 
@@ -53,16 +117,20 @@ describe('Jobs Repository - Basic Operations', { concurrency: false }, () => {
   test('enqueueWithItems creates job with associated items', async () => {
     await withAuthEnv({}, async () => {
       const jobsRepo = loadRel('../../repositories/jobsRepo');
-      
+      const projectA = makeProject('batch-a');
+      const projectB = makeProject('batch-b');
+      const photosA = createPhotos(projectA, ['batch-a-1.jpg', 'batch-a-2.jpg']);
+      const photosB = createPhotos(projectB, ['batch-b-1.jpg']);
+
       const result = jobsRepo.enqueueWithItems({
         tenant_id: 'user_0',
         type: 'test_batch',
         scope: 'photo_set',
         priority: 60,
         items: [
-          { photo_id: 1, project_id: 1 },
-          { photo_id: 2, project_id: 1 },
-          { photo_id: 3, project_id: 2 },
+          { photo_id: photosA[0].id, project_id: projectA.id },
+          { photo_id: photosA[1].id, project_id: projectA.id },
+          { photo_id: photosB[0].id, project_id: projectB.id },
         ],
       });
 
@@ -78,11 +146,12 @@ describe('Jobs Repository - Basic Operations', { concurrency: false }, () => {
   test('claimNext returns highest priority pending job', async () => {
     await withAuthEnv({}, async () => {
       const jobsRepo = loadRel('../../repositories/jobsRepo');
-      
+      const project = makeProject('priority');
+
       // Create jobs with different priorities
-      jobsRepo.enqueue({ tenant_id: 'user_0', type: 'test_low', scope: 'project', priority: 10 });
-      jobsRepo.enqueue({ tenant_id: 'user_0', type: 'test_high', scope: 'project', priority: 90 });
-      jobsRepo.enqueue({ tenant_id: 'user_0', type: 'test_medium', scope: 'project', priority: 50 });
+      jobsRepo.enqueue({ tenant_id: 'user_0', type: 'test_low', scope: 'project', priority: 10, project_id: project.id });
+      jobsRepo.enqueue({ tenant_id: 'user_0', type: 'test_high', scope: 'project', priority: 90, project_id: project.id });
+      jobsRepo.enqueue({ tenant_id: 'user_0', type: 'test_medium', scope: 'project', priority: 50, project_id: project.id });
 
       const claimed = jobsRepo.claimNext({ workerId: 'worker-1' });
       
@@ -96,9 +165,10 @@ describe('Jobs Repository - Basic Operations', { concurrency: false }, () => {
   test('claimNext respects priority threshold filters', async () => {
     await withAuthEnv({}, async () => {
       const jobsRepo = loadRel('../../repositories/jobsRepo');
-      
-      jobsRepo.enqueue({ tenant_id: 'user_0', type: 'test_low', scope: 'project', priority: 30 });
-      jobsRepo.enqueue({ tenant_id: 'user_0', type: 'test_high', scope: 'project', priority: 80 });
+      const project = makeProject('priority-threshold');
+
+      jobsRepo.enqueue({ tenant_id: 'user_0', type: 'test_low', scope: 'project', priority: 30, project_id: project.id });
+      jobsRepo.enqueue({ tenant_id: 'user_0', type: 'test_high', scope: 'project', priority: 80, project_id: project.id });
 
       // Claim only high priority jobs (>= 70)
       const claimed = jobsRepo.claimNext({ workerId: 'worker-1', minPriority: 70 });
@@ -112,9 +182,10 @@ describe('Jobs Repository - Basic Operations', { concurrency: false }, () => {
   test('claimNext with maxPriority filters correctly', async () => {
     await withAuthEnv({}, async () => {
       const jobsRepo = loadRel('../../repositories/jobsRepo');
-      
-      jobsRepo.enqueue({ tenant_id: 'user_0', type: 'test_low', scope: 'project', priority: 30 });
-      jobsRepo.enqueue({ tenant_id: 'user_0', type: 'test_high', scope: 'project', priority: 80 });
+      const project = makeProject('max-priority');
+
+      jobsRepo.enqueue({ tenant_id: 'user_0', type: 'test_low', scope: 'project', priority: 30, project_id: project.id });
+      jobsRepo.enqueue({ tenant_id: 'user_0', type: 'test_high', scope: 'project', priority: 80, project_id: project.id });
 
       // Claim only normal priority jobs (< 70)
       const claimed = jobsRepo.claimNext({ workerId: 'worker-1', maxPriority: 69 });
@@ -136,9 +207,10 @@ describe('Jobs Repository - Basic Operations', { concurrency: false }, () => {
   test('claimNext skips already running jobs', async () => {
     await withAuthEnv({}, async () => {
       const jobsRepo = loadRel('../../repositories/jobsRepo');
-      
-      jobsRepo.enqueue({ tenant_id: 'user_0', type: 'test_job1', scope: 'project', priority: 50 });
-      jobsRepo.enqueue({ tenant_id: 'user_0', type: 'test_job2', scope: 'project', priority: 40 });
+      const project = makeProject('skip-running');
+
+      jobsRepo.enqueue({ tenant_id: 'user_0', type: 'test_job1', scope: 'project', priority: 50, project_id: project.id });
+      jobsRepo.enqueue({ tenant_id: 'user_0', type: 'test_job2', scope: 'project', priority: 40, project_id: project.id });
 
       // Worker 1 claims first job
       const job1 = jobsRepo.claimNext({ workerId: 'worker-1' });
@@ -153,8 +225,9 @@ describe('Jobs Repository - Basic Operations', { concurrency: false }, () => {
   test('complete updates job status and sets finished_at', async () => {
     await withAuthEnv({}, async () => {
       const jobsRepo = loadRel('../../repositories/jobsRepo');
-      
-      const job = jobsRepo.enqueue({ tenant_id: 'user_0', type: 'test_complete', scope: 'project', priority: 50 });
+      const project = makeProject('complete');
+
+      const job = jobsRepo.enqueue({ tenant_id: 'user_0', type: 'test_complete', scope: 'project', priority: 50, project_id: project.id });
       jobsRepo.claimNext({ workerId: 'worker-1' });
       
       jobsRepo.complete(job.id, { result: 'success', items_processed: 10 });
@@ -169,8 +242,9 @@ describe('Jobs Repository - Basic Operations', { concurrency: false }, () => {
   test('fail updates job status with error details', async () => {
     await withAuthEnv({}, async () => {
       const jobsRepo = loadRel('../../repositories/jobsRepo');
-      
-      const job = jobsRepo.enqueue({ tenant_id: 'user_0', type: 'test_fail', scope: 'project', priority: 50 });
+      const project = makeProject('fail');
+
+      const job = jobsRepo.enqueue({ tenant_id: 'user_0', type: 'test_fail', scope: 'project', priority: 50, project_id: project.id });
       jobsRepo.claimNext({ workerId: 'worker-1' });
       
       jobsRepo.fail(job.id, 'Test error message');
@@ -184,12 +258,13 @@ describe('Jobs Repository - Basic Operations', { concurrency: false }, () => {
   test('getById returns job with all fields', async () => {
     await withAuthEnv({}, async () => {
       const jobsRepo = loadRel('../../repositories/jobsRepo');
-      
+      const project = makeProject('get');
+
       const created = jobsRepo.enqueue({
         tenant_id: 'user_0',
         type: 'test_get',
         scope: 'project',
-        project_id: 5,
+        project_id: project.id,
         priority: 75,
       });
 
@@ -198,7 +273,7 @@ describe('Jobs Repository - Basic Operations', { concurrency: false }, () => {
       assert.ok(retrieved);
       assert.equal(retrieved.id, created.id);
       assert.equal(retrieved.type, 'test_get');
-      assert.equal(retrieved.project_id, 5);
+      assert.equal(retrieved.project_id, project.id);
       assert.equal(retrieved.priority, 75);
     });
   });
@@ -209,14 +284,16 @@ describe('Jobs Repository - Basic Operations', { concurrency: false }, () => {
   test('listItems returns items for a job', async () => {
     await withAuthEnv({}, async () => {
       const jobsRepo = loadRel('../../repositories/jobsRepo');
+      const project = makeProject('list-items');
+      const photos = createPhotos(project, ['items-10.jpg', 'items-20.jpg']);
       
       const result = jobsRepo.enqueueWithItems({
         tenant_id: 'user_0',
         type: 'test_items',
         scope: 'photo_set',
         items: [
-          { photo_id: 10, project_id: 1 },
-          { photo_id: 20, project_id: 1 },
+          { photo_id: photos[0].id, project_id: project.id },
+          { photo_id: photos[1].id, project_id: project.id },
         ],
       });
 
@@ -224,8 +301,8 @@ describe('Jobs Repository - Basic Operations', { concurrency: false }, () => {
       const items = jobsRepo.listItems(jobId);
       
       assert.equal(items.length, 2);
-      assert.ok(items.find(i => i.photo_id === 10));
-      assert.ok(items.find(i => i.photo_id === 20));
+      assert.ok(items.find(i => i.photo_id === photos[0].id));
+      assert.ok(items.find(i => i.photo_id === photos[1].id));
     });
   });
 

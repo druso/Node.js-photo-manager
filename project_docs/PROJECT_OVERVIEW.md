@@ -1034,52 +1034,17 @@ server/
 
 ## Testing
 
-### Test Suite
+Full guidance lives in `project_docs/TESTING_OVERVIEW.md`. Highlights:
 
-The project includes comprehensive tests using Node.js' built-in test runner:
-- **Location**: `server/routes/__tests__/` and `server/services/__tests__/`
-- **Run**: `npm test`
-- **Coverage**: 63/63 tests passing (100%)
+- **Runner**: `npm test` executes Node.js' built-in test runner with `--test-concurrency=1` to preserve isolation. Targeted runs may pass a file path or `--test-name-pattern`.
+- **Isolation contract**: Suites write to `.projects-test/user_0/` and `.db/photo_manager.test.db`. Always bootstrap via `createFixtureTracker()` so teardown removes manifests, folders, and database rows.
+- **Auth & helpers**: Use `withAuthEnv()` to seed auth secrets, `createTestServer()` for Express harness setup, and orchestrator/jobs stubs to capture background job payloads without triggering real workers.
+- **Coverage focus**: Optimized suites cover security boundaries (authentication/authorization), CRUD endpoints, background orchestration, dry-run previews, and cross-project edge cases introduced in Phase 4/5 test plans.
+- **CI expectations**: The pipeline runs `npm test` on every push, failing if production directories are touched. Test results and logs are attached as build artifacts for traceability.
+- **Coverage tooling**: `npm run test:coverage` (HTML + text) and `npm run test:coverage:ci` (text-summary) wrap the same runner with c8 instrumentation; reports land in `coverage/` by default.
+- **Quick reference**: The README's *Testing* section provides a short reminder of required auth secrets and links back to `TESTING_OVERVIEW.md`.
 
-### Test Infrastructure
-
-**Database Configuration**:
-- Uses same database as development (`.db/user_0.sqlite`)
-- `busy_timeout = 30000` (30 seconds) to handle concurrent operations
-- `wal_autocheckpoint = 100` for frequent WAL checkpoints
-- Tests run sequentially (`concurrency: false`) to avoid race conditions
-
-**Test Cleanup**:
-- Shared fixture tracker (`server/tests/utils/dataFixtures.js`) registers created projects, public links, and filesystem folders.
-- `fixtures.cleanup()` centralizes teardown for DB rows and `.projects/user_0/*` folders with retry logic (5 attempts, exponential backoff) to handle `SQLITE_BUSY`/`SQLITE_BUSY_SNAPSHOT` errors.
-- Cleanup runs on demand within suites (before reseeding) and in final `after()` hooks; suites retain a 100 ms `afterEach()` delay to avoid lock contention.
-- WAL checkpoint (`db.pragma('wal_checkpoint(TRUNCATE)')`) executes inside the shared cleanup helper before deletion.
-
-**Test Data**:
-- Projects created with unique names: `Test Project ${Date.now() + Math.random()}`
-- Folders placed in `.projects/user_0/` (user-scoped)
-- Fixture tracker automatically removes all tracked folders after tests complete
-
-### Running Tests
-
-```bash
-# Run all tests
-npm test
-
-# Run specific test file
-npm test -- server/routes/__tests__/publicLinks.test.js
-
-# Check for remaining test folders
-ls -la .projects/user_0/ | grep "Test Project"
-```
-
-### Test Best Practices
-
-1. **Always track created resources** in `createdData` arrays
-2. **Use unique names** to avoid collisions between tests
-3. **Clean up in teardown** via `after()` and `afterEach()` hooks
-4. **Handle SQLITE_BUSY** with retry logic and delays
-5. **Run sequentially** for database-heavy test suites
+When adding new suites or helpers, update `TESTING_OVERVIEW.md` alongside the code so onboarding engineers have an accurate, single source of truth for the backend test harness.
 
 ---
 

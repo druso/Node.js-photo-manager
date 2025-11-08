@@ -23,6 +23,15 @@
 - **Repeatable Runs**: Reliable teardown avoids stateful interference that might mask regressions during security-critical test scenarios.
 - **Auditability**: Centralized logging/cleanup makes it easier to verify that security-sensitive resources are removed between runs.
 
+### Testing Documentation Hardening (2025-11-08)
+- **New testing guide**: Added `project_docs/TESTING_OVERVIEW.md` consolidating test execution commands, helper catalog, and isolation requirements. Authors must update this guide alongside any new suites or helpers.
+- **Documentation alignment**: Updated `PROJECT_OVERVIEW.md`, `SCHEMA_DOCUMENTATION.md`, and `README.md` to reference the new guide, highlighting the `.projects-test/` and `.db/photo_manager.test.db` isolation contract and required auth secrets.
+
+**Security Impact**:
+- **Operational Clarity**: Centralized documentation reduces misconfiguration risk when running security-sensitive suites.
+- **Isolation Enforcement**: Explicit guidance helps prevent accidental writes to production directories during tests.
+- **Onboarding Speed**: New engineers can follow a single source for secure test setup, lowering the chance of bypassing authentication helpers or cleanup routines.
+
 ### Metadata Extraction Improvement (2025-11-05)
 - **Enhanced timestamp fallback**: EXIF extraction now uses a fallback hierarchy (`DateTimeOriginal` → `CreateDate` → `ModifyDate`) instead of only checking `DateTimeOriginal`. This ensures more accurate photo capture timestamps when primary EXIF field is missing or corrupted.
 - **Audit trail preservation**: All available EXIF timestamp fields (`date_time_original`, `create_date`, `modify_date`) are now stored in `meta_json` for forensic analysis and timestamp verification.

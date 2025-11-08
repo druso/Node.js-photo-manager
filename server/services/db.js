@@ -7,9 +7,17 @@ const Database = require('better-sqlite3');
 const makeLogger = require('../utils/logger2');
 const log = makeLogger('db');
 
+function resolveDbPath() {
+  const projectRoot = path.join(__dirname, '..', '..');
+  if (process.env.NODE_ENV === 'test') {
+    return path.join(projectRoot, 'photo_manager.test.db');
+  }
+  return path.join(projectRoot, '.db', 'user_0.sqlite');
+}
+
 // For now we use a single default user DB. Later this can be parameterized.
-const DB_DIR = path.join(__dirname, '../../.db');
-const DEFAULT_DB_FILE = path.join(DB_DIR, 'user_0.sqlite');
+const DEFAULT_DB_FILE = resolveDbPath();
+const DB_DIR = path.dirname(DEFAULT_DB_FILE);
 
 let dbInstance = null;
 
@@ -228,6 +236,7 @@ module.exports = {
   withTransaction,
   DB_DIR,
   DEFAULT_DB_FILE,
+  resolveDbPath,
 };
 
 // ---- Helpers ----

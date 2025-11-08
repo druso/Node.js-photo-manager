@@ -58,7 +58,7 @@ router.post('/:folder/process', async (req, res) => {
 
     const payload = { force, filenames: Array.isArray(req.body?.filenames) ? req.body.filenames : undefined };
     const tenant_id = 'user_0';
-    const job = jobsRepo.enqueue({ tenant_id, project_id: project.id, type: 'generate_derivatives', payload, progress_total: null });
+    const job = jobsRepo.enqueue({ tenant_id, project_id: project.id, type: 'generate_derivatives', payload, progress_total: null, scope: 'project' });
     return res.status(202).json({ job });
   } catch (err) {
     log.error('enqueue_generate_derivatives_failed', {

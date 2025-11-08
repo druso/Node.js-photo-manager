@@ -8,22 +8,24 @@ const fs = require('fs-extra');
 
 const { withAuthEnv, loadFresh } = require('../../services/auth/__tests__/testUtils');
 const { getDb } = require('../../services/db');
+const { ensureProjectDirs } = require('../../services/fsUtils');
+const { createFixtureTracker } = require('../../tests/utils/dataFixtures');
 
 function loadRel(modulePath) {
   return loadFresh(path.join(__dirname, modulePath));
 }
 
-const PROJECTS_ROOT = path.join(__dirname, '../../..', '.projects', 'user_0');
-
 describe('project commit handlers', { concurrency: false }, () => {
   let cleanupFns;
+  let fixtures;
 
   beforeEach(() => {
     cleanupFns = [];
-    fs.ensureDirSync(PROJECTS_ROOT);
+    fixtures = createFixtureTracker();
   });
 
   afterEach(() => {
+    fixtures.cleanup();
     for (const fn of cleanupFns.reverse()) {
       try { fn(); } catch {}
     }
@@ -40,6 +42,8 @@ describe('project commit handlers', { concurrency: false }, () => {
     `);
     const projectInfo = insertProject.run(folder, name, ts, ts);
     const projectId = projectInfo.lastInsertRowid;
+
+    fixtures.registerProject({ id: projectId, project_folder: folder });
 
     const insertPhoto = db.prepare(`
       INSERT INTO photos (
@@ -85,8 +89,7 @@ describe('project commit handlers', { concurrency: false }, () => {
       };
     });
 
-    const projectDir = path.join(PROJECTS_ROOT, folder);
-    fs.ensureDirSync(projectDir);
+    const projectDir = ensureProjectDirs(folder);
     cleanupFns.push(() => {
       const dbCleanup = getDb();
       dbCleanup.prepare('DELETE FROM photos WHERE project_id = ?').run(projectId);

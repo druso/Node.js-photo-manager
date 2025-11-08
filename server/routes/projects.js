@@ -323,6 +323,8 @@ router.get('/:folder/photos', async (req, res) => {
       orientation,
       tags,
       visibility,
+      sort,
+      dir,
     });
 
     const items = (page.items || []).map(r => ({
@@ -371,8 +373,8 @@ router.get('/:folder/photos', async (req, res) => {
       items, 
       total: page.total, 
       unfiltered_total: page.unfiltered_total,
-      nextCursor: page.nextCursor, 
-      prevCursor: page.prevCursor || null, 
+      next_cursor: page.nextCursor || null, 
+      prev_cursor: page.prevCursor || null, 
       limit, 
       sort, 
       dir,

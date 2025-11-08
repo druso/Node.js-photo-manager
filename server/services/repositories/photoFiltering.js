@@ -18,102 +18,38 @@ const log = makeLogger('photoFiltering');
  * @param {string} [options.tags] - Tags filter
  * @returns {Object} Filtered result with items, cursors, and totals
  */
-function listProjectFiltered({
-  project_id,
-  limit = 100,
-  cursor = null,
-  before_cursor = null,
-  date_from = null,
-  date_to = null,
-  file_type = null,
-  keep_type = null,
-  orientation = null,
-  tags = null,
-  visibility = null,
-}) {
-  const db = getDb();
-
-  const { whereSql, params } = buildProjectPhotosWhere({
+function listProjectFiltered(options) {
+  const {
     project_id,
+    limit = 100,
+    cursor = null,
+    before_cursor = null,
+    date_from = null,
+    date_to = null,
+    file_type = null,
+    keep_type = null,
+    orientation = null,
+    tags = null,
+    visibility = null,
+    sort = 'date_time_original',
+    dir = 'DESC',
+  } = options || {};
+
+  return listAll({
+    limit,
+    cursor,
+    before_cursor,
     date_from,
     date_to,
     file_type,
     keep_type,
     orientation,
     tags,
+    project_id,
     visibility,
+    sort,
+    dir,
   });
-
-  const rows = db
-    .prepare(`
-      SELECT ph.*, pph.hash AS public_hash, pph.expires_at AS public_hash_expires_at
-      FROM photos ph
-      LEFT JOIN photo_public_hashes pph ON pph.photo_id = ph.id
-      ${whereSql}
-      ORDER BY COALESCE(ph.date_time_original, ph.created_at) DESC, ph.id DESC
-      LIMIT ?
-    `)
-    .all(...params, limit);
-
-  const items = rows || [];
-  let nextCursor = null;
-  let prevCursor = null;
-
-  if (items.length) {
-    const last = items[items.length - 1];
-    const first = items[0];
-
-    const hasMore = db
-      .prepare(`
-        SELECT 1
-        FROM photos ph
-        ${whereSql ? `${whereSql} AND` : 'WHERE'} (
-          (COALESCE(ph.date_time_original, ph.created_at) < ?) OR
-          (COALESCE(ph.date_time_original, ph.created_at) = ? AND ph.id < ?)
-        )
-        LIMIT 1
-      `)
-      .get(
-        ...params,
-        last.date_time_original || last.created_at,
-        last.date_time_original || last.created_at,
-        last.id,
-      );
-    if (hasMore) {
-      nextCursor = createCursor(last.date_time_original || last.created_at, last.id);
-    }
-
-    if (cursor || before_cursor) {
-      prevCursor = createCursor(first.date_time_original || first.created_at, first.id);
-    }
-  }
-
-  let filteredTotal = 0;
-  let unfilteredTotal = 0;
-
-  try {
-    const filteredResult = db
-      .prepare(`
-        SELECT COUNT(*) as c
-        FROM photos ph
-        ${whereSql}
-      `)
-      .get(...params);
-    filteredTotal = filteredResult ? filteredResult.c : 0;
-
-    const unfilteredResult = db
-      .prepare(`
-        SELECT COUNT(*) as c
-        FROM photos ph
-        WHERE ph.project_id = ?
-      `)
-      .get(project_id);
-    unfilteredTotal = unfilteredResult ? unfilteredResult.c : 0;
-  } catch (e) {
-    log.warn('listProjectFiltered_count_failed', { message: e?.message });
-  }
-
-  return { items, nextCursor, prevCursor, total: filteredTotal, unfiltered_total: unfilteredTotal };
 }
 
 /**

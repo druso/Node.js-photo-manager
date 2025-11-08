@@ -1,4 +1,4 @@
-const { describe, test } = require('node:test');
+const { describe, test, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
 const express = require('express');
 const cookieParser = require('cookie-parser');
@@ -9,8 +9,10 @@ const fs = require('fs-extra');
 const { withAuthEnv, loadFresh } = require('../../services/auth/__tests__/testUtils');
 const { getDb } = require('../../services/db');
 const tokenService = require('../../services/auth/tokenService');
+const { ensureProjectDirs } = require('../../services/fsUtils');
+const { createFixtureTracker } = require('../../tests/utils/dataFixtures');
 
-const PROJECTS_ROOT = path.join(__dirname, '../../..', '.projects', 'user_0');
+let fixtures;
 
 function loadRel(modulePath) {
   return loadFresh(path.join(__dirname, modulePath));
@@ -41,11 +43,10 @@ function createTestApp() {
 }
 
 function seedProject() {
-  fs.ensureDirSync(path.join(__dirname, '../../..', '.projects'));
-  fs.ensureDirSync(PROJECTS_ROOT);
   const db = getDb();
   const ts = new Date().toISOString();
-  const projectFolder = `p${Date.now()}`;
+  const unique = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  const projectFolder = `pvis_filter_${unique}`;
   const projectName = `Visibility List ${projectFolder}`;
 
   const info = db.prepare(`
@@ -54,47 +55,44 @@ function seedProject() {
   `).run(projectFolder, projectName, ts, ts);
   const projectId = info.lastInsertRowid;
 
-  const cleanup = () => {
-    const dbCleanup = getDb();
-    dbCleanup.prepare('DELETE FROM photos WHERE project_id = ?').run(projectId);
-    dbCleanup.prepare('DELETE FROM projects WHERE id = ?').run(projectId);
-  };
+  fixtures.registerProject({ id: projectId, project_folder: projectFolder });
+  ensureProjectDirs(projectFolder);
 
-  return { projectFolder, cleanup };
+  return { projectFolder, projectId };
 }
 
 describe('visibility filter validation', { concurrency: false }, () => {
+  beforeEach(() => {
+    fixtures = createFixtureTracker();
+  });
+
+  afterEach(() => {
+    fixtures.cleanup();
+  });
+
   test('GET /api/photos rejects invalid visibility value', async () => {
     await withAuthEnv({}, async () => {
-      const { cleanup } = seedProject();
+      seedProject();
       const app = createTestApp();
       const token = tokenService.issueAccessToken({ sub: 'admin-test' });
-      try {
-        const res = await request(app)
-          .get('/api/photos?visibility=invalid')
-          .set('Authorization', `Bearer ${token}`);
-        assert.equal(res.status, 400);
-        assert.equal(res.body?.error, 'visibility must be "public" or "private"');
-      } finally {
-        cleanup();
-      }
+      const res = await request(app)
+        .get('/api/photos?visibility=invalid')
+        .set('Authorization', `Bearer ${token}`);
+      assert.equal(res.status, 400);
+      assert.equal(res.body?.error, 'visibility must be "public" or "private"');
     });
   });
 
   test('GET /api/projects/:folder/photos rejects invalid visibility value', async () => {
     await withAuthEnv({}, async () => {
-      const { projectFolder, cleanup } = seedProject();
+      const { projectFolder } = seedProject();
       const app = createTestApp();
       const token = tokenService.issueAccessToken({ sub: 'admin-test' });
-      try {
-        const res = await request(app)
-          .get(`/api/projects/${projectFolder}/photos?visibility=invalid`)
-          .set('Authorization', `Bearer ${token}`);
-        assert.equal(res.status, 400);
-        assert.equal(res.body?.error, 'visibility must be "public" or "private"');
-      } finally {
-        cleanup();
-      }
+      const res = await request(app)
+        .get(`/api/projects/${projectFolder}/photos?visibility=invalid`)
+        .set('Authorization', `Bearer ${token}`);
+      assert.equal(res.status, 400);
+      assert.equal(res.body?.error, 'visibility must be "public" or "private"');
     });
   });
 });

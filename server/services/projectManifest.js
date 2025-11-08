@@ -4,7 +4,7 @@ const yaml = require('js-yaml');
 const makeLogger = require('../utils/logger2');
 const log = makeLogger('manifest');
 
-const { ensureProjectDirs, PROJECTS_DIR } = require('./fsUtils');
+const { ensureProjectDirs, getProjectPath } = require('./fsUtils');
 
 const MANIFEST_FILENAME = '.project.yaml';
 const MANIFEST_VERSION = '1.0';
@@ -16,7 +16,7 @@ const MANIFEST_VERSION = '1.0';
  */
 function readManifest(projectFolder) {
   try {
-    const projectPath = path.join(PROJECTS_DIR, projectFolder);
+    const projectPath = getProjectPath(projectFolder);
     const manifestPath = path.join(projectPath, MANIFEST_FILENAME);
     
     if (!fs.existsSync(manifestPath)) {
@@ -159,7 +159,7 @@ function generateManifest(projectName, projectId) {
  */
 function manifestExists(projectFolder) {
   try {
-    const projectPath = path.join(PROJECTS_DIR, projectFolder);
+    const projectPath = getProjectPath(projectFolder);
     const manifestPath = path.join(projectPath, MANIFEST_FILENAME);
     return fs.existsSync(manifestPath);
   } catch (err) {
@@ -174,7 +174,7 @@ function manifestExists(projectFolder) {
  */
 function deleteManifest(projectFolder) {
   try {
-    const projectPath = path.join(PROJECTS_DIR, projectFolder);
+    const projectPath = getProjectPath(projectFolder);
     const manifestPath = path.join(projectPath, MANIFEST_FILENAME);
     
     if (fs.existsSync(manifestPath)) {

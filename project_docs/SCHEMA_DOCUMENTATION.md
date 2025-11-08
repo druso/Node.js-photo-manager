@@ -519,6 +519,18 @@ Deletions:
 
 - All cross-project photo endpoints enforce the shared `MAX_ITEMS_PER_JOB` guardrail (currently 2,000 items). Validation lives in `server/routes/photosActions.js`; when clients exceed the limit they receive a `400` with guidance to reduce batch size. Internal orchestrators pass `autoChunk: true` to `jobsRepo.enqueueWithItems()` so large operations are split into compliant job batches. For commit flows the orchestrator injects `{ photo_id, filename }` records so downstream workers (e.g., `file_removal`) can reconcile job items back to project context even when the job scope is `photo_set`.
 
+## Test Infrastructure Snapshot
+
+Backend suites live alongside routes and repositories (`server/routes/__tests__`, `server/services/__tests__`). They run with Node.js' built-in test runner via `npm test` using serial execution (`--test-concurrency=1`).
+
+- Temporary projects are created under `.projects-test/user_0/` and cleaned with `createFixtureTracker()` to ensure isolation
+- SQLite test database lives at `.db/photo_manager.test.db` with WAL mode enabled; cleanup performs `wal_checkpoint(TRUNCATE)` before deletion
+- Authentication helpers (`withAuthEnv`, `issueAccessToken`) provide isolated JWT/bcrypt material for suites
+- Express harness helper `createTestServer()` wires up admin auth middleware, orchestrator stubs, and fixture cleanup for API suites
+- Bulk suites stub `tasksOrchestrator.startTask` + `jobsRepo` to capture payloads without running workers
+- Coverage tooling: `npm run test:coverage` (HTML + text) and `npm run test:coverage:ci` (text-summary) wrap the runner with c8 instrumentation.
+- Full guidance (running tests, helper catalog, coverage expectations, CI behavior) lives in `project_docs/TESTING_OVERVIEW.md`
+
 The SQLite database is located at `.db/user_0.sqlite` (separate from project content) and is automatically created on first run. Projects are stored in `.projects/user_0/<project_folder>/` with user-scoped isolation.
 
 ---
