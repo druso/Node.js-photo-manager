@@ -28,13 +28,32 @@
   },
   "uploader": {
     "accepted_files": {
-      "extensions": ["jpg", "jpeg", "png", "tif", "tiff", "raw", "cr2", "nef", "arw", "dng"],
-      "mime_prefixes": ["image/"]
+      "extensions": [
+        "jpg",
+        "jpeg",
+        "png",
+        "tif",
+        "tiff",
+        "raw",
+        "cr2",
+        "nef",
+        "arw",
+        "dng"
+      ],
+      "mime_prefixes": [
+        "image/"
+      ]
     }
   },
   "processing": {
-    "thumbnail": { "maxDim": 600, "quality": 50 },
-    "preview": { "maxDim": 6000, "quality": 50 }
+    "thumbnail": {
+      "maxDim": 600,
+      "quality": 50
+    },
+    "preview": {
+      "maxDim": 6000,
+      "quality": 50
+    }
   },
   "public_assets": {
     "hash_rotation_days": 21,
@@ -58,5 +77,8 @@
   "folder_discovery": {
     "interval_minutes": 1,
     "enabled": true
+  },
+  "viewer": {
+    "preload_count": 1
   }
 }

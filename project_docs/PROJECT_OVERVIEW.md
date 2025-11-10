@@ -43,6 +43,7 @@ The application is built around a few key concepts:
       - Deep links automatically paginate to find target photo if not in initial page
     
     - **URL Synchronization**: Router matches both `/shared/{token}` and `/shared/{token}/{photo}` patterns. `useViewerSync` and `useAllPhotosViewer` hooks handle URL updates for shared link mode, ensuring consistent behavior across authenticated and public access.
+    - **Duplicate Folder URLs (2025-11-08)**: When the URL references a human-readable project folder without the auto-generated `" (n)"` suffix (e.g., `/Iceland July 2025` while the canonical folder is `Iceland July 2025 (2)`), `useAppInitialization` normalizes the target name, locates the suffixed project after `listProjects()` resolves, and aligns both the SPA state and browser URL to the canonical folder. This prevents empty project loads for duplicate names while preserving direct-link compatibility.
 
     - **Milestone 5 (Planned)**: A unified share modal will integrate with `UnifiedSelectionModal.jsx` to manage link membership, auto-promote shared photos to `visibility='public'`, and provide optimistic UI updates.
 

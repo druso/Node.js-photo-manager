@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { deleteProject, renameProjectById } from '../api/projectsApi';
+import { deleteProject, renameProject } from '../api/projectsApi';
 import { useUpload } from '../upload/UploadContext';
 import { authFetch } from '../api/httpClient';
 
@@ -118,14 +118,14 @@ const Settings = ({ project, config, onConfigUpdate, onProjectDelete, onProjectR
   };
 
   const handleRenameProject = async () => {
-    if (!project?.id) { alert('No project selected'); return; }
+    if (!project?.folder) { alert('No project selected'); return; }
     const name = (renameValue || '').trim();
     if (!name) { alert('Project name cannot be empty'); return; }
     if (name === project.name) { return; }
     try {
       setRenaming(true);
-      const res = await renameProjectById(project.id, name);
-      const updated = res?.project ? { id: project.id, name: res.project.name, folder: res.project.folder } : { id: project.id, name, folder: project.folder };
+      const res = await renameProject(project.folder, name);
+      const updated = res?.project ? { id: res.project.id, name: res.project.name, folder: res.project.folder } : { id: project.id, name, folder: project.folder };
       if (typeof onProjectRenamed === 'function') onProjectRenamed(updated);
       alert('Project renamed successfully.');
     } catch (e) {

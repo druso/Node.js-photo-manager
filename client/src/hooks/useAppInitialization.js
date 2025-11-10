@@ -4,6 +4,18 @@ import { fetchTaskDefinitions } from '../api/jobsApi';
 import { listAllPendingDeletes } from '../api/allPhotosApi';
 import { getSessionState, getLastProject, setLastProject } from '../utils/storage';
 
+function normalizeFolderCandidate(value) {
+  if (!value) return '';
+  return String(value)
+    .trim()
+    .toLowerCase()
+    // Collapse consecutive whitespace for more resilient matching
+    .replace(/\s+/g, ' ')
+    // Drop trailing " (n)" suffix so duplicate projects can be matched
+    .replace(/\s+\(\d+\)$/g, '')
+    .trim();
+}
+
 /**
  * ARCHITECTURAL DECISION: Unified View Context
  * 
@@ -267,17 +279,36 @@ export function useAppInitialization({
         if (import.meta?.env?.DEV) {
           console.log('Looking for project from URL filter:', view.project_filter);
         }
-        const projectFromUrl = projects.find(p => p.folder === view.project_filter);
+
+        let projectFromUrl = projects.find(p => p.folder === view.project_filter);
+        if (!projectFromUrl) {
+          const normalizedTarget = normalizeFolderCandidate(view.project_filter);
+          if (normalizedTarget) {
+            projectFromUrl = projects.find(p => normalizeFolderCandidate(p.folder) === normalizedTarget);
+            if (projectFromUrl && import.meta?.env?.DEV) {
+              console.log('Matched project via normalized folder name:', projectFromUrl.folder);
+            }
+          }
+        }
+
         if (projectFromUrl) {
+          if (projectFromUrl.folder !== view.project_filter) {
+            // Align unified view context and URL to the canonical folder name
+            updateProjectFilter(projectFromUrl.folder);
+            try {
+              window.history.replaceState({}, '', `/${encodeURIComponent(projectFromUrl.folder)}`);
+            } catch {}
+          }
+
           if (import.meta?.env?.DEV) {
-            console.log('Found project from URL:', projectFromUrl.folder);
+            console.log('Using project from URL:', projectFromUrl.folder);
           }
           setSelectedProject(projectFromUrl);
           return;
-        } else {
-          if (import.meta?.env?.DEV) {
-            console.log('Project from URL not found in projects list');
-          }
+        }
+
+        if (import.meta?.env?.DEV) {
+          console.log('Project from URL not found in projects list');
         }
       }
       

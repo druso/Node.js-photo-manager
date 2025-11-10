@@ -3,25 +3,6 @@
 ## Overview
 Remove `p<id>` validation branches once data migrations confirm all folders use sanitized names. This simplifies validation logic, reduces branching paths, and improves developer experience.
 
-## Business Value
-- **Simpler Validation**: Single code path for folder validation
-- **Fewer Bugs**: Eliminates edge cases from dual folder format support
-- **Better DX**: Clearer codebase for new developers
-- **Reduced Maintenance**: Less code to maintain and test
-
-## Estimated Effort
-**1-2 days** including migration tooling, tests, and documentation
-
-## Prerequisites
-✅ **Data Migration Required**: Before starting this task, you MUST verify that all existing projects in the database have been migrated to use sanitized folder names (not `p<id>` format).
-
-### Migration Check
-Run this SQL query to verify no legacy folders remain:
-```sql
-SELECT COUNT(*) FROM projects WHERE project_folder LIKE 'p%' AND project_folder GLOB 'p[0-9]*';
-```
-If this returns 0, you're safe to proceed. If not, coordinate with senior dev to run migration first.
-
 ## Files to Modify
 
 ### 1. `server/utils/projects.js`
@@ -68,39 +49,45 @@ Review each match and remove legacy handling code.
 ## Testing Requirements
 
 ### Unit Tests
-Create/update tests in `server/utils/__tests__/projects.test.js`:
+Create/update a `node:test` suite at `server/utils/__tests__/projects.test.js` using the built-in `assert` helpers:
 
 ```javascript
+const { describe, it } = require('node:test');
+const assert = require('node:assert/strict');
+const { isCanonicalProjectFolder } = require('../projects');
+
 describe('isCanonicalProjectFolder (post-legacy)', () => {
-  it('should accept valid sanitized folder names', () => {
-    expect(isCanonicalProjectFolder('my-project')).toBe(true);
-    expect(isCanonicalProjectFolder('Project_2024')).toBe(true);
-    expect(isCanonicalProjectFolder('photos-vacation')).toBe(true);
+  it('accepts valid sanitized folder names', () => {
+    assert.equal(isCanonicalProjectFolder('my-project'), true);
+    assert.equal(isCanonicalProjectFolder('Project_2024'), true);
+    assert.equal(isCanonicalProjectFolder('photos-vacation'), true);
   });
 
-  it('should reject legacy p<id> format', () => {
-    expect(isCanonicalProjectFolder('p123')).toBe(false);
-    expect(isCanonicalProjectFolder('p1')).toBe(false);
+  it('rejects legacy p<id> format', () => {
+    assert.equal(isCanonicalProjectFolder('p123'), false);
+    assert.equal(isCanonicalProjectFolder('p1'), false);
   });
 
-  it('should reject invalid characters', () => {
-    expect(isCanonicalProjectFolder('my/project')).toBe(false);
-    expect(isCanonicalProjectFolder('my\\project')).toBe(false);
-    expect(isCanonicalProjectFolder('../project')).toBe(false);
+  it('rejects invalid characters', () => {
+    assert.equal(isCanonicalProjectFolder('my/project'), false);
+    assert.equal(isCanonicalProjectFolder('my\\project'), false);
+    assert.equal(isCanonicalProjectFolder('../project'), false);
   });
 
-  it('should reject empty or whitespace-only names', () => {
-    expect(isCanonicalProjectFolder('')).toBe(false);
-    expect(isCanonicalProjectFolder('   ')).toBe(false);
-    expect(isCanonicalProjectFolder(null)).toBe(false);
+  it('rejects empty or whitespace-only names', () => {
+    assert.equal(isCanonicalProjectFolder(''), false);
+    assert.equal(isCanonicalProjectFolder('   '), false);
+    assert.equal(isCanonicalProjectFolder(null), false);
   });
 });
 ```
 
 ### Integration Tests
-1. **Create Project**: Verify new projects are created with sanitized folder names
-2. **Rename Project**: Verify rename operations work correctly
-3. **API Validation**: Test that API endpoints reject invalid folder names
+Follow the isolation workflow documented in `project_docs/TESTING_OVERVIEW.md` (uses `.projects-test/` and the shared helpers):
+
+1. **Create Project**: Verify new projects are created with sanitized folder names using `createFixtureTracker()` for cleanup.
+2. **Rename Project**: Reuse the tracker and ensure renamed folders remain sanitized.
+3. **API Validation**: Use `withAuthEnv()` + `createTestServer()` utilities to assert 400 responses for invalid folders, `p<id>` included.
 
 ### Manual Testing Checklist
 - [ ] Create a new project with various names (spaces, special chars, etc.)
