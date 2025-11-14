@@ -2,6 +2,48 @@
 
 ## Latest Security Enhancements (2025-11)
 
+### Manifest Check Streaming Implementation (2025-11-14)
+- **Memory-bounded processing**: Refactored `runManifestCheck` to use cursor-based pagination instead of loading all photos at once (previously up to 100k records).
+- **Configurable chunk size**: Default 2000 photos per chunk via `config.maintenance.manifest_check_chunk_size`, preventing memory exhaustion on large projects.
+- **Progress tracking**: Real-time progress updates via `jobsRepo.updateProgress()` after each chunk, enabling monitoring of long-running operations.
+- **Event loop yielding**: Worker yields to event loop between chunks using `setImmediate`, maintaining server responsiveness during maintenance.
+- **Manual trigger endpoint**: Added `POST /api/projects/maintenance/manifest-check` for testing and manual reconciliation.
+
+**Security Impact**:
+- **DoS Risk Reduction**: Bounded memory usage prevents out-of-memory crashes on large projects (50k+ photos)
+- **Improved Observability**: Progress tracking enables monitoring of maintenance operations and detection of stuck jobs
+- **Server Responsiveness**: Event loop yielding ensures other requests remain responsive during maintenance
+- **No Breaking Changes**: Maintains identical functionality with improved scalability
+- **Audit Trail**: Enhanced logging includes `total_processed` count for forensic analysis
+
+### Orphaned Project Cleanup (2025-11-14)
+- **Automatic cleanup**: Added `orphaned_project_cleanup` maintenance step to detect and remove projects whose folders no longer exist on disk.
+- **Two-phase safety**: Active projects are first marked as `canceled`, then removed on the next maintenance cycle if folder still missing. This prevents accidental data loss from temporary filesystem issues.
+- **Database integrity**: Eliminates orphaned database records that could cause URL redirection issues and confusion when creating new projects with duplicate names.
+- **Observability**: Emits SSE events (`project_removed`, `project_canceled`) and comprehensive logging for audit trail.
+
+**Security Impact**:
+- **Data Hygiene**: Prevents accumulation of stale database records that could be exploited for information disclosure
+- **State Consistency**: Maintains database-filesystem synchronization, reducing attack surface from state mismatches
+- **Audit Trail**: Clear logging and SSE events enable monitoring of project lifecycle and detection of unauthorized deletions
+- **Safe Defaults**: Two-phase approach (cancel → delete) provides recovery window for accidental folder removal
+- **No Breaking Changes**: Integrates seamlessly into existing hourly maintenance pipeline
+
+### Legacy Folder Format Validation Removal (2025-11-14)
+- **Validation simplification**: Removed the `isLegacyProjectFolder()` function and all special handling for `p<id>` format. Project folder validation now uses a single, simple rule: the folder name must be properly sanitized.
+- **User freedom**: Users can now name projects `p1`, `p2`, etc. if they choose - no artificial restrictions on valid sanitized names.
+- **Single validation path**: Project folder validation follows one code path that checks if the name matches its sanitized form. This eliminates branching logic and reduces complexity.
+- **Test coverage**: Added comprehensive unit tests (`server/utils/__tests__/projects.test.js`) covering all validation scenarios including acceptance of short names like `p1`.
+- **Documentation updates**: Updated PROJECT_OVERVIEW.md and SCHEMA_DOCUMENTATION.md to reflect the simplified validation.
+
+**Security Impact**:
+- **Reduced Attack Surface**: Removed 13 lines of legacy validation code and one entire function, simplifying the validation logic
+- **Clearer Validation Rules**: Single validation path makes security review easier and reduces risk of bypass through edge cases
+- **Better Testability**: Comprehensive test coverage ensures the validation cannot be accidentally weakened
+- **No Breaking Changes**: All existing projects use sanitized folder names; no data migration required
+- **Improved Maintainability**: Simpler codebase reduces risk of introducing vulnerabilities during future changes
+- **User-Friendly**: No arbitrary restrictions - users can choose any valid sanitized name
+
 ### Code Optimization and Technical Debt Reduction (2025-11-06)
 - **Legacy code removal**: Removed unused legacy project rename endpoint (`PATCH /api/projects/:id`) and helper functions (`makeProjectFolderName`, `parseProjectIdFromFolder`, `slugify`), reducing attack surface by ~95 lines of unmaintained code.
 - **SSE connection hardening**: Added cleanup guard in `/api/jobs/stream` to prevent Express 5 double-close events from corrupting connection counters, improving DoS resistance.

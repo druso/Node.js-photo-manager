@@ -34,7 +34,7 @@ Tables and relationships:
   - `archived_at`: timestamp when the project was soft-deleted.
   - `manifest_version`: version tag for the `.project.yaml` manifest stored alongside the project folder.
   - Indexes: `CREATE INDEX IF NOT EXISTS idx_projects_status ON projects(status)`, `CREATE INDEX IF NOT EXISTS idx_projects_folder ON projects(project_folder)`
-  - `project_folder` format: sanitized, human-readable folder names derived from `project_name` (with `(n)` suffix resolution for duplicates). Fresh installs no longer assign `p<id>` folders, but maintenance still recognises legacy folders that follow that pattern.
+  - `project_folder` format: sanitized, human-readable folder names derived from `project_name` (with `(n)` suffix resolution for duplicates). As of 2025-11-14, only sanitized folder names are accepted; legacy `p<id>` format validation has been removed.
   - **Maintenance-Based Folder Alignment** (2025-11-04):
     - Rename API updates `project_name` immediately (non-blocking).
     - Hourly `folder_alignment` maintenance task detects mismatches between `project_name` and `project_folder` and renames folders atomically using `generateUniqueFolderName()` safeguards.
@@ -279,7 +279,7 @@ Project-related endpoints return consistent shapes including the immutable numer
 
 - List projects: `GET /api/projects`
   - Returns: `[{ id, name, folder, created_at, updated_at }, ...]`
-  - Notes: `folder` is the canonical folder slug (sanitized human-readable form for new projects; legacy `p<id>` folders remain valid).
+  - Notes: `folder` is the canonical folder slug (sanitized human-readable form). Only properly sanitized folder names are accepted.
 
 - Project detail: `GET /api/projects/:folder`
   - Returns: `{ id, name, folder, created_at, updated_at, photos: [...] }`

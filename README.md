@@ -136,7 +136,7 @@ This application helps photographers manage their photo collections by:
 
 ### Prerequisites
 - **Node.js v22 LTS** (required)
-- **npm v10+**
+- **npm v11+** (v11.6.2 or later recommended)
 - Recommended: **nvm** (Node Version Manager). This repo includes `.nvmrc` set to `22`.
 - **Authentication secrets**: The server now requires admin auth secrets. Copy `.env.example` and export `AUTH_ADMIN_BCRYPT_HASH`, `AUTH_JWT_SECRET_ACCESS`, and `AUTH_JWT_SECRET_REFRESH` before running the backend or tests:
   ```bash
@@ -245,7 +245,8 @@ Tip: In development, the Vite dev server runs on `5173`; the backend runs on `50
 
 ## Maintenance
 
-- Background maintenance keeps disk and database in sync via a unified hourly `maintenance` task per project, which encapsulates: `trash_maintenance` (100), `manifest_check` (95), `folder_check` (95), `manifest_cleaning` (80).
+- Background maintenance keeps disk and database in sync via a unified hourly `maintenance_global` task, which includes: `trash_maintenance` (100), `orphaned_project_cleanup` (99), `duplicate_resolution` (98), `folder_alignment` (96), `manifest_check` (95), `folder_check` (95), `manifest_cleaning` (80).
+- **Orphaned project cleanup**: Automatically detects and removes projects whose folders no longer exist on disk. Active projects are first marked as `canceled`, then removed on the next cycle if the folder is still missing (two-phase safety).
 - Manual reconciliation: `POST /api/projects/:folder/commit-changes` moves non‑kept files to `.trash` and enqueues the reconciliation steps. Global commits (`POST /api/photos/commit-changes`) now batch pending deletions into a single `change_commit_all` photo-set task with `{ photo_id, filename }` job items, preserving per-project summaries while letting the worker pipeline auto-chunk large sets. See the canonical jobs catalog in `JOBS_OVERVIEW.md`.
 - Worker pipeline uses two lanes: a priority lane (maintenance, deletion) and a normal lane. Keys: `pipeline.priority_lane_slots`, `pipeline.priority_threshold`. See details in `PROJECT_OVERVIEW.md`.
 

@@ -86,7 +86,9 @@ Jobs now support three scope types via the `scope` column:
 
 - **Global Maintenance** (`maintenance_global` task, scope: `global`)
   - `trash_maintenance` (100)
-  - `duplicate_resolution` (95)
+  - `orphaned_project_cleanup` (99)
+  - `duplicate_resolution` (98)
+  - `folder_alignment` (96)
   - `manifest_check` (95)
   - `folder_check` (95)
   - `manifest_cleaning` (80)
@@ -113,6 +115,17 @@ Jobs now support three scope types via the `scope` column:
   - Purpose: periodic cleanup and management of `.trash` directory (TTL-based file removal).
   - Payload: none currently.
 
+- orphaned_project_cleanup
+  - Worker: `maintenanceWorker.runOrphanedProjectCleanup()`.
+  - Purpose: detect and clean up projects whose folders no longer exist on disk.
+  - Behavior:
+    - For projects with missing folders:
+      - Already `canceled`: Removes from database entirely
+      - Active projects: Marks as `canceled` (preserves data, prevents display)
+    - Emits SSE events: `project_removed` or `project_canceled`
+  - Payload: none currently.
+  - **Safety**: Two-phase approach (cancel first, remove on next run) prevents accidental data loss.
+
 - duplicate_resolution
   - Worker: `maintenanceWorker.runDuplicateResolution()`.
   - Purpose: detect cross-project filename collisions and rename duplicates with deterministic `_duplicate{n}` suffixes; enqueues `upload_postprocess` for renamed files.
@@ -123,6 +136,7 @@ Jobs now support three scope types via the `scope` column:
   - Worker: `maintenanceWorker.runManifestCheck()`.
   - Purpose: reconcile database vs on-disk state (availability flags); ensures `.project.yaml` manifest exists and is correct.
   - Payload: none currently.
+  - **Streaming behavior**: Uses cursor-based pagination to process photos in configurable chunks (default 2000, see `config.maintenance.manifest_check_chunk_size`). This prevents memory issues with large projects (50k+ photos) and enables real-time progress tracking via `jobsRepo.updateProgress()`. Yields to event loop between chunks with `setImmediate`.
 
 - folder_check
   - Worker: `maintenanceWorker.runFolderCheck()`.
@@ -259,10 +273,12 @@ Note: Any other `type` will be failed by `workerLoop` as Unknown.
   - Separately kicks off the `project_scavenge` task hourly for archived projects to clean up leftover folders.
 - **Task composition** (see `server/services/task_definitions.json` → `maintenance_global.steps`):
   - `trash_maintenance` (priority 100) - Clean `.trash` directories
-  - `duplicate_resolution` (priority 95) - Rename cross-project filename collisions with `_duplicate{n}` suffix
+  - `orphaned_project_cleanup` (priority 99) - Remove projects whose folders no longer exist on disk
+  - `duplicate_resolution` (priority 98) - Rename cross-project filename collisions with `_duplicate{n}` suffix
+  - `folder_alignment` (priority 96) - Align project folder names with display names
   - `manifest_check` (priority 95) - Reconcile DB vs filesystem, ensure `.project.yaml` exists
   - `folder_check` (priority 95) - Discover new files, create minimal records, enqueue `upload_postprocess`
-  - `manifest_cleaning` (priority 80) - Remove orphaned DB records
+  - `manifest_cleaning` (priority 80) - Remove orphaned photo records (no JPG or RAW available)
 - **Pipeline delegation**: `folder_check` creates minimal photo records (null metadata/derivatives) and delegates all ingestion to `upload_postprocess`, which handles EXIF extraction and derivative generation via `derivativesWorker`.
 - **Manifest lifecycle**: `.project.yaml` files are generated/repaired by `manifest_check` and preserved by `folder_check` (skipped during file scans).
 - **Manual triggering**: maintenance flows can be initiated via `server/routes/maintenance.js` where applicable.

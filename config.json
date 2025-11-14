@@ -80,5 +80,8 @@
   },
   "viewer": {
     "preload_count": 1
+  },
+  "maintenance": {
+    "manifest_check_chunk_size": 2000
   }
 }

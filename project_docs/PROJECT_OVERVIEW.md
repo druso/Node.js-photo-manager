@@ -78,7 +78,7 @@ The application is built with modern, production-ready technologies:
 ### Development Tools
 *   **nodemon**: Auto-restart development server on file changes
 *   **Node.js v22**: JavaScript runtime (LTS version required). Use **nvm** with the provided `.nvmrc` (22): `nvm install && nvm use`.
-*   **npm v10+**: Package manager
+*   **npm v11+**: Package manager (v11.6.2 or later recommended)
 
 ## 4. Architecture Overview
 
@@ -200,7 +200,13 @@ The scheduler (`server/services/scheduler.js`) enqueues a global `folder_discove
 2. Reconciles manifests by regenerating `.project.yaml` if missing or outdated.
 3. Creates new projects for previously unseen folders and queues derivative generation for any new files.
 
-Hourly maintenance tasks (`maintenance_global`) still handle derivative reconciliation, manifest validation, duplicate detection, and trash cleanup in the background, keeping the filesystem and database in lockstep.
+Hourly maintenance tasks (`maintenance_global`) still handle derivative reconciliation, manifest validation, duplicate detection, orphaned project cleanup, and trash cleanup in the background, keeping the filesystem and database in lockstep. The maintenance pipeline automatically:
+- Removes projects whose folders no longer exist on disk (two-phase: cancel first, then delete)
+- Detects and renames cross-project filename duplicates
+- Aligns project folder names with display names
+- Validates and repairs `.project.yaml` manifests
+- Discovers new files and queues derivative generation
+- Cleans up orphaned photo records
 
 #### Migration Notes & Troubleshooting
 
@@ -242,7 +248,7 @@ The project rename system uses a simple, maintenance-driven approach that separa
 - Runs hourly as part of `maintenance_global` task (priority 96)
 - Detects mismatches between `project_name` and `project_folder`
 - Generates expected folder name using `generateUniqueFolderName()`
-- Prefers keeping the existing sanitized folder when already aligned; only legacy `p<id>` or externally renamed folders are moved
+- Prefers keeping the existing sanitized folder when already aligned; only externally renamed folders are moved
 - Performs atomic `fs.rename()` operation with safety checks:
   - Source folder must exist (skips if missing)
   - Target folder must not exist (skips if collision)
@@ -253,7 +259,7 @@ The project rename system uses a simple, maintenance-driven approach that separa
 **Consistency Guarantees**:
 - ✅ Display name updates are immediate and transactional (ACID)
 - ✅ Freshly created projects already receive sanitized folder names
-- ✅ Folder alignment happens automatically during maintenance for legacy or externally modified folders
+- ✅ Folder alignment happens automatically during maintenance for externally modified folders
 - ✅ No blocking operations during rename API calls
 - ✅ All operations are idempotent and retry-safe
 - ✅ Handles external folder changes gracefully
@@ -400,7 +406,7 @@ The main App.jsx component underwent extensive refactoring to improve maintainab
 *   **Viewer state removed**: Viewer state (open/closed, current photo) is no longer persisted in session storage. The URL is the single source of truth for viewer state to prevent conflicts with deep linking.
 *   **Restore behavior**: On reload, scroll positions are restored using a retry loop to account for layout timing.
 *   **Reset behavior**: Session UI state is cleared only when switching to a different project during the same session. Initial project selection after a reload does not clear it.
-*   **Removed legacy APIs**: Per‑project `localStorage` keys (e.g., `app_state::<folder>`) and their migration helpers were removed. Use `client/src/utils/storage.js → getSessionState()/setSessionState()/clearSessionState()` and the small helpers `setSessionWindowY()`, `setSessionMainY()`.
+*   **Removed legacy APIs**: Per‑project `localStorage` keys (e.g., `app_state::<folder>`) and their migration helpers were removed. Use `client/src/utils/storage.js → getSessionState()/setSessionState()/clearSessionState()` and the small helpers `setSessionWindowY()`, `setSessionMainY()`. Legacy `p<id>` folder format validation was removed in 2025-11-14; only sanitized human-readable folder names are now accepted.
 
 ### Tagging System
 *   **Flexible Tagging**: Add custom tags to photos for organization
@@ -477,7 +483,7 @@ Job types:
 
 - `trash_maintenance`: Remove files in `.trash` older than 24h (TTL-based cleanup).
 - `duplicate_resolution`: Detect cross-project filename collisions and rename duplicates with deterministic `_duplicate{n}` suffixes; enqueues `upload_postprocess` for renamed files. **Must run before `folder_check`** to avoid duplicate DB records.
-- `manifest_check`: Verify DB availability flags (`jpg_available`, `raw_available`) against files on disk and fix discrepancies. Ensures `.project.yaml` manifest exists and is correct.
+- `manifest_check`: Verify DB availability flags (`jpg_available`, `raw_available`) against files on disk and fix discrepancies. Ensures `.project.yaml` manifest exists and is correct. **Uses cursor-based streaming** (configurable chunk size via `config.maintenance.manifest_check_chunk_size`, default 2000) to handle large projects (50k+ photos) without memory issues. Progress updates are emitted via `jobsRepo.updateProgress()` after each chunk, and the worker yields to the event loop between chunks to maintain responsiveness.
 - `folder_check`: Scan the project folder for untracked files; creates minimal DB records (null metadata/derivatives) and enqueues `upload_postprocess` for metadata extraction and derivative generation; moves unaccepted files to `.trash`. **Skips `.project.yaml` manifest files.** Delegates all photo ingestion to the `upload_postprocess` pipeline.
 - `manifest_cleaning`: Delete rows where both JPG and RAW are unavailable. Emits `item_removed` events for per-item UI reconciliation.
   - `project_stop_processes`: High‑priority step that marks a project archived (`status='canceled'`) and cancels queued/running jobs.

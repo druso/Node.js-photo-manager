@@ -2,6 +2,7 @@ const path = require('path');
 const fs = require('fs-extra');
 const makeLogger = require('../../utils/logger2');
 const log = makeLogger('maintenance');
+const config = require('../config');
 const projectsRepo = require('../repositories/projectsRepo');
 const photosRepo = require('../repositories/photosRepo');
 const jobsRepo = require('../repositories/jobsRepo');
@@ -178,51 +179,113 @@ async function ensureManifest(project) {
 }
 
 async function runManifestCheck(job) {
+  const CHUNK_SIZE = config.maintenance?.manifest_check_chunk_size || 2000;
   const projects = getProjectsForJob(job);
   let totalChanged = 0;
+  
   for (const project of projects) {
     try {
       const projectPath = await ensureManifest(project);
       const { jpg, raw, other } = splitExtSets();
-      const page = photosRepo.listPaged({ project_id: project.id, limit: 100000 });
+      
+      let cursor = null;
       let changed = 0;
-      for (const p of page.items) {
-        const base = p.filename;
-        const jpgExists = [...jpg].some(e => fs.existsSync(path.join(projectPath, `${base}.${e}`)) || fs.existsSync(path.join(projectPath, `${base}.${e.toUpperCase()}`)));
-        const rawExists = [...raw].some(e => fs.existsSync(path.join(projectPath, `${base}.${e}`)) || fs.existsSync(path.join(projectPath, `${base}.${e.toUpperCase()}`)));
-        const otherExists = [...other].some(e => fs.existsSync(path.join(projectPath, `${base}.${e}`)) || fs.existsSync(path.join(projectPath, `${base}.${e.toUpperCase()}`)));
-        if ((!!p.jpg_available) !== jpgExists || (!!p.raw_available) !== rawExists || (!!p.other_available) !== otherExists) {
-          photosRepo.upsertPhoto(project.id, {
-            manifest_id: p.manifest_id,
-            filename: p.filename,
-            basename: p.basename || p.filename,
-            ext: p.ext,
-            date_time_original: p.date_time_original,
-            jpg_available: jpgExists,
-            raw_available: rawExists,
-            other_available: otherExists,
-            keep_jpg: !!p.keep_jpg,
-            keep_raw: !!p.keep_raw,
-            thumbnail_status: p.thumbnail_status,
-            preview_status: p.preview_status,
-            orientation: p.orientation,
-            meta_json: p.meta_json,
-          });
-          log.warn('manifest_check_corrected', { ...projectLogContext(project), filename: base, jpg: jpgExists, raw: rawExists, other: otherExists });
-          changed++;
+      let processed = 0;
+      
+      // Stream through photos using cursor-based pagination
+      do {
+        const page = photosRepo.listPaged({
+          project_id: project.id,
+          limit: CHUNK_SIZE,
+          cursor: cursor,
+          sort: 'date_time_original',
+          dir: 'DESC'
+        });
+        
+        // Process this chunk
+        for (const p of page.items) {
+          const base = p.filename;
+          const jpgExists = [...jpg].some(e => 
+            fs.existsSync(path.join(projectPath, `${base}.${e}`)) || 
+            fs.existsSync(path.join(projectPath, `${base}.${e.toUpperCase()}`)));
+          const rawExists = [...raw].some(e => 
+            fs.existsSync(path.join(projectPath, `${base}.${e}`)) || 
+            fs.existsSync(path.join(projectPath, `${base}.${e.toUpperCase()}`)));
+          const otherExists = [...other].some(e => 
+            fs.existsSync(path.join(projectPath, `${base}.${e}`)) || 
+            fs.existsSync(path.join(projectPath, `${base}.${e.toUpperCase()}`)));
+          
+          if ((!!p.jpg_available) !== jpgExists || 
+              (!!p.raw_available) !== rawExists || 
+              (!!p.other_available) !== otherExists) {
+            photosRepo.upsertPhoto(project.id, {
+              manifest_id: p.manifest_id,
+              filename: p.filename,
+              basename: p.basename || p.filename,
+              ext: p.ext,
+              date_time_original: p.date_time_original,
+              jpg_available: jpgExists,
+              raw_available: rawExists,
+              other_available: otherExists,
+              keep_jpg: !!p.keep_jpg,
+              keep_raw: !!p.keep_raw,
+              thumbnail_status: p.thumbnail_status,
+              preview_status: p.preview_status,
+              orientation: p.orientation,
+              meta_json: p.meta_json,
+            });
+            log.warn('manifest_check_corrected', { 
+              ...projectLogContext(project), 
+              filename: base, 
+              jpg: jpgExists, 
+              raw: rawExists, 
+              other: otherExists 
+            });
+            changed++;
+          }
+          processed++;
         }
-      }
+        
+        // Update job progress
+        if (job.id && page.total) {
+          jobsRepo.updateProgress(job.id, { done: processed, total: page.total });
+        }
+        
+        // Move to next page
+        cursor = page.nextCursor;
+        
+        // Yield to event loop between chunks
+        await new Promise(resolve => setImmediate(resolve));
+        
+      } while (cursor);
+      
       totalChanged += changed;
-      log.info('manifest_check_summary', { ...projectLogContext(project), updated_rows: changed });
+      log.info('manifest_check_summary', { 
+        ...projectLogContext(project), 
+        updated_rows: changed,
+        total_processed: processed
+      });
+      
       if (changed > 0) {
-        emitJobUpdate({ type: 'manifest_changed', project_folder: project.project_folder, changed });
+        emitJobUpdate({ 
+          type: 'manifest_changed', 
+          project_folder: project.project_folder, 
+          changed 
+        });
       }
     } catch (err) {
-      log.error('manifest_check_project_failed', { ...projectLogContext(project), error: err.message });
+      log.error('manifest_check_project_failed', { 
+        ...projectLogContext(project), 
+        error: err.message 
+      });
     }
   }
+  
   if (projects.length > 1) {
-    log.info('manifest_check_global_summary', { projects_processed: projects.length, total_changed: totalChanged });
+    log.info('manifest_check_global_summary', { 
+      projects_processed: projects.length, 
+      total_changed: totalChanged 
+    });
   }
 }
 
@@ -507,6 +570,81 @@ async function runFolderAlignment(job) {
   }
 }
 
+/**
+ * Clean up orphaned projects
+ * Detects projects whose folders no longer exist on disk and marks them as canceled
+ * or removes them entirely if already canceled
+ */
+async function runOrphanedProjectCleanup(job) {
+  const { getProjectPath } = require('../fsUtils');
+  const projects = getProjectsForJob(job);
+  let totalCanceled = 0;
+  let totalRemoved = 0;
+
+  for (const project of projects) {
+    try {
+      const projectPath = getProjectPath(project.project_folder);
+      const folderExists = await fs.pathExists(projectPath);
+
+      if (!folderExists) {
+        const isCanceled = project.status === 'canceled';
+        
+        if (isCanceled) {
+          // Already canceled and folder gone - safe to remove from database
+          log.info('orphaned_project_removing', {
+            ...projectLogContext(project),
+            reason: 'Folder does not exist and project already canceled'
+          });
+          
+          projectsRepo.remove(project.id);
+          totalRemoved++;
+          
+          emitJobUpdate({
+            type: 'project_removed',
+            project_id: project.id,
+            project_folder: project.project_folder,
+            reason: 'orphaned'
+          });
+        } else {
+          // Active project with missing folder - mark as canceled
+          log.warn('orphaned_project_canceling', {
+            ...projectLogContext(project),
+            reason: 'Folder does not exist'
+          });
+          
+          projectsRepo.setStatus(project.id, 'canceled');
+          totalCanceled++;
+          
+          emitJobUpdate({
+            type: 'project_canceled',
+            project_id: project.id,
+            project_folder: project.project_folder,
+            reason: 'orphaned'
+          });
+        }
+      }
+    } catch (err) {
+      log.error('orphaned_project_cleanup_failed', {
+        ...projectLogContext(project),
+        error: err.message
+      });
+    }
+  }
+
+  if (projects.length > 1) {
+    log.info('orphaned_project_cleanup_summary', {
+      projects_checked: projects.length,
+      canceled: totalCanceled,
+      removed: totalRemoved
+    });
+  } else if (totalCanceled > 0 || totalRemoved > 0) {
+    log.info('orphaned_project_cleanup_summary', {
+      canceled: totalCanceled,
+      removed: totalRemoved
+    });
+  }
+}
+
 module.exports = {
   runTrashMaintenance,
   runDuplicateResolution,
@@ -514,4 +652,5 @@ module.exports = {
   runFolderCheck,
   runManifestCleaning,
   runFolderAlignment,
+  runOrphanedProjectCleanup,
 };

@@ -55,4 +55,39 @@ router.post('/maintenance/discover-folders', rateLimit({ windowMs: 10 * 60 * 100
   }
 });
 
+// POST /api/projects/maintenance/manifest-check
+// Manual trigger for manifest check (global or project-specific)
+// Limit: 5 requests per 10 minutes per IP
+router.post('/maintenance/manifest-check', rateLimit({ windowMs: 10 * 60 * 1000, max: 5 }), async (req, res) => {
+  try {
+    const { project_id } = req.body;
+    
+    const job = jobsRepo.enqueue({
+      tenant_id: 1,
+      project_id: project_id || null,
+      type: 'manifest_check',
+      priority: 95,
+      scope: project_id ? 'project' : 'global',
+      payload: { 
+        source: 'manual',
+        triggered_at: new Date().toISOString()
+      }
+    });
+    
+    log.info('manual_manifest_check_triggered', { 
+      job_id: job.id,
+      project_id: project_id || 'all'
+    });
+    
+    res.json({ 
+      success: true, 
+      job_id: job.id,
+      message: `Manifest check job enqueued${project_id ? ' for project' : ' (global)'}. Check job status or logs for results.` 
+    });
+  } catch (err) {
+    log.error('manual_manifest_check_failed', { error: err.message });
+    res.status(500).json({ error: err.message || 'Failed to enqueue manifest check job' });
+  }
+});
+
 module.exports = router;

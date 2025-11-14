@@ -2,6 +2,9 @@
 # Builder stage: install deps and build frontend
 FROM node:22-bookworm-slim AS builder
 
+# Upgrade npm to v11
+RUN npm install -g npm@11.6.2
+
 # Install build tools for native modules (better-sqlite3) and libvips for sharp
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
@@ -32,6 +35,9 @@ RUN npm prune --omit=dev
 
 # Runtime stage
 FROM node:22-bookworm-slim AS runtime
+
+# Upgrade npm to v11
+RUN npm install -g npm@11.6.2
 
 # Install only runtime dependencies (libvips) for sharp
 RUN apt-get update \

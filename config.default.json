@@ -58,5 +58,8 @@
   "folder_discovery": {
     "interval_minutes": 5,
     "enabled": true
+  },
+  "maintenance": {
+    "manifest_check_chunk_size": 2000
   }
 }

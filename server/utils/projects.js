@@ -129,17 +129,10 @@ function findNextAvailableName(baseName) {
 }
 
 /**
- * Check if a folder name matches the old p<id> format
+ * Check if a folder name is a valid canonical project folder
+ * Only accepts properly sanitized folder names
  * @param {string} folder - The folder name to check
- * @returns {boolean} True if old format, false otherwise
- */
-function isLegacyProjectFolder(folder) {
-  return /^p\d+$/.test(String(folder));
-}
-
-/**
- * Legacy function - kept for backward compatibility
- * @deprecated Use isLegacyProjectFolder instead
+ * @returns {boolean} True if valid canonical format, false otherwise
  */
 function isCanonicalProjectFolder(folder) {
   if (!folder || typeof folder !== 'string') {
@@ -149,10 +142,6 @@ function isCanonicalProjectFolder(folder) {
   const normalized = String(folder).trim();
   if (!normalized) {
     return false;
-  }
-
-  if (isLegacyProjectFolder(normalized)) {
-    return true;
   }
 
   const sanitized = sanitizeFolderName(normalized);
@@ -165,12 +154,8 @@ function isCanonicalProjectFolder(folder) {
 }
 
 module.exports = {
-  // New functions
   sanitizeFolderName,
   generateUniqueFolderName,
   findNextAvailableName,
-  isLegacyProjectFolder,
-  
-  // Legacy function (still used for validation)
   isCanonicalProjectFolder,
 };
