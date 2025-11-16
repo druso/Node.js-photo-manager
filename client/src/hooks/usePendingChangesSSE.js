@@ -13,6 +13,8 @@ export function usePendingChangesSSE() {
   const [connected, setConnected] = useState(false);
   const eventSourceRef = useRef(null);
   const reconnectTimeoutRef = useRef(null);
+  const reconnectDelayRef = useRef(5000);
+  const maxReconnectDelay = 60000;
 
   useEffect(() => {
     let mounted = true;
@@ -40,6 +42,7 @@ export function usePendingChangesSSE() {
             console.log('[SSE] ✅ Connected to pending changes stream');
           }
           setConnected(true);
+          reconnectDelayRef.current = 5000;
         };
 
         eventSource.onmessage = (event) => {
@@ -65,7 +68,12 @@ export function usePendingChangesSSE() {
           setConnected(false);
           eventSource.close();
           
-          // Attempt to reconnect after 5 seconds
+          // Exponential backoff: start at 5s, double each time, max 60s
+          const delay = reconnectDelayRef.current;
+          if (IS_DEV) {
+            console.log(`[SSE] Will reconnect in ${delay}ms`);
+          }
+          
           reconnectTimeoutRef.current = setTimeout(() => {
             if (mounted) {
               if (IS_DEV) {
@@ -73,7 +81,10 @@ export function usePendingChangesSSE() {
               }
               connect();
             }
-          }, 5000);
+          }, delay);
+          
+          // Double the delay for next time, up to max
+          reconnectDelayRef.current = Math.min(delay * 2, maxReconnectDelay);
         };
       } catch (error) {
         if (IS_DEV) {

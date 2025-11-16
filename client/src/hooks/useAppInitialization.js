@@ -352,34 +352,40 @@ export function useAppInitialization({
   }, [selectedProject, config, ALL_PROJECT_SENTINEL]);
 
   // Fetch pending deletions for All Photos mode
+  // Debounced to prevent excessive API calls when filters change rapidly
   useEffect(() => {
     // Use unified view context to determine if we're in All Photos view
     const isAllPhotosView = view.project_filter === null;
     if (!isAllPhotosView) return;
     
-    const fetchPendingDeletes = async () => {
-      try {
-        const range = activeFilters?.dateRange || {};
-        // Don't pass keep_type to pending deletes API - it has its own internal filter
-        const result = await listAllPendingDeletes({
-          date_from: range.start || undefined,
-          date_to: range.end || undefined,
-          file_type: activeFilters?.fileType !== 'any' ? activeFilters?.fileType : undefined,
-          orientation: activeFilters?.orientation !== 'any' ? activeFilters?.orientation : undefined,
-        });
-        setAllPendingDeletes({
-          jpg: result.jpg || 0,
-          raw: result.raw || 0,
-          total: result.total || 0,
-          byProject: new Set(result.byProject || []),
-        });
-      } catch (error) {
-        console.debug('Failed to fetch pending deletions:', error);
-        setAllPendingDeletes({ jpg: 0, raw: 0, total: 0, byProject: new Set() });
-      }
-    };
+    // Debounce: wait 500ms after last filter change before fetching
+    const timeoutId = setTimeout(() => {
+      const fetchPendingDeletes = async () => {
+        try {
+          const range = activeFilters?.dateRange || {};
+          // Don't pass keep_type to pending deletes API - it has its own internal filter
+          const result = await listAllPendingDeletes({
+            date_from: range.start || undefined,
+            date_to: range.end || undefined,
+            file_type: activeFilters?.fileType !== 'any' ? activeFilters?.fileType : undefined,
+            orientation: activeFilters?.orientation !== 'any' ? activeFilters?.orientation : undefined,
+          });
+          setAllPendingDeletes({
+            jpg: result.jpg || 0,
+            raw: result.raw || 0,
+            total: result.total || 0,
+            byProject: new Set(result.byProject || []),
+          });
+        } catch (error) {
+          console.debug('Failed to fetch pending deletions:', error);
+          setAllPendingDeletes({ jpg: 0, raw: 0, total: 0, byProject: new Set() });
+        }
+      };
 
-    fetchPendingDeletes();
+      fetchPendingDeletes();
+    }, 500);
+    
+    return () => clearTimeout(timeoutId);
   }, [view.project_filter, activeFilters?.dateRange, activeFilters?.fileType, activeFilters?.orientation, setAllPendingDeletes]);
 
   // Persist and restore window scroll position (session-only)

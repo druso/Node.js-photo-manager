@@ -197,9 +197,9 @@ router.get('/photos', async (req, res) => {
       const db = require('../services/db').getDb();
       const countResult = db.prepare('SELECT COUNT(*) as c FROM photos').get();
       totalCount = countResult ? countResult.c : 0;
-      console.log('DEBUG: Total count =', totalCount);
+      log.debug('all_photos_total_count', { totalCount });
     } catch (err) {
-      console.error('ERROR: Failed to get total count', err);
+      log.error('all_photos_count_failed', { error: err?.message, stack: err?.stack });
     }
 
     log.debug('all_photos_req', {

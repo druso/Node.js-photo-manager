@@ -7,7 +7,7 @@ Order of truth and reconciliation:
 - Folder (disk) → SQL (DB) → Frontend (UI)
 - Implication: during destructive operations we always modify the folder first (move/delete files), then reconcile the DB, and finally update the UI incrementally.
 
-## Frontend Architecture (2025-09-28 Update)
+## Frontend Architecture
 
 The frontend has been extensively refactored for optimal maintainability and performance:
 
@@ -16,13 +16,9 @@ The frontend has been extensively refactored for optimal maintainability and per
 - **Component Extraction**: Modular UI components eliminate code duplication and improve reusability
 - **Layout Stability**: Fixed header positioning and scroll behavior for consistent user experience
 - **API Integration**: Enhanced `projectsApi.js` includes `getConfig()` function for configuration management
-- **Pagination Improvements**: Implemented a global manager cache that persists PagedWindowManager instances across renders, ensuring consistent behavior between All Photos and Project views
-  - **Mode-Specific Caching**: Separate caches for All Photos mode and each project folder
-  - **Enhanced Manager Lifecycle**: Modified `ensureWindow` to check the cache before creating new instances
-  - **Improved Reset Logic**: Updated `resetState` to reset manager state without destroying instances
-  - **Sort Change Detection**: Added logic to detect sort changes and reset the appropriate manager
+- **Pagination System**: Global manager cache persists PagedWindowManager instances across renders, ensuring consistent behavior between All Photos and Project views
 
-This architecture maintains full backward compatibility while significantly improving code organization, state persistence, and developer experience.
+This architecture maintains full backward compatibility while significantly improving code organization and developer experience. For detailed frontend architecture information, see `PROJECT_OVERVIEW.md` → Frontend Architecture Achievements.
 
 ## SQLite Schema Overview
 
@@ -34,12 +30,13 @@ Tables and relationships:
   - `archived_at`: timestamp when the project was soft-deleted.
   - `manifest_version`: version tag for the `.project.yaml` manifest stored alongside the project folder.
   - Indexes: `CREATE INDEX IF NOT EXISTS idx_projects_status ON projects(status)`, `CREATE INDEX IF NOT EXISTS idx_projects_folder ON projects(project_folder)`
-  - `project_folder` format: sanitized, human-readable folder names derived from `project_name` (with `(n)` suffix resolution for duplicates). As of 2025-11-14, only sanitized folder names are accepted; legacy `p<id>` format validation has been removed.
-  - **Maintenance-Based Folder Alignment** (2025-11-04):
+  - `project_folder` format: sanitized, human-readable folder names derived from `project_name` (with `(n)` suffix resolution for duplicates). Only sanitized folder names are accepted.
+  - **Maintenance-Based Folder Alignment**:
     - Rename API updates `project_name` immediately (non-blocking).
     - Hourly `folder_alignment` maintenance task detects mismatches between `project_name` and `project_folder` and renames folders atomically using `generateUniqueFolderName()` safeguards.
     - Safety checks skip missing sources or colliding targets, logging warnings instead of aborting the run.
     - Post-alignment, the worker updates the DB, rewrites the manifest, and emits `folder_renamed` SSE payloads so the UI refreshes live.
+    - For detailed workflow, see `JOBS_OVERVIEW.md` → Project Rename & Folder Alignment.
 
 - `photos`
   - Columns (selected): `id`, `project_id` (FK), `filename`, `basename`, `ext`, `created_at`, `updated_at`,
@@ -87,19 +84,26 @@ Tables and relationships:
 
 ### All Photos API (Cross-Project)
 
-- All photos (paginated): `GET /api/photos`
-  - Query params: `limit`, `cursor`, `before_cursor`, `date_from`, `date_to`, `file_type`, `keep_type`, `orientation`, `tags`, `visibility`, `include=tags`, `sort`, `dir`
-  - Sort params: `sort` (filename|date_time_original|file_size), `dir` (ASC|DESC)
-  - Returns: `{ items: [...], total: number, unfiltered_total: number, next_cursor: string|null, prev_cursor: string|null }`
-  - Filter params: same as project photos API
-  - Sort behavior: Server-side sorting with cursor-based pagination; cursors are sort-order specific
-  - Tag filtering: `tags=portrait,-rejected` includes photos with 'portrait' tag and excludes those with 'rejected' tag
-    - Positive tags (no prefix): photo must have ALL specified tags (AND logic)
-    - Negative tags (with `-` prefix): photo must have NONE of the specified tags (NOT ANY logic)
-  - Optional tag inclusion: `include=tags` adds a `tags: string[]` property to each item
-  - Public link filter: `public_link_id=<hashedKey>` filters to photos associated with the referenced shared link. Anonymous requests using this parameter bypass admin auth but are hard-clamped to `visibility = 'public'`; authenticated admins retain access to private photos within the link. Invalid hashes return 404.
-  - `total`: count of photos matching current filters across all projects, `unfiltered_total`: total photos across all non-canceled projects
-  - Default sort: `taken_at DESC, id DESC` for consistent pagination
+**Primary Endpoint:** `GET /api/photos`
+
+**Query Parameters:**
+- Pagination: `limit`, `cursor`, `before_cursor`
+- Filters: `date_from`, `date_to`, `file_type`, `keep_type`, `orientation`, `tags`, `visibility`
+- Sorting: `sort` (filename|date_time_original|file_size), `dir` (ASC|DESC)
+- Options: `include=tags`, `public_link_id`
+
+**Returns:** `{ items: [...], total: number, unfiltered_total: number, next_cursor: string|null, prev_cursor: string|null }`
+
+**Key Behaviors:**
+- Server-side sorting with cursor-based pagination (cursors are sort-order specific)
+- Tag filtering: `tags=portrait,-rejected` includes photos with 'portrait' tag and excludes those with 'rejected' tag
+  - Positive tags (no prefix): photo must have ALL specified tags (AND logic)
+  - Negative tags (with `-` prefix): photo must have NONE of the specified tags (NOT ANY logic)
+- Optional tag inclusion: `include=tags` adds a `tags: string[]` property to each item
+- Public link filter: `public_link_id=<hashedKey>` filters to photos associated with the referenced shared link
+- `total`: count of photos matching current filters across all projects
+- `unfiltered_total`: total photos across all non-canceled projects
+- Default sort: `taken_at DESC, id DESC` for consistent pagination
 
 - Locate photo page: `GET /api/photos/locate-page`
   - Query params: `filename` or `name`, plus same filter params as above
@@ -535,8 +539,9 @@ The SQLite database is located at `.db/user_0.sqlite` (separate from project con
 
 ---
 
-## Related Links
+## Related Documentation
 
-- `./PROJECT_OVERVIEW.md` — Architecture, workflows, API overview
-- `./SECURITY.md` — Protections, gaps, and prioritized interventions
-- `./JOBS_OVERVIEW.md` — Job catalog and how flows use them
+- `./PROJECT_OVERVIEW.md` — Architecture, core concepts, and development workflow
+- `./JOBS_OVERVIEW.md` — Job catalog, task definitions, and workflow compositions
+- `./SECURITY.md` — Security implementation and best practices
+- `../README.md` — Quick start guide and API reference

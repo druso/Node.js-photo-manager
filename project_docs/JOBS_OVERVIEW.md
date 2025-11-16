@@ -1,16 +1,19 @@
-{{ ... }}
+# Jobs Overview
 
-This document summarizes the background job pipeline, supported job types, their options, and how key flows (file upload, maintenance, and change commit) use them.
+This document is the **canonical reference** for the background job pipeline, supported job types, their options, and how key flows (file upload, maintenance, and change commit) use them.
 
-- Source files: `server/services/workerLoop.js`, `server/services/scheduler.js`, `server/routes/uploads.js`, `server/routes/maintenance.js`, `server/routes/jobs.js`
-- Repositories: `server/services/repositories/jobsRepo.js`
--## Related Docs
+**Implementation Files:**
+- Worker Loop: `server/services/workerLoop.js`
+- Scheduler: `server/services/scheduler.js`
+- Upload Routes: `server/routes/uploads.js`
+- Maintenance Routes: `server/routes/maintenance.js`
+- Jobs API: `server/routes/jobs.js`
+- Repository: `server/services/repositories/jobsRepo.js`
 
-- `PROJECT_OVERVIEW.md`
-- `SCHEMA_DOCUMENTATION.md`
-- `tasks_progress/jobs_refactoring_progress.md`
-- `tasks_progress/job_refactoring/REFACTORING_SUMMARY.md`
-- `tasks_progress/job_refactoring_backwardcompatibilitynotes.md` (removal timeline for `scope` column)
+**Related Documentation:**
+- `PROJECT_OVERVIEW.md` — Architecture and core concepts
+- `SCHEMA_DOCUMENTATION.md` — Database schema and API contracts
+- `README.md` — Quick start guide
 
 ## Pipeline Architecture (brief)
 
@@ -210,28 +213,34 @@ Jobs now support three scope types via the `scope` column:
     3. Missing folder → logs warning (project remains in DB)
   - Payload: none currently.
 
-Note: Any other `type` will be failed by `workerLoop` as Unknown.
+**Note:** Any other job `type` will be failed by `workerLoop` as Unknown.
 
-## How Flows Use the Jobs
+## Workflow Integration
 
-### File Upload
+This section describes how different application flows use the job system.
 
-- Endpoint: `POST /api/projects/:folder/upload`
-- Behavior:
-  - Saves incoming files to the project directory.
-  - Updates/creates corresponding photo records in SQLite (availability, metadata, keep flags aligned to availability on upload).
-  - Enqueues `upload_postprocess` with items for each uploaded basename:
-    - `jobsRepo.enqueueWithItems({ type: 'upload_postprocess', payload: { filenames }, items: filenames.map(fn => ({ filename: fn })) })`.
-- Optional processing entry point: `POST /api/projects/:folder/process`
-  - Enqueues `generate_derivatives` (whole project or subset via `payload.filenames`; `payload.force` supported).
-- UI/Realtime:
-  - SSE item-level updates emitted as `{ type: 'item', project_folder, filename, thumbnail_status, preview_status, updated_at }` while processing proceeds.
+### File Upload Flow
 
-### Folder Discovery
+**Primary Endpoint:** `POST /api/projects/:folder/upload`
 
-- Purpose: Automatically discover and index project folders that appear in `.projects/user_0/` (e.g., from external file copies, backups, or manual organization).
-- Trigger: Scheduled hourly via `server/services/scheduler.js` → `folder_discovery` job.
-- Worker: `server/services/workers/folderDiscoveryWorker.js`
+**Process:**
+1. Saves incoming files to the project directory
+2. Updates/creates corresponding photo records in SQLite (availability, metadata, keep flags aligned to availability on upload)
+3. Enqueues `upload_postprocess` with items for each uploaded basename
+
+**Optional Processing:** `POST /api/projects/:folder/process`
+- Enqueues `generate_derivatives` (whole project or subset via `payload.filenames`; `payload.force` supported)
+
+**Real-time Updates:**
+- SSE item-level updates emitted as `{ type: 'item', project_folder, filename, thumbnail_status, preview_status, updated_at }` while processing proceeds
+
+### Folder Discovery Flow
+
+**Purpose:** Automatically discover and index project folders that appear in `.projects/user_0/` (e.g., from external file copies, backups, or manual organization)
+
+**Trigger:** Scheduled hourly via `server/services/scheduler.js` → `folder_discovery` job
+
+**Worker:** `server/services/workers/folderDiscoveryWorker.js`
 
 **Discovery Process**:
 
@@ -266,67 +275,70 @@ Note: Any other `type` will be failed by `workerLoop` as Unknown.
 - ✅ Handles external folder additions gracefully
 - ✅ Detects and merges duplicate projects
 
-### Maintenance
+### Maintenance Flow
 
-- **Scheduler model** (see `server/services/scheduler.js`):
-  - Kicks off the `maintenance_global` task hourly for system-wide reconciliation across all active (non‑archived) projects.
-  - Separately kicks off the `project_scavenge` task hourly for archived projects to clean up leftover folders.
-- **Task composition** (see `server/services/task_definitions.json` → `maintenance_global.steps`):
-  - `trash_maintenance` (priority 100) - Clean `.trash` directories
-  - `orphaned_project_cleanup` (priority 99) - Remove projects whose folders no longer exist on disk
-  - `duplicate_resolution` (priority 98) - Rename cross-project filename collisions with `_duplicate{n}` suffix
-  - `folder_alignment` (priority 96) - Align project folder names with display names
-  - `manifest_check` (priority 95) - Reconcile DB vs filesystem, ensure `.project.yaml` exists
-  - `folder_check` (priority 95) - Discover new files, create minimal records, enqueue `upload_postprocess`
-  - `manifest_cleaning` (priority 80) - Remove orphaned photo records (no JPG or RAW available)
-- **Pipeline delegation**: `folder_check` creates minimal photo records (null metadata/derivatives) and delegates all ingestion to `upload_postprocess`, which handles EXIF extraction and derivative generation via `derivativesWorker`.
-- **Manifest lifecycle**: `.project.yaml` files are generated/repaired by `manifest_check` and preserved by `folder_check` (skipped during file scans).
-- **Manual triggering**: maintenance flows can be initiated via `server/routes/maintenance.js` where applicable.
-- **Lane behavior**: high priorities (>= threshold, default 90) run in the priority lane to keep reconciliation snappy even if normal jobs are long-running.
+**Scheduler Model** (see `server/services/scheduler.js`):
+- Kicks off the `maintenance_global` task hourly for system-wide reconciliation across all active (non‑archived) projects
+- Separately kicks off the `project_scavenge` task hourly for archived projects to clean up leftover folders
 
-### Change Commit (Commit/Revert Toolbar)
+**Task Composition** (see `server/services/task_definitions.json` → `maintenance_global.steps`):
+- `trash_maintenance` (priority 100) - Clean `.trash` directories
+- `orphaned_project_cleanup` (priority 99) - Remove projects whose folders no longer exist on disk
+- `duplicate_resolution` (priority 98) - Rename cross-project filename collisions with `_duplicate{n}` suffix
+- `folder_alignment` (priority 96) - Align project folder names with display names
+- `manifest_check` (priority 95) - Reconcile DB vs filesystem, ensure `.project.yaml` exists
+- `folder_check` (priority 95) - Discover new files, create minimal records, enqueue `upload_postprocess`
+- `manifest_cleaning` (priority 80) - Remove orphaned photo records (no JPG or RAW available)
 
-- Commit Changes (Project-scoped)
-  - Endpoint: `POST /api/projects/:folder/commit-changes`
-  - Behavior:
-    - For each photo in the specified project: moves non-kept JPG/RAW files to `.trash` (derivatives removed immediately for JPGs).
-    - Updates DB availability/keep flags accordingly.
-    - Enqueues reconciliation jobs: `manifest_check` (95), `folder_check` (95), `manifest_cleaning` (80).
-    - Emits SSE: `item_removed` for each deleted photo, `manifest_changed` with `removed_filenames`.
-  - Rate limit: 10 req/5 min/IP.
+**Key Behaviors:**
+- **Pipeline delegation**: `folder_check` creates minimal photo records (null metadata/derivatives) and delegates all ingestion to `upload_postprocess`
+- **Manifest lifecycle**: `.project.yaml` files are generated/repaired by `manifest_check` and preserved by `folder_check`
+- **Manual triggering**: maintenance flows can be initiated via `server/routes/maintenance.js` where applicable
+- **Lane behavior**: high priorities (>= threshold, default 90) run in the priority lane to keep reconciliation snappy
 
-- Commit Changes (Global)
-  - Endpoint: `POST /api/photos/commit-changes`
-  - Behavior:
-    - Operates across multiple projects with pending deletions.
-    - Accepts optional `{ projects: ["p1", "p2"] }` body to target specific projects.
-    - If no projects specified, automatically detects all projects with pending deletions.
-    - For each affected project: moves non-kept JPG/RAW files to `.trash`, updates DB, enqueues reconciliation jobs.
-    - Emits SSE events per project: `item_removed`, `manifest_changed`.
-  - Rate limit: 10 req/5 min/IP.
+### Change Commit Flow (Commit/Revert Toolbar)
 
-- Revert Changes (Project-scoped)
-  - Endpoint: `POST /api/projects/:folder/revert-changes`
-  - Behavior: resets `keep_jpg := jpg_available` and `keep_raw := raw_available` for all photos in the specified project.
-  - Non-destructive (no files moved).
-  - Rate limit: 10 req/5 min/IP.
+**Commit Changes (Project-scoped)**
+- **Endpoint:** `POST /api/projects/:folder/commit-changes`
+- **Behavior:**
+  - Moves non-kept JPG/RAW files to `.trash` (derivatives removed immediately for JPGs)
+  - Updates DB availability/keep flags accordingly
+  - Enqueues reconciliation jobs: `manifest_check` (95), `folder_check` (95), `manifest_cleaning` (80)
+  - Emits SSE: `item_removed` for each deleted photo, `manifest_changed` with `removed_filenames`
+- **Rate limit:** 10 req/5 min/IP
 
-- Revert Changes (Global)
-  - Endpoint: `POST /api/photos/revert-changes`
-  - Behavior:
-    - Operates across multiple projects with keep mismatches.
-    - Accepts optional `{ projects: ["p1", "p2"] }` body to target specific projects.
-    - If no projects specified, automatically detects all projects with keep mismatches.
-    - Resets `keep_jpg := jpg_available` and `keep_raw := raw_available` for affected photos.
-  - Non-destructive (no files moved).
-  - Rate limit: 10 req/5 min/IP.
+**Commit Changes (Global)**
+- **Endpoint:** `POST /api/photos/commit-changes`
+- **Behavior:**
+  - Operates across multiple projects with pending deletions
+  - Accepts optional `{ projects: ["p1", "p2"] }` body to target specific projects
+  - If no projects specified, automatically detects all projects with pending deletions
+  - For each affected project: moves non-kept JPG/RAW files to `.trash`, updates DB, enqueues reconciliation jobs
+  - Emits SSE events per project: `item_removed`, `manifest_changed`
+- **Rate limit:** 10 req/5 min/IP
 
-- Pending Deletes Summary
-  - Endpoint: `GET /api/photos/pending-deletes`
-  - Behavior: returns aggregated pending deletion counts across all projects.
-  - Response: `{ jpg: number, raw: number, total: number, byProject: string[] }`
-  - Supports filtering by date range, file type, and orientation (ignores `keep_type` so counts are independent of preview mode filters).
-  - The All Photos UI fetches this endpoint directly (see `listAllPendingDeletes()`), ensuring the commit/revert toolbar reflects cross-project totals even when the paginated list is filtered.
+**Revert Changes (Project-scoped)**
+- **Endpoint:** `POST /api/projects/:folder/revert-changes`
+- **Behavior:** Resets `keep_jpg := jpg_available` and `keep_raw := raw_available` for all photos in the specified project
+- **Non-destructive** (no files moved)
+- **Rate limit:** 10 req/5 min/IP
+
+**Revert Changes (Global)**
+- **Endpoint:** `POST /api/photos/revert-changes`
+- **Behavior:**
+  - Operates across multiple projects with keep mismatches
+  - Accepts optional `{ projects: ["p1", "p2"] }` body to target specific projects
+  - If no projects specified, automatically detects all projects with keep mismatches
+  - Resets `keep_jpg := jpg_available` and `keep_raw := raw_available` for affected photos
+- **Non-destructive** (no files moved)
+- **Rate limit:** 10 req/5 min/IP
+
+**Pending Deletes Summary**
+- **Endpoint:** `GET /api/photos/pending-deletes`
+- **Returns:** `{ jpg: number, raw: number, total: number, byProject: string[] }`
+- **Behavior:** Returns aggregated pending deletion counts across all projects
+- **Filtering:** Supports date range, file type, and orientation (ignores `keep_type` so counts are independent of preview mode filters)
+- **Usage:** The All Photos UI fetches this endpoint directly, ensuring the commit/revert toolbar reflects cross-project totals even when the paginated list is filtered
 
 ### Image Move
 

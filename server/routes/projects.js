@@ -21,10 +21,11 @@ const { ensureProjectDirs, PROJECTS_DIR, DEFAULT_USER } = require('../services/f
 const userDir = path.join(PROJECTS_DIR, DEFAULT_USER);
 fs.ensureDirSync(userDir);
 
-// Apply rate limiting (60 requests per minute per IP) for locate endpoints
+// Apply rate limiting (180 requests per minute per IP) for locate endpoints
+// Increased from 60 to accommodate normal usage patterns with SSE and polling
 const apiRateLimit = rateLimit({
   windowMs: 60 * 1000,
-  max: 60,
+  max: 180,
   message: 'Too many requests, please try again later.'
 });
 

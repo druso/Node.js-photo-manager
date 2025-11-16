@@ -253,12 +253,14 @@ export default function useProjectSse({
     if (!anyPending) return;
     if (sseReadyRef.current) return;
 
+    // Fallback polling for pending thumbnails when SSE isn't ready
+    // Increased interval from 3s to 10s to reduce server load
     const id = setInterval(() => {
       const folder = selectedProject?.folder;
       if (folder) {
         fetchProjectDataRef.current?.(folder);
       }
-    }, 3000);
+    }, 10000);
 
     return () => clearInterval(id);
   }, [selectedProject?.folder, projectData, committing]);

@@ -22,11 +22,11 @@ The application is built around a few key concepts:
 
 *   **Upload Conflict Handling**: The system provides two main options for handling conflicts during upload: (1) "Skip project duplicates" - when unchecked, existing images in the current project are overwritten; (2) "Move conflicting items into this project" - when enabled, images that exist in other projects are moved to the current project via background image_move tasks. Cross-project conflicts are never uploaded directly but are handled through the move pipeline to maintain data consistency.
 
-*   **List and Viewer**: These are the main UI components for interacting with photos. The application provides two main views: "All Photos" (cross-project view) and "Project" view (single project). Both use virtualized grids for performance with large datasets and support server-side filtering by date range, file type, keep status, and orientation. The "Viewer" provides a full-size view of a single selected photo with keyboard navigation.
+*   **List and Viewer**: These are the main UI components for interacting with photos. The application provides two main views: "All Photos" (cross-project view) and "Project view" (single project). Both use virtualized grids for performance with large datasets and support server-side filtering by date range, file type, keep status, and orientation. The "Viewer" provides a full-size view of a single selected photo with keyboard navigation.
 
-*   **Unified View Architecture**: There is NO conceptual distinction between "All Photos" and "Project" views. A Project view is simply the All Photos view with a project filter applied. This architectural principle is enforced throughout the codebase with a unified view context (`view.project_filter === null` for All Photos mode, or a project folder string for Project mode), unified selection model (`PhotoRef` objects), and unified modal states. The codebase has been fully refactored to use this single source of truth, eliminating duplicate code paths and ensuring consistent behavior across the application.
+*   **Unified View Architecture**: There is NO conceptual distinction between "All Photos" and "Project view". A Project view is simply the All Photos view with a project filter applied. This architectural principle is enforced throughout the codebase with a unified view context (`view.project_filter === null` for All Photos view, or a `project_folder` string for Project view), unified selection model (`PhotoRef` objects), and unified modal states. The codebase has been fully refactored to use this single source of truth, eliminating duplicate code paths and ensuring consistent behavior across the application.
 
-*   **Unified Filtering and Sorting System**: Both All Photos and Project views use identical server-side filtering and sorting with consistent "filtered of total" count displays. Active filters cover date range, file type availability (JPG/RAW), keep flags, orientation, and text search. Sorting supports three fields (date, filename, file_size) with both ascending and descending order. Sort parameters are synchronized with the URL (`?sort=name&dir=asc`) and persist across page reloads. When sort order changes, pagination resets to the first page and scroll position returns to top. Future iterations will extend filtering to tags and visibility once the corresponding UI ships.
+*   **Unified Filtering and Sorting System**: Both All Photos and Project views use identical server-side filtering and sorting with consistent "filtered of total" count displays. Active filters cover date range, file type availability (JPG/RAW), keep flags, orientation, and text search. Sorting supports three fields (date, filename, `file_size`) with both ascending and descending order. Sort parameters are synchronized with the URL (`?sort=name&dir=asc`) and persist across page reloads. When sort order changes, pagination resets to the first page and scroll position returns to top.
 *   **Cross-Project Visibility Operations (2025-10-07)**: The actions menu now supports previewing and applying visibility changes across both Project and All Photos contexts using the unified selection model. Bulk updates route through `useVisibilityMutation()` and call `POST /api/photos/visibility` introduces bulk visibility management with rate limiting. The handler in `server/routes/photosActions.js` revalidates payloads and emits SSE item updates to keep clients synchronized. Asset routes in `server/routes/assets.js` return 404 for private photos unless a valid admin JWT is supplied.
 
 *   **Shared Links**: Shared links enable curated public galleries with full deep linking support. Current implementation:
@@ -47,7 +47,7 @@ The application is built around a few key concepts:
 
     - **Milestone 5 (Planned)**: A unified share modal will integrate with `UnifiedSelectionModal.jsx` to manage link membership, auto-promote shared photos to `visibility='public'`, and provide optimistic UI updates.
 
-*   **Worker Pipeline**: To ensure the UI remains responsive, time-consuming tasks like generating thumbnails and previews are handled asynchronously by a background worker pipeline. Each job now carries an explicit `scope` (`project`, `photo_set`, or `global`) so workers can operate on single projects, arbitrary photo collections, or system-wide maintenance alike. Shared helpers in `server/services/workers/shared/photoSetUtils.js` resolve job targets and group photo sets per project, keeping filesystem access safe for cross-project operations. The system includes specialized workers for image moves between projects, which update database records, move files and derivatives, and emit real-time SSE events to keep the UI synchronized. The Processes panel consumes the tenant-wide `/api/jobs` endpoint so the admin can monitor every in-flight job across All Photos and Project contexts without switching filters. This system is designed to be extensible for future processing needs and the canonical job catalog lives in `JOBS_OVERVIEW.md`. **Photo-centric commits (2025‑10‑24)** now dispatch a single `change_commit_all` task containing per-photo job items aggregated across projects; the file removal worker consumes these `photo_set` batches, marking each job item by `photo_id` while still emitting project-level SSE updates.
+*   **Worker Pipeline**: To ensure the UI remains responsive, time-consuming tasks like generating thumbnails and previews are handled asynchronously by a background worker pipeline. Each job carries an explicit `scope` (`project`, `photo_set`, or `global`) so workers can operate on single projects, arbitrary photo collections, or system-wide maintenance. Shared helpers in `server/services/workers/shared/photoSetUtils.js` resolve job targets and group photo sets per project, keeping filesystem access safe for cross-project operations. The system includes specialized workers for image moves between projects, which update database records, move files and derivatives, and emit real-time SSE events to keep the UI synchronized. The Processes panel consumes the tenant-wide `/api/jobs` endpoint so admins can monitor every in-flight job across All Photos and Project views without switching filters. For detailed job types, priorities, and task compositions, see `JOBS_OVERVIEW.md`.
 
 *   **Database**: While photo files (originals, raws, previews) are stored on the file system, all their metadata—such as project association, tags, timestamps, and file paths—is stored in a central SQLite database. The frontend application relies on this database for fast access to photo information.
 
@@ -355,14 +355,11 @@ The main App.jsx component underwent extensive refactoring to improve maintainab
 
 ## 6. Key Features
 
-### Photo Management
+### Photo Management & Processing
 *   **Multi-format Support**: Handles JPG, PNG, TIFF, and various RAW formats (CR2, NEF, ARW, DNG)
 *   **Project Organization**: Photos are organized into projects (albums/shoots)
 *   **Metadata Extraction**: Automatic EXIF data parsing for timestamps, camera settings, etc. Timestamp extraction uses a fallback hierarchy: `DateTimeOriginal` (preferred - actual capture time) → `CreateDate` → `ModifyDate` → database `created_at` (ingestion time). All available EXIF timestamp fields are preserved in `meta_json` for audit purposes.
 *   **Keep/Discard System**: Deterministic handling of RAW+JPG pairs. By default, `keep_jpg` and `keep_raw` mirror actual file availability and are automatically realigned during uploads and post‑processing. Users can change intent and later Commit or Revert.
-  - Preview Mode filters (`File types to keep`) now match only photos where keep flags are explicitly set: `any_kept` means `keep_jpg === true || keep_raw === true`; `none` means both flags are explicitly `false`.
-
-### Image Processing
 *   **Automatic Thumbnails**: Generated asynchronously for fast grid viewing
 *   **Preview Generation**: High-quality previews for detailed viewing
 *   **Configurable Quality**: Thumbnail and preview settings in configuration
@@ -385,19 +382,6 @@ The main App.jsx component underwent extensive refactoring to improve maintainab
   - Option A lifecycle: `PublicHashProvider` relies on the backend `photo_public_hashes` table. Hashes have a default 28‑day TTL (`public_assets.hash_ttl_days`) and rotate every 21 days (`public_assets.hash_rotation_days`) via `scheduler.js`. Override cadence with `PUBLIC_HASH_TTL_DAYS` / `PUBLIC_HASH_ROTATION_DAYS` env vars. Admin visibility toggles (`photosRepo.updateVisibility()`) seed or clear hashes automatically.
 *   **Lazy Loading (IntersectionObserver)**: The photo grid uses a single `IntersectionObserver` with a slight positive `rootMargin` and a short dwell to avoid flicker. Observation is rebound if a cell's DOM node changes across re-renders, and a ref‑backed visibility set prevents stale-closure misses. This eliminates random blank thumbnails while scrolling and reduces request bursts.
 *   **Incremental Updates**: The grid updates incrementally to preserve context and avoid disruptive reloads.
-*   **Optimistic Updates**: Keep/Tag/Revert/Commit actions update the UI immediately without a full data refetch, preserving browsing context.
-*   **Scroll Preservation**: Grid/table and viewer preserve scroll position and context during incremental updates. Selection is maintained unless an action explicitly clears it. Long-press selection mode respects this preservation by exiting automatically once all selections are cleared.
-*   **Layout Stability**: Thumbnail cells use constant border thickness; selection changes only color/ring, avoiding micro layout shifts that can nudge scroll.
- *   **Grid Lazy-Load Reset Policy**: The grid’s visible window only resets when changing projects (or lazy threshold), not on incremental data updates.
- *   **Scroll/Viewer Preservation**: Window/main scroll and open viewer are preserved across background refreshes and fallback refetches.
- *   **Active Project Sentinel**: `client/src/App.jsx` keeps an `ALL_PROJECT_SENTINEL` entry representing “All Photos.” Entering this mode clears `projectData`, resets local selection, and pauses per-project pagination while `previousProjectRef` remembers the prior folder so the UI restores it when exiting All mode.
- *   **Upload Routing**: `useAllPhotosUploads()` tracks the active project via `registerActiveProject()` and opens `ProjectSelectionModal` whenever uploads start without a concrete target. The header `UploadButton` defers to this hook—All Photos mode always prompts for a destination, while project mode preselects the current folder but still allows quick re-targeting.
- *   **Typeahead Project Picker**: `ProjectSelectionModal.jsx` and `MovePhotosModal.jsx` share the typeahead UX. The move modal receives `selectedProjectSummaries` from `client/src/App.jsx` so it can exclude origin folders and display per-project selection counts (e.g., “Project A (5), Project B (2)”) before launching the move task.
-*   **Filter Panel UX**: The filters panel includes bottom actions: a gray "Close" button to collapse the panel, and a blue "Reset" button that becomes enabled only when at least one filter is active. Buttons share the full width (50% each) for clear mobile ergonomics.
-*   **Filters Layout**: Within the panel, filters are organized for quicker scanning:
-    - Row 0 (full width): Text search with suggestions
-    - Row 1: Date taken (new popover range picker with two months + presets), Orientation
-    - Row 2: File types available, File types to keep
   The date range picker is a single trigger button that opens a dual‑month popover with quick‑select presets (Today, Last 7 days, This month, etc.).
 
 #### Session‑only UI State Persistence
@@ -477,42 +461,13 @@ Refer to `SECURITY.md` for detailed security implementation and best practices.
 
 ### Maintenance Processes
 
-Maintenance tasks keep the on‑disk state and the database in sync. They are implemented as high‑priority, idempotent jobs handled by the same worker loop and scheduled through scope-aware tasks.
-
-Job types:
-
-- `trash_maintenance`: Remove files in `.trash` older than 24h (TTL-based cleanup).
-- `duplicate_resolution`: Detect cross-project filename collisions and rename duplicates with deterministic `_duplicate{n}` suffixes; enqueues `upload_postprocess` for renamed files. **Must run before `folder_check`** to avoid duplicate DB records.
-- `manifest_check`: Verify DB availability flags (`jpg_available`, `raw_available`) against files on disk and fix discrepancies. Ensures `.project.yaml` manifest exists and is correct. **Uses cursor-based streaming** (configurable chunk size via `config.maintenance.manifest_check_chunk_size`, default 2000) to handle large projects (50k+ photos) without memory issues. Progress updates are emitted via `jobsRepo.updateProgress()` after each chunk, and the worker yields to the event loop between chunks to maintain responsiveness.
-- `folder_check`: Scan the project folder for untracked files; creates minimal DB records (null metadata/derivatives) and enqueues `upload_postprocess` for metadata extraction and derivative generation; moves unaccepted files to `.trash`. **Skips `.project.yaml` manifest files.** Delegates all photo ingestion to the `upload_postprocess` pipeline.
-- `manifest_cleaning`: Delete rows where both JPG and RAW are unavailable. Emits `item_removed` events for per-item UI reconciliation.
-  - `project_stop_processes`: High‑priority step that marks a project archived (`status='canceled'`) and cancels queued/running jobs.
-  - `project_delete_files`: High‑priority step that deletes the project folder from `.projects/user_0/<project_folder>/`.
-  - `project_cleanup_db`: Cleans related DB rows (`photos`, `tags`, `photo_tags`) while retaining the archived `projects` row for audit.
+Maintenance tasks keep the on‑disk state and the database in sync. They are implemented as high‑priority, idempotent jobs handled by the worker loop and scheduled through scope-aware tasks. The system runs hourly global maintenance tasks that include trash cleanup, duplicate resolution, manifest checking, folder scanning, and orphaned record cleaning. For detailed job types, priorities, and implementation details, see `JOBS_OVERVIEW.md`.
 
 ### Image Move Workflow
 
-- Overview: Move selected images from their current project to a destination project while preserving derivatives when available and regenerating when missing.
-- API entry (tasks-only): `POST /api/projects/:folder/jobs` with body `{"task_type":"image_move","items":["<base1>","<base2>"]}` where `:folder` is the destination (e.g., `p3`).
-- Composition (see `server/services/task_definitions.json` → `image_move.steps`):
-  1) `image_move_files` (95) — `server/services/workers/imageMoveWorker.js`
-  2) `manifest_check` (95)
-  3) `generate_derivatives` (90) if needed
-- Behavior of `image_move_files`:
-  - Moves originals (case-insensitive through known extensions) and any existing derivatives (`.thumb/<base>.jpg`, `.preview/<base>.jpg`).
-  - Updates DB (`photosRepo.moveToProject()`), aligns derivative statuses to `generated` when a derivative moved, or `pending` when it must be regenerated (`not_supported` for RAW).
-  - Emits SSE:
-    - `item_removed` from the source project
-    - `item_moved` in the destination with `thumbnail_status`/`preview_status`
-  - Enqueues a `manifest_check` for the source project to reconcile leftovers.
-- Uploads integration: `POST /api/projects/:folder/upload` with multipart field `reloadConflictsIntoThisProject=true` will auto-start `image_move` into `:folder` for uploaded bases that exist in other projects (see `server/routes/uploads.js`).
-- See also: `JOBS_OVERVIEW.md` → Image Move for API and SSE details.
+The image move system handles transferring photos between projects while preserving derivatives when available and regenerating when missing. The workflow includes moving original files, updating database records, handling derivatives intelligently, and emitting real-time SSE events. For detailed task composition, worker behavior, and API specifications, see `JOBS_OVERVIEW.md` → Image Move.
 
-Scheduler (`server/services/scheduler.js`) cadence:
-
-- Hourly kickoff of a single global `maintenance_global` task (scope `global`). This fans out to `trash_maintenance` (priority 100), `duplicate_resolution` (95), `manifest_check` (95), `folder_check` (95), and `manifest_cleaning` (80) inside the pipeline without looping over projects in the scheduler itself.
-- Hourly kickoff of `project_scavenge_global` (scope `global`) for archived projects to remove any leftover `.projects/user_0/<project_folder>/` directories.
-  See `server/services/scheduler.js` and the canonical jobs catalog in `JOBS_OVERVIEW.md`.
+The scheduler (`server/services/scheduler.js`) runs hourly maintenance tasks including global maintenance and project scavenge operations. See `JOBS_OVERVIEW.md` for the complete maintenance task catalog and scheduling details.
 
 - `POST /api/projects/:folder/commit-changes` (project-scoped)
   - Moves non‑kept files to `.trash` based on `keep_jpg`/`keep_raw` flags for the specified project
@@ -1068,9 +1023,12 @@ Key strengths:
 
 For detailed information on specific subsystems, refer to the dedicated documentation files mentioned throughout this overview.
 
-### Related Links
+### Related Documentation
 
-- `./JOBS_OVERVIEW.md` — Job catalog (types, priorities, lanes) and task compositions used by Upload, Commit, Maintenance, and Project Deletion flows
+- `./JOBS_OVERVIEW.md` — Canonical job catalog with detailed task definitions, priorities, and workflow compositions
+- `./SCHEMA_DOCUMENTATION.md` — Database schema, API contracts, and data relationships
+- `./README.md` — Quick start guide and API reference
+- `./SECURITY.md` — Security implementation and best practices
 
 Notes:
-- Destructive endpoints above (PATCH rename, DELETE project, POST commit-changes) are rate-limited at 10 req/5 min/IP.
+- Destructive endpoints (PATCH rename, DELETE project, POST commit-changes) are rate-limited at 10 req/5 min/IP.
