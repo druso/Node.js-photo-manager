@@ -1,319 +1,279 @@
 # Node.js Photo Manager
 
-A modern web-based photo management application designed for photographers. Upload, organize, and view your photos with automatic thumbnail generation, tagging, and project-based organization.
+A modern web-based photo management application for photographers. Upload, organize, and view photos with automatic processing, tagging, and project-based organization.
 
 ## What is this?
 
-This application helps photographers manage their photo collections by:
-- **Organizing photos into projects** (shoots, events, albums)
-- **Supporting multiple formats** (JPG, PNG, TIFF, RAW files like CR2, NEF, ARW, DNG)
-- **Automatic processing** (thumbnail and preview generation)
-- **Tagging system** for easy organization and searching
-- **Keep/discard workflow** for managing RAW+JPG pairs
+Manage photo collections with:
+- **Project organization** (shoots, events, albums)
+- **Multi-format support** (JPG, PNG, TIFF, RAW: CR2, NEF, ARW, DNG)
+- **Automatic processing** (thumbnails and previews)
+- **Tagging system** for organization and searching
+- **Keep/discard workflow** for RAW+JPG pairs
 - **Real-time progress tracking** for background tasks
-- **Public/private visibility** with shared links for curated galleries
+- **Public/private visibility** with shared links
 
 ## Technology
 
-- **Frontend**: React with Vite and Tailwind CSS
-  - **URL-Based State Management**: Shareable and bookmarkable URLs with filters and viewer state
-  - **Unified View Architecture**: Single source of truth using `view.project_filter` context (null for All Photos view, `project_folder` string for Project view)
-  - **Highly Optimized**: Main `App.jsx` reduced from ~2,350 to ~1,021 lines (57% reduction) through systematic extraction
-  - **Modular Hook System**: 20+ specialized React hooks for separation of concerns
-  - **Component Extraction**: Modular UI components (VirtualizedPhotoGrid, PhotoViewer, CommitRevertBar, etc.)
-  - **Layout Stability**: Fixed header positioning and scroll behavior for optimal UX
-- **Backend**: Node.js with Express and SQLite
-- **Image Processing**: Sharp library for high-performance processing
-- **Project Folders**: Sanitized, human-readable slugs (e.g., `Sunset Shoot`, `Sunset Shoot (2)`)
-- **Modular Architecture**: Both frontend and backend use focused, single-responsibility modules
-  - **Frontend**: Specialized hooks, services, and components
-  - **Backend**: Repository layer split into focused modules (photoCrud, photoFiltering, photoPagination, etc.)
-  - **Job Pipeline**: Scope-aware jobs (`project`, `photo_set`, `global`) with two-lane priority system
+**Frontend**: React + Vite + Tailwind CSS
+- URL-based state management (shareable, bookmarkable)
+- Unified view architecture (All Photos + Project views)
+- Highly optimized (App.jsx: 2,350→1,666 lines, 29% reduction)
+- 20+ specialized React hooks
 
-For detailed architecture information, see `PROJECT_OVERVIEW.md`
+**Backend**: Node.js v22 + Express + SQLite
+- Modular repository layer
+- Two-lane job pipeline (project/photo_set/global scopes)
+- Parallel image processing (4 threads)
 
-### Testing
-
-- Run `npm test` to execute the full Node.js test runner suite serially (`--test-concurrency=1`).
-- Tests rely on admin auth secrets; export `AUTH_ADMIN_BCRYPT_HASH`, `AUTH_JWT_SECRET_ACCESS`, `AUTH_JWT_SECRET_REFRESH` before running.
-- Suites must respect the isolation contract (`.projects-test/` for folders, `.db/photo_manager.test.db` for SQLite). Use `createFixtureTracker()` and `withAuthEnv()` helpers from `server/tests/utils`.
-- See `project_docs/TESTING_OVERVIEW.md` for helper catalog, targeted run examples, coverage expectations, and CI behavior.
-
-## API Quick Reference
-
-**Core Endpoints:**
-- `GET /api/projects` — List all projects
-- `POST /api/projects` — Create new project
-- `GET /api/projects/:folder/photos` — Get paginated photos (supports filtering & sorting)
-- `POST /api/projects/:folder/upload` — Upload files with conflict resolution
-- `GET /api/photos` — Cross-project photo listing (All Photos view)
-- `POST /api/photos/keep` — Update keep flags by `photo_id`
-- `POST /api/photos/move` — Move photos between projects
-- `GET /api/jobs/stream` — Real-time job updates via SSE
-
-**Asset Serving:**
-- `GET /api/projects/:folder/thumbnail/:filename` — Thumbnail (public photos require `?hash=<hash>`)
-- `GET /api/projects/:folder/preview/:filename` — Preview image
-- `GET /api/projects/:folder/image/:filename` — Full-resolution image
-
-**For complete API documentation**, see `SCHEMA_DOCUMENTATION.md`
+**Performance**:
+- 92% faster queries (prepared statement caching)
+- 75% memory reduction (unified SSE)
+- 40-50% faster image processing
+- 60-80% bandwidth reduction (HTTP compression)
+- 90%+ fewer API calls (request batching)
 
 ## Quick Start
 
 ### Prerequisites
 - **Node.js v22 LTS** (required)
-- **npm v11+** (v11.6.2 or later recommended)
-- Recommended: **nvm** (Node Version Manager). This repo includes `.nvmrc` set to `22`.
-- **Authentication secrets**: The server now requires admin auth secrets. Copy `.env.example` and export `AUTH_ADMIN_BCRYPT_HASH`, `AUTH_JWT_SECRET_ACCESS`, and `AUTH_JWT_SECRET_REFRESH` before running the backend or tests:
-  ```bash
-  export AUTH_ADMIN_BCRYPT_HASH="$(awk -F'="' '/AUTH_ADMIN_BCRYPT_HASH/ {print $2}' .env.example | tr -d '"')"
-  export AUTH_JWT_SECRET_ACCESS="$(awk -F'="' '/AUTH_JWT_SECRET_ACCESS/ {print $2}' .env.example | tr -d '"')"
-  export AUTH_JWT_SECRET_REFRESH="$(awk -F'="' '/AUTH_JWT_SECRET_REFRESH/ {print $2}' .env.example | tr -d '"')"
-  ```
-  Provide production secrets via your deployment platform; the server exits with `auth_config_invalid` if they are missing or invalid.
+- **npm v10+** (v10.0.0 or later)
+- **nvm** (recommended). Repo includes `.nvmrc` set to `22`.
 
-### Installation & Setup
+### Installation
 
-1. **Use Node 22 with nvm (recommended)**:
-   ```bash
-   # one-time install (if not installed)
-   curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash
-   export NVM_DIR="$HOME/.nvm" && . "$NVM_DIR/nvm.sh"
-   
-   # per-shell usage in this repo
-   nvm install   # reads .nvmrc (22)
-   nvm use
-   node -v && npm -v
-   ```
+```bash
+# Use Node 22 with nvm
+nvm install && nvm use
 
-2. **Install dependencies**:
-   ```bash
-   npm install
-   cd client && npm install && cd ..
-   ```
+# Install dependencies
+npm install
+cd client && npm install && cd ..
 
-3. **Configure the application**:
-   ```bash
-   cp config.default.json config.json
-   # Edit config.json if needed (optional for basic usage)
-   ```
+# Configure
+cp config.default.json config.json
 
-4. **Start the application** (requires 2 terminals):
-   
-   **Terminal 1 - Backend Logs**: Structured JSON lines from `npm run dev`. Pipe to `jq` for readability:
-   ```bash
-   npm run dev 2>&1 | jq -r '.'
-   ```
-   
-   **Terminal 2 - Frontend**:
-   ```bash
-   cd client && npm run dev
-   ```
+# Set auth secrets (required)
+export AUTH_ADMIN_BCRYPT_HASH="$(awk -F'="' '/AUTH_ADMIN_BCRYPT_HASH/ {print $2}' .env.example | tr -d '"')"
+export AUTH_JWT_SECRET_ACCESS="$(awk -F'="' '/AUTH_JWT_SECRET_ACCESS/ {print $2}' .env.example | tr -d '"')"
+export AUTH_JWT_SECRET_REFRESH="$(awk -F'="' '/AUTH_JWT_SECRET_REFRESH/ {print $2}' .env.example | tr -d '"')"
 
-5. **Open your browser** to `http://localhost:5173`
+# Start backend (Terminal 1)
+npm run dev
 
-6. **Log in as admin** using the password that matches `AUTH_ADMIN_BCRYPT_HASH`. The default sample hash corresponds to the string `password`. Change hashes/secrets before deploying.
+# Start frontend (Terminal 2)
+cd client && npm run dev
+
+# Open browser
+http://localhost:5173
+```
 
 ### First Steps
-1. Create a new project
-2. Upload some photos (drag & drop or click to select)
-3. Watch thumbnails generate automatically
-4. Add tags and organize your photos
+1. Log in as admin (password: `password` for sample hash)
+2. Create a new project
+3. Upload photos (drag & drop)
+4. Watch thumbnails generate automatically
 
 ### Production Build
 ```bash
 npm run build  # Builds frontend to client/dist/
 ```
-This project uses **Vite 7** on the client. The Docker image copies `client/dist/` into `public/` so the backend can serve it.
-Tip: In development, the Vite dev server runs on `5173`; the backend runs on `5000`.
 
 ## Key Features
 
-- **Project-based Organization**: Group photos by shoot, event, or any logical grouping
-- **Multi-format Support**: JPG, PNG, TIFF, and RAW files (CR2, NEF, ARW, DNG)
-- **Automatic Processing**: Background thumbnail and preview generation with real-time progress
-- **Tagging System**: Add custom tags for easy organization
-- **Keep/Discard Workflow**: Manage RAW+JPG pairs efficiently with commit/revert operations
-- **Unified Views**: All Photos (cross-project) and Project views with identical filtering and sorting
-- **Real-time Updates**: Live job progress via Server-Sent Events (SSE)
-- **Virtualized Grid**: Smooth scrolling and lazy loading for large photo collections
-- **Deep Linking**: Shareable URLs for specific photos and filtered views
-- **Public Galleries**: Create shared links for curated photo collections
+- **Project-based Organization**: Group photos by shoot/event
+- **Multi-format Support**: JPG, PNG, TIFF, RAW files
+- **Automatic Processing**: Background thumbnail/preview generation
+- **Tagging System**: Custom tags for organization
+- **Keep/Discard Workflow**: Manage RAW+JPG pairs with commit/revert
+- **Unified Views**: All Photos (cross-project) and Project views
+- **Real-time Updates**: Live job progress via SSE
+- **Virtualized Grid**: Smooth scrolling for large collections
+- **Deep Linking**: Shareable URLs for photos and filtered views
+- **Public Galleries**: Shared links for curated collections
+- **Batch Operations**: 90%+ reduction in API calls (50 photos = 1 call)
 
-For detailed feature descriptions, see `PROJECT_OVERVIEW.md`
+## API Quick Reference
 
-### Additional Features
+**Core Endpoints**:
+- `GET /api/projects` — List projects
+- `POST /api/projects` — Create project
+- `GET /api/projects/:folder/photos` — Paginated photos (with filters/sort)
+- `POST /api/projects/:folder/upload` — Upload files
+- `GET /api/photos` — Cross-project listing (All Photos)
+- `POST /api/photos/keep` — Update keep flags by photo_id
+- `POST /api/photos/move` — Move photos between projects
+- `GET /api/sse/stream` — Real-time updates (jobs + pending changes)
 
-- **Deep Linking**: URLs are the source of truth for viewer state and filters
-- **Drag & Drop Upload**: Intuitive file upload interface with conflict resolution
-- **Keyboard Shortcuts**: Fast navigation and actions (configurable)
-- **Secure Asset Serving**: Signed URLs for originals; public photos use rotating hashes
-- **Rate Limiting**: Comprehensive rate limits on all endpoints to prevent abuse
+**Asset Serving**:
+- `GET /api/projects/:folder/thumbnail/:filename` (public photos require `?hash=<hash>`)
+- `GET /api/projects/:folder/preview/:filename`
+- `GET /api/projects/:folder/image/:filename`
 
-### Session-only UI State
+See `project_docs/SCHEMA_DOCUMENTATION.md` for complete API reference.
 
-- The client persists UI state only for the duration of a browser tab session using a single `sessionStorage` key `session_ui_state`.
-- Persisted within session: window scroll (`windowY`) and main list scroll (`mainY`). Viewer state is no longer persisted; the URL is the single source of truth for deep links and current photo.
-- Restore uses a resilient retry loop.
-- State is cleared only when switching to a different project during the same session. Initial project selection after a reload does not clear it.
-- Legacy per-project `localStorage` APIs and migrations were removed. Use `client/src/utils/storage.js → getSessionState()/setSessionState()/clearSessionState()` and helpers `setSessionWindowY()`, `setSessionMainY()`.
+## Performance Optimizations
+
+**6 Focused Sprints** (Completed November 2025):
+
+| Sprint | Focus | Achievement |
+|--------|-------|-------------|
+| 1 | Database | 92% faster queries (13.39x speedup) |
+| 2 | Error Handling | Comprehensive structured logging |
+| 3 | SSE | 75% memory reduction |
+| 4 | Request Batching | 90%+ fewer API calls |
+| 5 | Image Processing | 40-50% faster with worker threads |
+| 6 | HTTP Compression | 60-80% bandwidth reduction |
+
+All optimizations maintain full backward compatibility and comprehensive test coverage.
+
+## Configuration
+
+Key settings in `config.json`:
+
+```json
+{
+  "uploader": {
+    "accepted_files": {
+      "extensions": ["jpg", "jpeg", "png", "tif", "tiff", "raw", "cr2", "nef", "arw", "dng"]
+    }
+  },
+  "processing": {
+    "thumbnail": { "maxDim": 200, "quality": 80 },
+    "preview": { "maxDim": 6000, "quality": 80 },
+    "workerCount": 4
+  },
+  "pipeline": {
+    "max_parallel_jobs": 1,
+    "priority_lane_slots": 1,
+    "priority_threshold": 90
+  }
+}
+```
+
+See `config.default.json` for all options.
+
+## Environment Variables
+
+**Required** (authentication):
+- `AUTH_ADMIN_BCRYPT_HASH` — Bcrypt hash of admin password
+- `AUTH_JWT_SECRET_ACCESS` — 256-bit secret for access tokens
+- `AUTH_JWT_SECRET_REFRESH` — 256-bit secret for refresh tokens
+
+**Optional**:
+- `AUTH_BCRYPT_COST` — Integer 8-14 (default 12)
+- `REQUIRE_SIGNED_DOWNLOADS` — Boolean (default true)
+- `DOWNLOAD_SECRET` — HMAC secret for signed URLs
+- `ALLOWED_ORIGINS` — Comma-separated CORS origins
+- `LOG_LEVEL` — `error|warn|info|debug` (default `info`)
+- `SSE_MAX_CONN_PER_IP` — Max SSE connections per IP (default 2)
+
+See `.env.example` for sample values.
 
 ## Maintenance
 
-Background maintenance keeps disk and database in sync via hourly automated tasks:
-- **Trash Cleanup**: Remove files older than 24h from `.trash`
-- **Orphaned Project Cleanup**: Detect and remove projects whose folders no longer exist
-- **Duplicate Resolution**: Rename cross-project filename collisions
-- **Manifest Checking**: Reconcile database with filesystem state
-- **Folder Scanning**: Discover new files and queue processing
+**Hourly Automated Tasks**:
+- Trash cleanup (24h TTL)
+- Orphaned project cleanup
+- Duplicate resolution
+- Folder alignment (sync display name → folder name)
+- Manifest checking (DB ↔ filesystem reconciliation)
+- Folder scanning (discover new files)
 
-**Manual Operations:**
-- `POST /api/projects/:folder/commit-changes` — Apply pending deletions (project-scoped)
+**Manual Operations**:
+- `POST /api/projects/:folder/commit-changes` — Apply pending deletions (project)
 - `POST /api/photos/commit-changes` — Apply pending deletions (cross-project)
 - `POST /api/projects/:folder/revert-changes` — Reset keep flags (non-destructive)
 
-For detailed maintenance workflows, see `JOBS_OVERVIEW.md`
+See `project_docs/JOBS_OVERVIEW.md` for detailed workflows.
 
 ## Common Issues
 
-**Port 5000 already in use**:
+**Port 5000 in use**:
 ```bash
 lsof -i :5000 -t | xargs -r kill
 ```
 
 **Frontend cache issues**:
 ```bash
-rm -rf client/node_modules/.vite
-cd client && npm run dev
+rm -rf client/node_modules/.vite && cd client && npm run dev
 ```
 
-**Node.js version issues**: Ensure you're using Node.js v22 LTS
+**Node version issues**: Ensure Node.js v22 LTS (`nvm use`)
 
-## Environment Variables
+**Thumbnails not generating**: Check worker loop running, Sharp installed
 
-- **`AUTH_ADMIN_BCRYPT_HASH`** – Required. Bcrypt hash representing the universal admin password. Generate with:
-  ```bash
-  AUTH_BCRYPT_COST=${AUTH_BCRYPT_COST:-12}
-  node -e "const bcrypt = require('bcrypt'); const cost = Number(process.env.AUTH_BCRYPT_COST || ${AUTH_BCRYPT_COST:-12}); bcrypt.hash(process.argv[1], cost).then(h => console.log(h));" "your-temp-password"
-  ```
-  (Install dev dependency `bcrypt` globally or run after project dependencies are installed; default cost is 12 if `AUTH_BCRYPT_COST` is unset.)
-- **`AUTH_JWT_SECRET_ACCESS`** – Required. Random 256-bit secret for signing 1h access tokens (e.g., `openssl rand -base64 32`).
-- **`AUTH_JWT_SECRET_REFRESH`** – Required. Separate secret for 7d refresh tokens. Rotate independently from access secret.
-- **`AUTH_BCRYPT_COST`** – Optional. Integer between 8 and 14 (default 12) controlling bcrypt work factor. Higher is slower but more resilient against brute force.
-- **`REQUIRE_SIGNED_DOWNLOADS`** (default: `true`) – Controls token verification for file downloads.
-- File acceptance is centralized in `server/utils/acceptance.js` and driven by `config.json` → `uploader.accepted_files` (extensions, mime_prefixes).
-- **`DOWNLOAD_SECRET`** – HMAC secret for signed URLs (change in production).
-- **`ALLOWED_ORIGINS`** – Comma-separated list of allowed CORS origins (e.g. `http://localhost:3000,https://app.example.com`).
-- **`THUMBNAIL_RATELIMIT_MAX`**, **`PREVIEW_RATELIMIT_MAX`**, **`IMAGE_RATELIMIT_MAX`**, **`ZIP_RATELIMIT_MAX`** – Asset rate limits (per IP per minute); see `config.json` → `rate_limits` for defaults.
-- **`PUBLIC_HASH_ROTATION_DAYS`** – Optional integer overriding `config.public_assets.hash_rotation_days` (default 21). Controls how often hashes are proactively rotated by `scheduler.js`.
-- **`PUBLIC_HASH_TTL_DAYS`** – Optional integer overriding `config.public_assets.hash_ttl_days` (default 28). Controls how long each hash remains valid before rotation.
+**SSE 429 errors (dev)**: Close duplicate browser tabs, or set `SSE_MAX_CONN_PER_IP=3`
 
-### Logging
+## Testing
 
-- Backend uses structured JSON logs via `server/utils/logger2.js`. Levels: `error`, `warn`, `info`, `debug`.
-- Each entry includes component (`cmp`), event (`evt`), and context (e.g., `project_id`, `project_folder`, `project_name`).
-- **`LOG_LEVEL`** (default: `info`) controls verbosity.
-- SSE limits for DoS hardening:
-  - **`SSE_MAX_CONN_PER_IP`** (default: `2`)
-  - **`SSE_IDLE_TIMEOUT_MS`** (default set in code)
+```bash
+# Run all tests
+npm test
 
-#### Asset Rate Limits (per IP per minute)
+# With coverage
+npm run test:coverage
 
-- These have config defaults in `config.json → rate_limits` and can be overridden via env:
-  - `THUMBNAIL_RATELIMIT_MAX` (default 600)
-  - `PREVIEW_RATELIMIT_MAX` (default 600)
-  - `IMAGE_RATELIMIT_MAX` (default 120) — applies to originals endpoints
-  - `ZIP_RATELIMIT_MAX` (default 30)
-  - See implementation in `server/routes/assets.js` and defaults in `config.default.json`.
+# Targeted run
+npm test -- server/routes/__tests__/projects.test.js
+```
 
-### Dev tips for SSE 429s
-
-- The client implements a global SSE singleton that survives Vite HMR via `globalThis/window`. If you still see transient 429s during hot reloads:
-  - Close duplicate browser tabs and hard-refresh the active one.
-  - Optionally raise `SSE_MAX_CONN_PER_IP=3` locally during development.
-  - Check the server logs for active connection counts in `server/routes/jobs.js`.
-
-See [SECURITY.md](SECURITY.md) for detailed security configuration.
-
-### Config merging behavior
-
-- On boot and on `POST /api/config`, the server merges missing keys from `config.default.json` into your `config.json` and persists them (see `server/services/config.js`).
-- This keeps `config.json` up-to-date with new defaults; if you track `config.json` in backups or audits, expect benign key additions over time.
+Tests require auth secrets (see `.env.example`). See `project_docs/TESTING_OVERVIEW.md` for details.
 
 ## Documentation
 
-Comprehensive documentation is available in the `project_docs/` directory:
+Comprehensive documentation in `project_docs/`:
 
-- **[PROJECT_OVERVIEW.md](project_docs/PROJECT_OVERVIEW.md)** - Architecture, core concepts, and development workflow
-- **[SCHEMA_DOCUMENTATION.md](project_docs/SCHEMA_DOCUMENTATION.md)** - Database schema, API contracts, and data relationships
-- **[JOBS_OVERVIEW.md](project_docs/JOBS_OVERVIEW.md)** - Job catalog, task definitions, and workflow compositions
-- **[SECURITY.md](SECURITY.md)** - Security implementation and best practices
-
-**Quick Tips:**
-- All backend routes use structured JSON logging (see `PROJECT_OVERVIEW.md` → Logging)
-- Destructive endpoints are rate-limited (10 req/5 min/IP)
-- File type acceptance is configured in `server/utils/acceptance.js`
-
-## Contributing
-
-For development setup, architecture details, API documentation, and contribution guidelines, see [PROJECT_OVERVIEW.md](project_docs/PROJECT_OVERVIEW.md).
+- **[PROJECT_OVERVIEW.md](project_docs/PROJECT_OVERVIEW.md)** — Architecture, core concepts, technology stack
+- **[SCHEMA_DOCUMENTATION.md](project_docs/SCHEMA_DOCUMENTATION.md)** — Database schema, API contracts
+- **[JOBS_OVERVIEW.md](project_docs/JOBS_OVERVIEW.md)** — Job pipeline, task definitions, priorities
+- **[SECURITY.md](SECURITY.md)** — Security implementation, authentication, rate limiting
 
 ## Containerization
 
-This repo includes production-ready container packaging.
+Production-ready Docker packaging included.
 
-**Build image**:
-
+**Build**:
 ```bash
 docker build -t nodejs-photo-manager:local .
 ```
 
-**Run with Docker**:
-
+**Run**:
 ```bash
 docker run --rm -it \
   -p 5000:5000 \
   -e NODE_ENV=production \
-  -e PORT=5000 \
   -e ALLOWED_ORIGINS=http://localhost:3000 \
-  -e DOWNLOAD_SECRET=dev-change-me \
+  -e DOWNLOAD_SECRET=change-me \
+  -e AUTH_ADMIN_BCRYPT_HASH="..." \
+  -e AUTH_JWT_SECRET_ACCESS="..." \
+  -e AUTH_JWT_SECRET_REFRESH="..." \
   -v $(pwd)/.projects:/app/.projects \
   -v $(pwd)/config.json:/app/config.json \
   nodejs-photo-manager:local
 ```
 
-Open http://localhost:5000
-
-**Run with docker-compose**:
-
+**Docker Compose**:
 ```bash
 docker compose up --build
 ```
 
-See `docker-compose.yml` for environment and volumes.
+See `docker-compose.yml` for configuration.
 
-### Image details
+## Contributing
 
-- Multi-stage build on `node:22-bookworm-slim`.
-- Installs `libvips` for `sharp` and toolchain for `better-sqlite3`.
-- Builds client (`client/dist`) and copies it into `public/` so the backend can serve it.
+For development setup, architecture details, and contribution guidelines, see [PROJECT_OVERVIEW.md](project_docs/PROJECT_OVERVIEW.md).
 
-### Environment variables
+## Security
 
-- `PORT` (default 5000)
-- `ALLOWED_ORIGINS` (comma-separated CORS allowlist)
-- `DOWNLOAD_SECRET` (must be strong in production)
-- `REQUIRE_SIGNED_DOWNLOADS` (default true)
-- `SSE_MAX_CONN_PER_IP`, `SSE_IDLE_TIMEOUT_MS`
+- **Authentication**: Admin-only access with bcrypt + JWT
+- **Rate Limiting**: All destructive endpoints (10 req/5 min/IP)
+- **Asset Protection**: Signed URLs for originals, rotating hashes for public photos
+- **CORS**: Configurable origin allowlist
+- **File Validation**: Server-side type checking
 
-### Volumes
+See [SECURITY.md](SECURITY.md) for complete security documentation.
 
-- `.projects` persisted to keep user data outside the container
-- `config.json` bind-mounted for runtime configuration
+---
 
-### Production notes
-
-- Set a strong `DOWNLOAD_SECRET` and strict `ALLOWED_ORIGINS`.
-- Prefer running as a non-root user (image defaults to `node`).
-- Optionally enable read-only root FS and tmpfs for `/tmp`.
-- Frontend can be served by the Node app or a reverse proxy; expose port 5000.
+**Note**: Change default auth secrets before deploying to production. See `.env.example` for generation commands.
