@@ -2,6 +2,7 @@
 // Provides enqueue, claim, progress updates, and listing helpers
 
 const { getDb, withTransaction } = require('../db');
+const stmtCache = require('./preparedStatements');
 
 function nowISO() {
   return new Date().toISOString();
@@ -34,7 +35,8 @@ function rowToJob(row) {
 
 function getById(id) {
   const db = getDb();
-  const row = db.prepare(`SELECT * FROM jobs WHERE id = ?`).get(id);
+  const stmt = stmtCache.get(db, 'jobs:getById', 'SELECT * FROM jobs WHERE id = ?');
+  const row = stmt.get(id);
   return rowToJob(row);
 }
 
@@ -45,7 +47,10 @@ function listByProject(project_id, { limit = 50, offset = 0, status, type } = {}
   if (status) { conds.push('status = ?'); params.push(status); }
   if (type) { conds.push('type = ?'); params.push(type); }
   const where = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
-  const rows = db.prepare(`SELECT * FROM jobs ${where} ORDER BY created_at DESC LIMIT ? OFFSET ?`).all(...params, limit, offset);
+  const cacheKey = `jobs:listByProject:${conds.join(':')}`; 
+  const sql = `SELECT * FROM jobs ${where} ORDER BY created_at DESC LIMIT ? OFFSET ?`;
+  const stmt = stmtCache.get(db, cacheKey, sql);
+  const rows = stmt.all(...params, limit, offset);
   return rows.map(rowToJob);
 }
 
@@ -57,7 +62,10 @@ function listByTenant(tenant_id, { limit = 50, offset = 0, status, type, scope }
   if (type) { conds.push('type = ?'); params.push(type); }
   if (scope) { conds.push('scope = ?'); params.push(scope); }
   const where = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
-  const rows = db.prepare(`SELECT * FROM jobs ${where} ORDER BY created_at DESC LIMIT ? OFFSET ?`).all(...params, limit, offset);
+  const cacheKey = `jobs:listByTenant:${conds.join(':')}`;
+  const sql = `SELECT * FROM jobs ${where} ORDER BY created_at DESC LIMIT ? OFFSET ?`;
+  const stmt = stmtCache.get(db, cacheKey, sql);
+  const rows = stmt.all(...params, limit, offset);
   return rows.map(rowToJob);
 }
 
@@ -66,9 +74,10 @@ function enqueue({ tenant_id, project_id = null, type, payload = null, progress_
   const created_at = nowISO();
   if (!scope) throw new Error('scope is required');
   const effectiveScope = scope;
-  const info = db.prepare(`INSERT INTO jobs (tenant_id, project_id, type, status, created_at, progress_total, progress_done, payload_json, attempts, priority, scope)
+  const stmt = stmtCache.get(db, 'jobs:enqueue', `INSERT INTO jobs (tenant_id, project_id, type, status, created_at, progress_total, progress_done, payload_json, attempts, priority, scope)
     VALUES (?, ?, ?, 'queued', ?, ?, 0, ?, 0, ?, ?)
-  `).run(tenant_id, project_id, type, created_at, progress_total, payload ? JSON.stringify(payload) : null, priority, effectiveScope);
+  `);
+  const info = stmt.run(tenant_id, project_id, type, created_at, progress_total, payload ? JSON.stringify(payload) : null, priority, effectiveScope);
   return getById(info.lastInsertRowid);
 }
 
@@ -97,7 +106,7 @@ function enqueueWithItems({ tenant_id, project_id = null, type, payload = null, 
     const job = enqueue({ tenant_id, project_id, type, payload, progress_total: items.length, priority, scope });
     const db = getDb();
     const now = nowISO();
-    const stmt = db.prepare(`INSERT INTO job_items (tenant_id, job_id, photo_id, filename, status, message, created_at, updated_at)
+    const stmt = stmtCache.get(db, 'jobs:insertJobItem', `INSERT INTO job_items (tenant_id, job_id, photo_id, filename, status, message, created_at, updated_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `);
     for (const it of items) {
@@ -116,17 +125,22 @@ function claimNext({ workerId = null, tenant_id = null, minPriority = null, maxP
   if (minPriority != null) { conds.push('priority >= ?'); params.push(minPriority); }
   if (maxPriority != null) { conds.push('priority <= ?'); params.push(maxPriority); }
   const where = `WHERE ${conds.join(' AND ')}`;
-  const candidate = db.prepare(`SELECT id FROM jobs ${where} ORDER BY priority DESC, created_at ASC LIMIT 1`).get(...params);
+  const selectCacheKey = `jobs:claimNext:select:${conds.join(':')}`;
+  const selectSql = `SELECT id FROM jobs ${where} ORDER BY priority DESC, created_at ASC LIMIT 1`;
+  const selectStmt = stmtCache.get(db, selectCacheKey, selectSql);
+  const candidate = selectStmt.get(...params);
   if (!candidate) return null;
   const started = nowISO();
-  const info = db.prepare(`UPDATE jobs SET status='running', started_at=?, worker_id=?, heartbeat_at=? WHERE id = ? AND status='queued'`).run(started, workerId, started, candidate.id);
+  const updateStmt = stmtCache.get(db, 'jobs:claimNext:update', "UPDATE jobs SET status='running', started_at=?, worker_id=?, heartbeat_at=? WHERE id = ? AND status='queued'");
+  const info = updateStmt.run(started, workerId, started, candidate.id);
   if (info.changes === 1) return getById(candidate.id);
   return null; // lost the race
 }
 
 function heartbeat(id) {
   const db = getDb();
-  db.prepare(`UPDATE jobs SET heartbeat_at=? WHERE id = ? AND status='running'`).run(nowISO(), id);
+  const stmt = stmtCache.get(db, 'jobs:heartbeat', "UPDATE jobs SET heartbeat_at=? WHERE id = ? AND status='running'");
+  stmt.run(nowISO(), id);
 }
 
 function updateProgress(id, { done, total }) {
@@ -137,7 +151,10 @@ function updateProgress(id, { done, total }) {
   if (typeof total === 'number') { sets.push('progress_total = ?'); params.push(total); }
   if (!sets.length) return getById(id);
   params.push(id);
-  db.prepare(`UPDATE jobs SET ${sets.join(', ')} WHERE id = ?`).run(...params);
+  const cacheKey = `jobs:updateProgress:${sets.join(':')}`;
+  const sql = `UPDATE jobs SET ${sets.join(', ')} WHERE id = ?`;
+  const stmt = stmtCache.get(db, cacheKey, sql);
+  stmt.run(...params);
   return getById(id);
 }
 
@@ -145,26 +162,30 @@ function updatePayload(id, payload) {
   const db = getDb();
   const now = nowISO();
   const json = payload ? JSON.stringify(payload) : null;
-  db.prepare(`UPDATE jobs SET payload_json = ?, updated_at = ? WHERE id = ?`).run(json, now, id);
+  const stmt = stmtCache.get(db, 'jobs:updatePayload', 'UPDATE jobs SET payload_json = ?, updated_at = ? WHERE id = ?');
+  stmt.run(json, now, id);
   return getById(id);
 }
 
 function complete(id) {
   const db = getDb();
-  db.prepare(`UPDATE jobs SET status='completed', finished_at=? WHERE id = ?`).run(nowISO(), id);
+  const stmt = stmtCache.get(db, 'jobs:complete', "UPDATE jobs SET status='completed', finished_at=? WHERE id = ?");
+  stmt.run(nowISO(), id);
   return getById(id);
 }
 
 function fail(id, error_message) {
   const db = getDb();
   const now = nowISO();
-  db.prepare(`UPDATE jobs SET status='failed', error_message=?, finished_at=?, last_error_at=? WHERE id = ?`).run(String(error_message || '').slice(0, 1000), now, now, id);
+  const stmt = stmtCache.get(db, 'jobs:fail', "UPDATE jobs SET status='failed', error_message=?, finished_at=?, last_error_at=? WHERE id = ?");
+  stmt.run(String(error_message || '').slice(0, 1000), now, now, id);
   return getById(id);
 }
 
 function cancel(id) {
   const db = getDb();
-  db.prepare(`UPDATE jobs SET status='canceled', finished_at=? WHERE id = ?`).run(nowISO(), id);
+  const stmt = stmtCache.get(db, 'jobs:cancel', "UPDATE jobs SET status='canceled', finished_at=? WHERE id = ?");
+  stmt.run(nowISO(), id);
   return getById(id);
 }
 
@@ -172,23 +193,27 @@ function cancelByProject(project_id) {
   const db = getDb();
   const now = nowISO();
   // Best-effort: mark any non-terminal jobs for this project as canceled
-  db.prepare(`UPDATE jobs SET status='canceled', finished_at=? WHERE project_id = ? AND status IN ('queued','running')`).run(now, project_id);
+  const stmt = stmtCache.get(db, 'jobs:cancelByProject', "UPDATE jobs SET status='canceled', finished_at=? WHERE project_id = ? AND status IN ('queued','running')");
+  stmt.run(now, project_id);
 }
 
 function listItems(job_id) {
   const db = getDb();
-  return db.prepare(`SELECT * FROM job_items WHERE job_id = ? ORDER BY id ASC`).all(job_id);
+  const stmt = stmtCache.get(db, 'jobs:listItems', 'SELECT * FROM job_items WHERE job_id = ? ORDER BY id ASC');
+  return stmt.all(job_id);
 }
 
 function updateItemStatus(item_id, { status, message = null }) {
   const db = getDb();
   const now = nowISO();
-  db.prepare(`UPDATE job_items SET status=?, message=?, updated_at=? WHERE id = ?`).run(status, message, now, item_id);
+  const stmt = stmtCache.get(db, 'jobs:updateItemStatus', 'UPDATE job_items SET status=?, message=?, updated_at=? WHERE id = ?');
+  stmt.run(status, message, now, item_id);
 }
 
 function nextPendingItem(job_id) {
   const db = getDb();
-  return db.prepare(`SELECT * FROM job_items WHERE job_id = ? AND status = 'pending' ORDER BY id ASC LIMIT 1`).get(job_id);
+  const stmt = stmtCache.get(db, 'jobs:nextPendingItem', "SELECT * FROM job_items WHERE job_id = ? AND status = 'pending' ORDER BY id ASC LIMIT 1");
+  return stmt.get(job_id);
 }
 
 module.exports = {
@@ -214,31 +239,36 @@ module.exports = {
 // ---- Retry/Recovery helpers ----
 function setDefaultMaxAttempts(id, maxAttempts) {
   const db = getDb();
-  db.prepare(`UPDATE jobs SET max_attempts = COALESCE(max_attempts, ?) WHERE id = ?`).run(maxAttempts, id);
+  const stmt = stmtCache.get(db, 'jobs:setDefaultMaxAttempts', 'UPDATE jobs SET max_attempts = COALESCE(max_attempts, ?) WHERE id = ?');
+  stmt.run(maxAttempts, id);
 }
 
 function incrementAttempts(id) {
   const db = getDb();
-  db.prepare(`UPDATE jobs SET attempts = COALESCE(attempts, 0) + 1 WHERE id = ?`).run(id);
+  const stmt = stmtCache.get(db, 'jobs:incrementAttempts', 'UPDATE jobs SET attempts = COALESCE(attempts, 0) + 1 WHERE id = ?');
+  stmt.run(id);
 }
 
 function clearRunFields(id) {
   const db = getDb();
-  db.prepare(`UPDATE jobs SET started_at=NULL, finished_at=NULL, worker_id=NULL, heartbeat_at=NULL WHERE id = ?`).run(id);
+  const stmt = stmtCache.get(db, 'jobs:clearRunFields', 'UPDATE jobs SET started_at=NULL, finished_at=NULL, worker_id=NULL, heartbeat_at=NULL WHERE id = ?');
+  stmt.run(id);
 }
 
 function requeue(id) {
   const db = getDb();
-  db.prepare(`UPDATE jobs SET status='queued', started_at=NULL, finished_at=NULL, worker_id=NULL, heartbeat_at=NULL WHERE id = ?`).run(id);
+  const stmt = stmtCache.get(db, 'jobs:requeue', "UPDATE jobs SET status='queued', started_at=NULL, finished_at=NULL, worker_id=NULL, heartbeat_at=NULL WHERE id = ?");
+  stmt.run(id);
   return getById(id);
 }
 
 function requeueStaleRunning({ staleSeconds = 60 } = {}) {
   const db = getDb();
-  const rows = db.prepare(`SELECT id FROM jobs WHERE status='running' AND heartbeat_at IS NOT NULL AND (strftime('%s','now') - strftime('%s', heartbeat_at)) > ?`).all(staleSeconds);
+  const selectStmt = stmtCache.get(db, 'jobs:requeueStale:select', "SELECT id FROM jobs WHERE status='running' AND heartbeat_at IS NOT NULL AND (strftime('%s','now') - strftime('%s', heartbeat_at)) > ?");
+  const rows = selectStmt.all(staleSeconds);
   const ids = rows.map(r => r.id);
-  const stmt = db.prepare(`UPDATE jobs SET status='queued', started_at=NULL, finished_at=NULL, worker_id=NULL, heartbeat_at=NULL WHERE id = ?`);
-  const trx = db.transaction((arr) => { for (const i of arr) stmt.run(i); });
+  const updateStmt = stmtCache.get(db, 'jobs:requeueStale:update', "UPDATE jobs SET status='queued', started_at=NULL, finished_at=NULL, worker_id=NULL, heartbeat_at=NULL WHERE id = ?");
+  const trx = db.transaction((arr) => { for (const i of arr) updateStmt.run(i); });
   trx(ids);
   return ids;
 }

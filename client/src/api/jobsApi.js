@@ -71,6 +71,7 @@ export function openJobStream(onMessage) {
       ? new EventSourcePolyfill('/api/jobs/stream', {
           headers: { Authorization: `Bearer ${token}` },
           withCredentials: true,
+          heartbeatTimeout: 120000, // 2 minutes (server sends heartbeat every 25s)
         })
       : new EventSource('/api/jobs/stream');
     __devLog('[SSE] connecting to /api/jobs/stream ...');

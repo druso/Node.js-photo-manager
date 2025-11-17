@@ -95,14 +95,26 @@ router.get('/jobs/stream', (req, res) => {
   const off = onJobUpdate(send);
   // Heartbeat every 25s to keep intermediaries alive
   const heartbeat = setInterval(() => {
-    try { res.write(`: ping\n\n`); } catch (_) {}
+    try {
+      res.write(`: ping\n\n`);
+    } catch (err) {
+      log.debug('sse_heartbeat_write_failed', { error: err.message });
+    }
   }, 25 * 1000);
 
   // Idle timeout: close after 5 minutes to prevent pinned resources
   const idleTimeoutMs = Number(process.env.SSE_IDLE_TIMEOUT_MS || (5 * 60 * 1000));
   const idleTimer = setTimeout(() => {
-    try { res.write(`event: bye\ndata: {"reason":"idle_timeout"}\n\n`); } catch (_) {}
-    try { res.end(); } catch (_) {}
+    try {
+      res.write(`event: bye\ndata: {"reason":"idle_timeout"}\n\n`);
+    } catch (err) {
+      log.debug('sse_bye_write_failed', { error: err.message });
+    }
+    try {
+      res.end();
+    } catch (err) {
+      log.debug('sse_end_failed', { error: err.message });
+    }
   }, idleTimeoutMs);
 
   let cleanupDone = false;
@@ -119,7 +131,11 @@ router.get('/jobs/stream', (req, res) => {
   req.on('close', cleanup);
 
   // initial heartbeat and hello
-  try { res.write(`: ping\n\n`); } catch (_) {}
+  try {
+    res.write(`: ping\n\n`);
+  } catch (err) {
+    log.debug('sse_initial_ping_failed', { error: err.message });
+  }
   send({ type: 'hello' });
 });
 

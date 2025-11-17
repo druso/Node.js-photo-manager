@@ -62,7 +62,8 @@
 
 **project_delete** (scope: `project`)
 - Steps: `project_stop_processes` (100), `project_delete_files` (100), `project_cleanup_db` (95)
-- Purpose: Orchestrated project deletion
+- Purpose: Orchestrated project deletion (immediate removal, no soft-delete)
+- Triggered by: `DELETE /api/projects/:id` endpoint
 
 ### Cross-Project Tasks
 
@@ -77,9 +78,12 @@
 ### Global Tasks
 
 **maintenance_global** (scope: `global`)
-- Steps: `trash_maintenance` (100), `orphaned_project_cleanup` (99), `duplicate_resolution` (98), `folder_alignment` (96), `manifest_check` (95), `folder_check` (95), `manifest_cleaning` (80)
+- Steps: `trash_maintenance` (100), `orphaned_project_cleanup` (99), `duplicate_resolution` (98), `folder_alignment` (96), `manifest_check` (95), `folder_check` (95), `cache_validation` (85), `manifest_cleaning` (80)
 - Purpose: System-wide hourly maintenance
 - Trigger: Scheduled hourly via `scheduler.js`
+- **orphaned_project_cleanup**: Removes projects whose folders no longer exist (immediate removal, no soft-delete)
+- **folder_alignment**: Three-way sync with `project_name` as source of truth, aligns `project_folder` and `manifest.name`
+- **cache_validation**: Validates derivative cache consistency, auto-regenerates missing derivatives
 
 **project_scavenge_global** (scope: `global`)
 - Steps: `project_scavenge` (100)
@@ -99,6 +103,11 @@
 - Purpose: Generate thumbnails and previews
 - Payload: `{ force?: boolean, filenames?: string[] }`
 - Features: Parallel processing (4 threads), MD5 caching, progressive JPEG
+- Status handling: Generates derivatives for photos with status `'pending'`, `'failed'`, `'missing'`, or null
+- Cache behavior:
+  - `force=true`: Invalidates cache before generation (user-initiated regeneration)
+  - `force=false`: Respects cache, only generates if cache miss or status requires it
+- Triggered by: User actions, upload postprocessing, image moves, or maintenance auto-regeneration
 
 **upload_postprocess**
 - Worker: `derivativesWorker.runGenerateDerivatives()` (itemized)
@@ -142,6 +151,18 @@
 - Trigger: Hourly as part of `maintenance_global` (priority 96)
 - Safety: Skips missing sources or colliding targets
 - Emits: `folder_renamed` SSE event
+
+**cache_validation**
+- Worker: `maintenanceWorker.runDerivativeCacheValidation()`
+- Purpose: Validate derivative cache consistency and auto-regenerate missing derivatives
+- Trigger: Hourly as part of `maintenance_global` (priority 85)
+- Behavior:
+  - Checks if cached derivatives actually exist on disk
+  - Invalidates stale cache entries when files are missing
+  - Updates database status to `'missing'` for missing derivatives
+  - **Auto-regeneration**: Automatically enqueues `generate_derivatives` jobs for photos with `thumbnail_status='missing'` or `preview_status='missing'`
+- Features: Cursor-based pagination (configurable chunk size), self-healing system
+- Configuration: `maintenance.cache_validation_chunk_size` (default 1000)
 
 **folder_discovery**
 - Worker: `folderDiscoveryWorker.runFolderDiscovery()`
@@ -217,7 +238,8 @@
 4. `folder_alignment` (96) — Align folder names
 5. `manifest_check` (95) — Reconcile DB ↔ filesystem
 6. `folder_check` (95) — Discover new files
-7. `manifest_cleaning` (80) — Remove orphaned records
+7. `cache_validation` (85) — Validate derivative cache, auto-regenerate missing
+8. `manifest_cleaning` (80) — Remove orphaned records
 
 **Scheduler**: `server/services/scheduler.js`
 

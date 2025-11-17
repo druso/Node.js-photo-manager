@@ -96,16 +96,34 @@ export class ProjectNavigationService {
     this.fetchProjectData(project.folder);
     this.setSelectedPhotos(new Set()); // Clear selection when switching projects
     
-    // Sync URL to project base when not in All Photos mode, unless we are in a pending deep link open
+    // Sync URL to project base, unless we are in a pending deep link open
+    // Note: We use project.folder directly instead of checking view.project_filter
+    // because the state update from updateProjectFilter() above is async
     try {
-      if (this.view?.project_filter !== null && project?.folder) {
+      if (project?.folder) {
         const pending = this.pendingOpenRef.current;
         const isPendingDeepLink = !!(pending && pending.folder === project.folder);
         if (!isPendingDeepLink) {
-          window.history.pushState({}, '', `/${encodeURIComponent(project.folder)}`);
+          const newUrl = `/${encodeURIComponent(project.folder)}`;
+          console.log('[ProjectNav] Updating URL to:', newUrl, { 
+            projectFolder: project.folder,
+            currentUrl: window.location.pathname
+          });
+          window.history.pushState({}, '', newUrl);
+        } else {
+          console.log('[ProjectNav] Skipping URL update (pending deep link):', { 
+            projectFolder: project.folder,
+            pending
+          });
         }
+      } else {
+        console.log('[ProjectNav] Skipping URL update (no project folder):', {
+          projectFolder: project?.folder
+        });
       }
-    } catch {}
+    } catch (err) {
+      console.error('[ProjectNav] URL update failed:', err);
+    }
   }
 
   toggleAllMode() {

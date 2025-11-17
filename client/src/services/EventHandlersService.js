@@ -16,6 +16,7 @@ export class EventHandlersService {
     setPendingSelectProjectRef,
     
     // Data
+    selectedProject,
     projects,
     projectData,
     filteredProjectData,
@@ -36,6 +37,7 @@ export class EventHandlersService {
     this.setViewerState = setViewerState;
     this.setViewerList = setViewerList;
     this.setPendingSelectProjectRef = setPendingSelectProjectRef;
+    this.selectedProject = selectedProject;
     this.projects = projects;
     this.projectData = projectData;
     this.filteredProjectData = filteredProjectData;
@@ -76,7 +78,8 @@ export class EventHandlersService {
   }
 
   handlePhotosUploaded() {
-    const currentFolder = this.projects?.find(p => p.folder === this.ALL_PROJECT_SENTINEL.folder)?.folder;
+    // Refresh the currently selected project after upload completes
+    const currentFolder = this.selectedProject?.folder;
     if (currentFolder && currentFolder !== this.ALL_PROJECT_SENTINEL.folder) {
       const reload = this.fetchProjectData(currentFolder);
       Promise.resolve(reload)
@@ -118,8 +121,8 @@ export class EventHandlersService {
   }
 
   handleProjectDeleted() {
-    // Force page refresh to ensure clean state after project deletion
-    window.location.reload();
+    // Navigate to /all after project deletion to avoid 404
+    window.location.href = '/all';
   }
 
   handleProjectRenamed(updated) {
@@ -250,6 +253,7 @@ export function useEventHandlers({
     setViewerState,
     setViewerList,
     setPendingSelectProjectRef,
+    selectedProject,
     projects,
     projectData,
     filteredProjectData,

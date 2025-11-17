@@ -25,9 +25,7 @@ function splitExtSets() {
 }
 
 function listActiveProjects() {
-  return projectsRepo
-    .list()
-    .filter(project => !project.status || project.status !== 'canceled');
+  return projectsRepo.list();
 }
 
 function getProjectsForJob(job) {
@@ -480,11 +478,12 @@ async function runDuplicateResolution(job) {
 
 /**
  * Align folder names with project names
- * Detects mismatches between project_name and project_folder, renames folders to match
+ * Three-way sync: project_name (DB) is source of truth, aligns folder and manifest
+ * Also syncs manifest.name if it doesn't match project_name
  */
 async function runFolderAlignment(job) {
   const { generateUniqueFolderName } = require('../../utils/projects');
-  const { writeManifest } = require('../projectManifest');
+  const { writeManifest, readManifest } = require('../projectManifest');
   const { getProjectPath } = require('../fsUtils');
   
   const projects = getProjectsForJob(job);
@@ -492,15 +491,24 @@ async function runFolderAlignment(job) {
 
   for (const project of projects) {
     try {
-      // Generate expected folder name from project name
-      const expectedFolder = generateUniqueFolderName(project.project_name);
+      const dbName = project.project_name;
+      const dbFolder = project.project_folder;
       
-      // If folder already matches, skip
-      if (project.project_folder === expectedFolder) {
-        continue;
+      // Read manifest to check three-way consistency
+      const manifest = readManifest(dbFolder);
+      const manifestName = manifest?.name;
+      
+      // Check if all three are in sync
+      const allInSync = (dbName === dbFolder && dbName === manifestName);
+      
+      if (allInSync) {
+        continue; // Perfect sync, nothing to do
       }
       
-      const oldPath = getProjectPath(project.project_folder);
+      // Generate expected folder name from project name (source of truth)
+      const expectedFolder = generateUniqueFolderName(dbName);
+      
+      const oldPath = getProjectPath(dbFolder);
       const newPath = getProjectPath(expectedFolder);
       
       // Safety checks
@@ -513,45 +521,60 @@ async function runFolderAlignment(job) {
         continue;
       }
       
-      if (await fs.pathExists(newPath)) {
-        log.warn('folder_alignment_target_exists', {
-          ...projectLogContext(project),
-          expected_folder: expectedFolder,
-          note: 'Target folder already exists, skipping to avoid collision'
-        });
-        continue;
+      // If folder needs renaming
+      let folderRenamed = false;
+      if (dbFolder !== expectedFolder) {
+        if (await fs.pathExists(newPath)) {
+          log.warn('folder_alignment_target_exists', {
+            ...projectLogContext(project),
+            expected_folder: expectedFolder,
+            note: 'Target folder already exists, skipping folder rename'
+          });
+        } else {
+          // Perform atomic rename
+          await fs.rename(oldPath, newPath);
+          
+          // Update database
+          projectsRepo.updateFolder(project.id, expectedFolder);
+          
+          folderRenamed = true;
+          
+          log.info('folder_renamed', {
+            project_id: project.id,
+            project_name: dbName,
+            old_folder: dbFolder,
+            new_folder: expectedFolder
+          });
+          
+          // Emit SSE event for UI update
+          emitJobUpdate({
+            type: 'folder_renamed',
+            project_id: project.id,
+            old_folder: dbFolder,
+            new_folder: expectedFolder,
+            project_name: dbName
+          });
+        }
       }
       
-      // Perform atomic rename
-      await fs.rename(oldPath, newPath);
-      
-      // Update database
-      projectsRepo.updateFolder(project.id, expectedFolder);
-      
-      // Update manifest in new location
-      writeManifest(expectedFolder, {
-        name: project.project_name,
+      // Always sync manifest to match project_name (source of truth)
+      const finalFolder = folderRenamed ? expectedFolder : dbFolder;
+      writeManifest(finalFolder, {
+        name: dbName,  // Use DB name as canonical
         id: project.id,
         created_at: project.created_at
       });
       
+      if (manifestName !== dbName) {
+        log.info('manifest_name_synced', {
+          project_id: project.id,
+          folder: finalFolder,
+          old_manifest_name: manifestName,
+          new_manifest_name: dbName
+        });
+      }
+      
       totalAligned++;
-      
-      log.info('folder_aligned', {
-        project_id: project.id,
-        project_name: project.project_name,
-        old_folder: project.project_folder,
-        new_folder: expectedFolder
-      });
-      
-      // Emit SSE event for UI update
-      emitJobUpdate({
-        type: 'folder_renamed',
-        project_id: project.id,
-        old_folder: project.project_folder,
-        new_folder: expectedFolder,
-        project_name: project.project_name
-      });
       
     } catch (err) {
       log.error('folder_alignment_failed', {
@@ -572,13 +595,11 @@ async function runFolderAlignment(job) {
 
 /**
  * Clean up orphaned projects
- * Detects projects whose folders no longer exist on disk and marks them as canceled
- * or removes them entirely if already canceled
+ * Detects projects whose folders no longer exist on disk and removes them immediately
  */
 async function runOrphanedProjectCleanup(job) {
   const { getProjectPath } = require('../fsUtils');
   const projects = getProjectsForJob(job);
-  let totalCanceled = 0;
   let totalRemoved = 0;
 
   for (const project of projects) {
@@ -587,41 +608,21 @@ async function runOrphanedProjectCleanup(job) {
       const folderExists = await fs.pathExists(projectPath);
 
       if (!folderExists) {
-        const isCanceled = project.status === 'canceled';
+        // Folder missing - remove project from database immediately
+        log.info('orphaned_project_removing', {
+          ...projectLogContext(project),
+          reason: 'Folder does not exist'
+        });
         
-        if (isCanceled) {
-          // Already canceled and folder gone - safe to remove from database
-          log.info('orphaned_project_removing', {
-            ...projectLogContext(project),
-            reason: 'Folder does not exist and project already canceled'
-          });
-          
-          projectsRepo.remove(project.id);
-          totalRemoved++;
-          
-          emitJobUpdate({
-            type: 'project_removed',
-            project_id: project.id,
-            project_folder: project.project_folder,
-            reason: 'orphaned'
-          });
-        } else {
-          // Active project with missing folder - mark as canceled
-          log.warn('orphaned_project_canceling', {
-            ...projectLogContext(project),
-            reason: 'Folder does not exist'
-          });
-          
-          projectsRepo.setStatus(project.id, 'canceled');
-          totalCanceled++;
-          
-          emitJobUpdate({
-            type: 'project_canceled',
-            project_id: project.id,
-            project_folder: project.project_folder,
-            reason: 'orphaned'
-          });
-        }
+        projectsRepo.remove(project.id);
+        totalRemoved++;
+        
+        emitJobUpdate({
+          type: 'project_removed',
+          project_id: project.id,
+          project_folder: project.project_folder,
+          reason: 'orphaned'
+        });
       }
     } catch (err) {
       log.error('orphaned_project_cleanup_failed', {
@@ -634,13 +635,199 @@ async function runOrphanedProjectCleanup(job) {
   if (projects.length > 1) {
     log.info('orphaned_project_cleanup_summary', {
       projects_checked: projects.length,
-      canceled: totalCanceled,
       removed: totalRemoved
     });
-  } else if (totalCanceled > 0 || totalRemoved > 0) {
+  } else if (totalRemoved > 0) {
     log.info('orphaned_project_cleanup_summary', {
-      canceled: totalCanceled,
       removed: totalRemoved
+    });
+  }
+}
+
+/**
+ * Validate derivative cache consistency
+ * Checks if cached derivatives actually exist on disk and invalidates stale cache entries
+ */
+async function runDerivativeCacheValidation(job) {
+  const derivativeCache = require('../derivativeCache');
+  const { getProjectPath } = require('../fsUtils');
+  const CHUNK_SIZE = config.maintenance?.cache_validation_chunk_size || 1000;
+  
+  const projects = getProjectsForJob(job);
+  let totalValidated = 0;
+  let totalInvalidated = 0;
+  
+  for (const project of projects) {
+    try {
+      const projectPath = getProjectPath(project.project_folder);
+      const thumbDir = path.join(projectPath, '.thumb');
+      const previewDir = path.join(projectPath, '.preview');
+      
+      let cursor = null;
+      let projectInvalidated = 0;
+      let projectValidated = 0;
+      
+      // Stream through photos using cursor-based pagination
+      do {
+        const page = photosRepo.listPaged({
+          project_id: project.id,
+          limit: CHUNK_SIZE,
+          cursor: cursor,
+          sort: 'id',
+          dir: 'ASC'
+        });
+        
+        // Check each photo's cache entry
+        for (const photo of page.items) {
+          const cached = derivativeCache.getCached(photo.id);
+          if (!cached) {
+            projectValidated++;
+            continue; // No cache entry, nothing to validate
+          }
+          
+          // Check if cached derivatives actually exist on disk
+          let thumbExists = false;
+          let previewExists = false;
+          
+          if (cached.thumbnail) {
+            const thumbPath = path.join(thumbDir, `${photo.filename}.jpg`);
+            thumbExists = await fs.pathExists(thumbPath);
+          }
+          
+          if (cached.preview) {
+            const previewPath = path.join(previewDir, `${photo.filename}.jpg`);
+            previewExists = await fs.pathExists(previewPath);
+          }
+          
+          // If cache says derivatives exist but they don't, invalidate cache
+          const cacheInvalid = (cached.thumbnail && !thumbExists) || (cached.preview && !previewExists);
+          
+          if (cacheInvalid) {
+            derivativeCache.invalidate(photo.id);
+            projectInvalidated++;
+            
+            // Also update database status to reflect missing derivatives
+            const updates = {};
+            if (cached.thumbnail && !thumbExists) {
+              updates.thumbnail_status = 'missing';
+            }
+            if (cached.preview && !previewExists) {
+              updates.preview_status = 'missing';
+            }
+            
+            if (Object.keys(updates).length > 0) {
+              photosRepo.updateDerivativeStatus(photo.id, updates);
+            }
+            
+            log.warn('cache_invalidated_missing_files', {
+              ...projectLogContext(project),
+              photo_id: photo.id,
+              filename: photo.filename,
+              thumb_missing: cached.thumbnail && !thumbExists,
+              preview_missing: cached.preview && !previewExists
+            });
+          } else {
+            projectValidated++;
+          }
+        }
+        
+        // Update job progress
+        if (job.id && page.total) {
+          jobsRepo.updateProgress(job.id, { 
+            done: projectValidated + projectInvalidated, 
+            total: page.total 
+          });
+        }
+        
+        // Move to next page
+        cursor = page.nextCursor;
+        
+        // Yield to event loop between chunks
+        await new Promise(resolve => setImmediate(resolve));
+        
+      } while (cursor);
+      
+      totalValidated += projectValidated;
+      totalInvalidated += projectInvalidated;
+      
+      // Check for photos with missing derivatives (regardless of cache invalidation)
+      // This catches cases where derivatives were never generated or manually deleted
+      let missingPhotos = [];
+      try {
+        missingPhotos = photosRepo.listPaged({
+          project_id: project.id,
+          limit: 10000,
+          sort: 'id',
+          dir: 'ASC'
+        }).items.filter(p => 
+          p.thumbnail_status === 'missing' || p.preview_status === 'missing'
+        );
+      } catch (err) {
+        log.error('cache_validation_missing_check_failed', {
+          ...projectLogContext(project),
+          error: err.message
+        });
+      }
+      
+      log.info('cache_validation_summary', {
+        ...projectLogContext(project),
+        validated: projectValidated,
+        invalidated: projectInvalidated,
+        missing_derivatives: missingPhotos.length
+      });
+      
+      if (projectInvalidated > 0) {
+        emitJobUpdate({
+          type: 'cache_validated',
+          project_folder: project.project_folder,
+          invalidated: projectInvalidated
+        });
+      }
+      
+      // Trigger derivative generation for photos with missing derivatives
+      if (missingPhotos.length > 0) {
+        try {
+          const photoIds = missingPhotos.map(p => p.id);
+          const derivJob = jobsRepo.enqueueWithItems({
+            tenant_id: job.tenant_id,
+            project_id: null,
+            type: 'generate_derivatives',
+            payload: {
+              task_id: `cache-regen-${project.id}`,
+              task_type: 'generate_derivatives',
+              source: 'maintenance',
+              force: false
+            },
+            items: photoIds.map(id => ({ photo_id: id })),
+            priority: 85,
+            scope: 'photo_set',
+          });
+          
+          log.info('cache_validation_triggered_regen', {
+            ...projectLogContext(project),
+            photo_count: missingPhotos.length,
+            job_id: Array.isArray(derivJob) ? derivJob[0]?.id : derivJob?.id
+          });
+        } catch (err) {
+          log.error('cache_validation_regen_failed', {
+            ...projectLogContext(project),
+            error: err.message
+          });
+        }
+      }
+    } catch (err) {
+      log.error('cache_validation_project_failed', {
+        ...projectLogContext(project),
+        error: err.message
+      });
+    }
+  }
+  
+  if (projects.length > 1) {
+    log.info('cache_validation_global_summary', {
+      projects_processed: projects.length,
+      total_validated: totalValidated,
+      total_invalidated: totalInvalidated
     });
   }
 }
@@ -653,4 +840,5 @@ module.exports = {
   runManifestCleaning,
   runFolderAlignment,
   runOrphanedProjectCleanup,
+  runDerivativeCacheValidation,
 };

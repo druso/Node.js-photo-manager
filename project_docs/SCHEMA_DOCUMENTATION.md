@@ -12,14 +12,21 @@ This project treats the on-disk folder as the primary source of truth for photo 
 
 **projects**
 - Columns: `id` (PK), `project_name`, `project_folder` (UNIQUE), `created_at`, `updated_at`, `status`, `archived_at`, `manifest_version`
-- `status='canceled'` = archived/soft-deleted (hidden from UI)
-- `project_folder` = sanitized, human-readable folder name with `(n)` suffix for duplicates
+- `project_name` = canonical display name (source of truth)
+- `project_folder` = filesystem folder name (kept in sync with project_name)
+- When duplicate names occur, `(n)` suffix added to both name and folder
+- Three-way sync: `project_name` (DB) → `project_folder` (FS) + `manifest.name` (YAML)
 - Indexes: `status`, `project_folder`
 
 **photos**
 - Columns: `id` (PK), `project_id` (FK), `filename`, `basename`, `ext`, `date_time_original`, `jpg_available`, `raw_available`, `other_available`, `keep_jpg`, `keep_raw`, `thumbnail_status`, `preview_status`, `orientation`, `meta_json`
 - Availability flags (`*_available`): reflect actual files on disk
 - Keep flags (`keep_*`): user intent, default to availability
+- Derivative status (`thumbnail_status`, `preview_status`): `null`, `'pending'`, `'failed'`, `'missing'`, or `'generated'`
+  - `null` or `'pending'`: Not yet generated
+  - `'missing'`: Previously generated but file no longer exists
+  - `'failed'`: Generation failed
+  - `'generated'`: Successfully generated and file exists
 - `taken_at := coalesce(date_time_original, created_at)` for ordering/filtering
 - Indexes: `filename`, `basename`, `ext`, `date_time_original`, `raw_available`, `orientation`
 
@@ -46,6 +53,9 @@ This project treats the on-disk folder as the primary source of truth for photo 
 **derivative_cache**
 - MD5-based caching for derivatives (regenerate only when source changes)
 - Columns: `photo_id` (PK), `source_hash`, `source_size`, `thumbnail_meta`, `preview_meta`, `created_at`, `updated_at`
+- Cache validation: Hourly maintenance checks if cached derivatives exist on disk
+- Auto-regeneration: When cache validation finds missing files, it automatically enqueues derivative generation
+- Invalidation: Cache is invalidated when user explicitly requests regeneration (`force=true`)
 
 ### Repositories
 
@@ -71,8 +81,8 @@ Data access through modular repositories:
 
 **Project Details**
 - `GET /api/projects/:folder` → `{ id, name, folder, photos: [...] }`
-- `PATCH /api/projects/:folder/rename` → Update display name (folder aligned by maintenance)
-- `DELETE /api/projects/:folder` → Soft-delete + enqueue `project_delete` task
+- `PATCH /api/projects/:folder/rename` → Update display name (folder + manifest aligned by maintenance)
+- `DELETE /api/projects/:folder` → Enqueue `project_delete` task (immediate removal after completion)
 
 **Project Photos (Paginated)**
 - `GET /api/projects/:folder/photos`
@@ -206,6 +216,17 @@ All commit/revert endpoints rate-limited: 10 req/5 min/IP
 - `pm_access_token` — HTTP-only, SameSite=Strict, ~1h TTL
 - `pm_refresh_token` — HTTP-only, SameSite=Strict, path `/api/auth/refresh`, 7d TTL
 
+## Frontend Error Handling
+
+**404 Not Found**:
+- Invalid project folders trigger 404 state in `useAppInitialization` hook
+- `NotFound` component displays user-friendly error page
+- Provides navigation to home and "All Photos" view
+- Server endpoints return proper 404 status for non-existent resources:
+  - `GET /api/projects/:folder` → 404 if project not found
+  - `GET /shared/api/:hashedKey` → 404 if shared link not found
+  - Photo endpoints → 404 for missing photos
+
 ## Performance Optimizations
 
 **Prepared Statement Caching** (Sprint 1)
@@ -251,7 +272,7 @@ All commit/revert endpoints rate-limited: 10 req/5 min/IP
 - `.trash/` — Temporary removals (24h TTL)
 - `.project.yaml` — Manifest (name, id, created_at, version)
 
-**Folder Alignment**: Hourly maintenance task aligns `project_folder` with `project_name` using `generateUniqueFolderName()`. Emits `folder_renamed` SSE event.
+**Folder Alignment**: Hourly maintenance task performs three-way sync with `project_name` as source of truth. Aligns both `project_folder` (filesystem) and `manifest.name` (YAML) to match. Uses `generateUniqueFolderName()` for collision avoidance. Emits `folder_renamed` SSE event when folder changes.
 
 ## Testing
 

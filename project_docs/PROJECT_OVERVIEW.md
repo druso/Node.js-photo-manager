@@ -6,7 +6,7 @@ A web-based photo management tool for photographers. Upload, organize, and view 
 
 ## Core Concepts
 
-**Projects**: Primary organizational unit (albums/shoots). Each photo belongs to exactly one project.
+**Projects**: Primary organizational unit (albums/shoots). Each photo belongs to exactly one project. Project names are synchronized across three locations: `project_name` (DB), `project_folder` (filesystem), and `manifest.name` (YAML file). When duplicate names occur, a `(n)` suffix is added to all three.
 
 **Photo Ingestion**: Drag-and-drop or button upload. System analyzes for conflicts, handles storage, creates DB records, queues processing.
 
@@ -57,11 +57,13 @@ Frontend (React SPA)  ←→  Backend (Express API)  ←→  SQLite DB
 ```
 client/src/
 ├── App.jsx                 # Main orchestrator (~1,666 lines)
-├── components/             # VirtualizedPhotoGrid, PhotoViewer, modals
+├── components/             # VirtualizedPhotoGrid, PhotoViewer, NotFound, modals
 ├── hooks/                  # 20+ specialized hooks (state, pagination, SSE)
 ├── services/               # Business logic (ProjectDataService, EventHandlers)
 └── api/                    # Backend API clients
 ```
+
+**404 Handling**: Invalid URLs (non-existent projects, malformed paths) trigger 404 state in `useAppInitialization`. The `NotFound` component displays a user-friendly error page with navigation options.
 
 ### Backend Structure
 ```
@@ -104,9 +106,9 @@ See `SCHEMA_DOCUMENTATION.md` for complete schema and API reference.
 
 ### Maintenance (Hourly)
 - Trash cleanup (24h TTL)
-- Orphaned project cleanup
+- Orphaned project cleanup (immediate removal)
 - Duplicate resolution
-- Folder alignment (sync display name → folder name)
+- Folder alignment (three-way sync: project_name → folder + manifest)
 - Manifest checking (DB ↔ filesystem reconciliation)
 - Folder scanning (discover new files)
 

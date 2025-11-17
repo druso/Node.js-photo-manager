@@ -947,47 +947,104 @@ const currentPhoto = photos[currentIndex];
               ))}
             </div>
           )}
-          {/* Metadata first */}
+          {/* Key Information - Prominently displayed */}
           <div className="mb-4">
-            <h3 className="text-sm font-semibold mb-2">Metadata</h3>
-            <div className="text-xs space-y-1">
+            <h3 className="text-sm font-semibold mb-2">Image Details</h3>
+            <div className="text-sm space-y-2 bg-gray-50 rounded-md px-3 py-3 border">
               {(() => {
                 const meta = currentPhoto.metadata || currentPhoto.exif || {};
-                const entries = Object.entries(meta);
-                if (!entries.length) return <div className="text-gray-500">No metadata</div>;
-                const fmtDate = (v) => { const d = new Date(v); return isNaN(d.getTime()) ? String(v) : d.toLocaleString(); };
-                return entries.map(([k, v]) => (
-                  <div key={k} className="flex justify-between gap-2">
-                    <span className="text-gray-600 break-all">{k}</span>
-                    <span className="text-right break-all">{/date/i.test(k) ? fmtDate(v) : String(v)}</span>
-                  </div>
-                ));
+                const fmtDate = (v) => {
+                  if (!v) return null;
+                  const d = new Date(v);
+                  return isNaN(d.getTime()) ? null : d.toLocaleString();
+                };
+                const dateDisplay = fmtDate(currentPhoto.date_time_original);
+                const cameraModel = meta.camera_model || meta.model || meta.Model;
+                const cameraMake = meta.camera_make || meta.make || meta.Make;
+                const width = meta.exif_image_width || meta.ExifImageWidth || meta.ImageWidth;
+                const height = meta.exif_image_height || meta.ExifImageHeight || meta.ImageHeight;
+                
+                return (
+                  <>
+                    {dateDisplay && (
+                      <div className="flex justify-between gap-2">
+                        <span className="text-gray-700 font-medium">📅 Date Taken</span>
+                        <span className="text-right font-semibold text-gray-900">{dateDisplay}</span>
+                      </div>
+                    )}
+                    {cameraMake && (
+                      <div className="flex justify-between gap-2">
+                        <span className="text-gray-700 font-medium">📷 Camera Make</span>
+                        <span className="text-right text-gray-900">{String(cameraMake)}</span>
+                      </div>
+                    )}
+                    {cameraModel && (
+                      <div className="flex justify-between gap-2">
+                        <span className="text-gray-700 font-medium">📸 Camera Model</span>
+                        <span className="text-right text-gray-900">{String(cameraModel)}</span>
+                      </div>
+                    )}
+                    {(width && height) && (
+                      <div className="flex justify-between gap-2">
+                        <span className="text-gray-700 font-medium">📐 Dimensions</span>
+                        <span className="text-right text-gray-900">{width} × {height}</span>
+                      </div>
+                    )}
+                    {!dateDisplay && !cameraMake && !cameraModel && !width && (
+                      <div className="text-gray-500 text-xs">No key metadata available</div>
+                    )}
+                  </>
+                );
               })()}
             </div>
           </div>
-          {/* Primary */}
-          <div className="mb-2">
-            <h3 className="text-sm font-semibold mb-2">Primary</h3>
+          {/* File Information */}
+          <div className="mb-4">
+            <h3 className="text-sm font-semibold mb-2">File</h3>
             <div className="text-xs space-y-1">
-              <div className="flex justify-between gap-2"><span className="text-gray-600">filename</span><span className="text-right break-all">{String(currentPhoto.filename)}</span></div>
+              <div className="flex justify-between gap-2">
+                <span className="text-gray-600">Filename</span>
+                <span className="text-right break-all font-mono">{String(currentPhoto.filename)}</span>
+              </div>
               {currentPhoto.created_at && (
-                <div className="flex justify-between gap-2"><span className="text-gray-600">created_at</span><span className="text-right break-all">{new Date(currentPhoto.created_at).toLocaleString()}</span></div>
+                <div className="flex justify-between gap-2">
+                  <span className="text-gray-600">Added to system</span>
+                  <span className="text-right">{new Date(currentPhoto.created_at).toLocaleString()}</span>
+                </div>
               )}
               {currentPhoto.updated_at && (
-                <div className="flex justify-between gap-2"><span className="text-gray-600">updated_at</span><span className="text-right break-all">{new Date(currentPhoto.updated_at).toLocaleString()}</span></div>
+                <div className="flex justify-between gap-2">
+                  <span className="text-gray-600">Last updated</span>
+                  <span className="text-right">{new Date(currentPhoto.updated_at).toLocaleString()}</span>
+                </div>
               )}
             </div>
           </div>
-          {/* Other details collapsed */}
+          {/* All metadata collapsed */}
           <details className="mt-2">
             <summary className="cursor-pointer text-sm font-semibold select-none">More details</summary>
             <div className="mt-2 text-xs space-y-1">
-              {Object.entries(currentPhoto).filter(([k]) => !['tags','metadata','exif','filename','created_at','updated_at'].includes(k)).map(([k, v]) => (
-                <div key={k} className="flex justify-between gap-2">
-                  <span className="text-gray-600 break-all">{k}</span>
-                  <span className="text-right break-all">{typeof v === 'object' ? JSON.stringify(v) : String(v)}</span>
-                </div>
-              ))}
+              {(() => {
+                const meta = currentPhoto.metadata || currentPhoto.exif || {};
+                // Filter out the problematic create_date and modify_date that show wrong dates
+                // Also filter out fields we've already shown above
+                const excludeKeys = ['create_date', 'modify_date', 'camera_model', 'camera_make', 'model', 'make', 'Model', 'Make', 'exif_image_width', 'exif_image_height', 'ExifImageWidth', 'ExifImageHeight', 'ImageWidth', 'ImageHeight'];
+                const metaEntries = Object.entries(meta).filter(([k]) => !excludeKeys.includes(k));
+                const photoEntries = Object.entries(currentPhoto).filter(([k]) => !['tags','metadata','exif','filename','created_at','updated_at','date_time_original'].includes(k));
+                const allEntries = [...metaEntries, ...photoEntries];
+                
+                if (!allEntries.length) {
+                  return <div className="text-gray-500">No additional details</div>;
+                }
+                
+                const fmtDate = (v) => { const d = new Date(v); return isNaN(d.getTime()) ? String(v) : d.toLocaleString(); };
+                return allEntries.map(([k, v]) => (
+                  <div key={k} className="flex justify-between gap-2">
+                    <span className="text-gray-600 break-all">{k}</span>
+                    <span className="text-right break-all">{typeof v === 'object' ? JSON.stringify(v) : (/date/i.test(k) && typeof v === 'string' ? fmtDate(v) : String(v))}</span>
+                  </div>
+                ));
+              })()}
             </div>
           </details>
           {/* Download collapsed expander with clear CTAs */}

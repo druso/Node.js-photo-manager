@@ -169,9 +169,9 @@ const UniversalFilter = ({
     <div ref={panelRef} className={`${disabled ? 'bg-gray-50' : 'bg-white'}`}>
       <div className="w-full p-4 space-y-6">
         {/* Text Search */}
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-3 gap-4">
           {/* Text Search with Suggestions (full width) */}
-          <div className="relative col-span-2">
+          <div className="relative col-span-3">
             <label htmlFor="textSearch" className="block text-sm font-medium text-gray-700 mb-1">
               Filter by filename or tag
             </label>
@@ -206,7 +206,7 @@ const UniversalFilter = ({
               </div>
             )}
           </div>
-          {/* Date taken (left) */}
+          {/* Date taken */}
           <div>
             <label id="dateTakenLabel" className="block text-sm font-medium text-gray-700 mb-1">
               Date taken
@@ -221,7 +221,7 @@ const UniversalFilter = ({
             />
           </div>
 
-          {/* Orientation (right of Date taken) */}
+          {/* Orientation */}
           <div>
             <label id="orientation-label" className="block text-sm font-medium text-gray-700 mb-1">
               Orientation
@@ -241,7 +241,27 @@ const UniversalFilter = ({
             </button>
           </div>
 
-          {/* File types available (left on second row) */}
+          {/* Visibility */}
+          <div>
+            <label id="visibility-label" className="block text-sm font-medium text-gray-700 mb-1">
+              Visibility
+            </label>
+            <button
+              type="button"
+              onClick={() => !disabled && setOpenSelect('visibility')}
+              disabled={disabled}
+              className={`w-full ${filterTriggerClass} justify-between ${disabled ? 'text-gray-400 border-gray-200 cursor-not-allowed' : ''}`}
+              name="visibility"
+              aria-labelledby="visibility-label"
+            >
+              <span className="truncate">
+                {visibilityOptions.find(o => o.value === filters.visibility)?.label || 'Any visibility'}
+              </span>
+              <svg className="h-4 w-4 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+            </button>
+          </div>
+
+          {/* File types available */}
           <div>
             <label id="fileType-label" className="block text-sm font-medium text-gray-700 mb-1">
               File types available
@@ -261,7 +281,7 @@ const UniversalFilter = ({
             </button>
           </div>
 
-          {/* File types to keep (center on second row) */}
+          {/* File types to keep */}
           <div>
             <label id="keepType-label" className="block text-sm font-medium text-gray-700 mb-1">
               File types to keep
@@ -278,26 +298,6 @@ const UniversalFilter = ({
             >
               <span className="truncate">
                 {keepTypeOptions.find(o => o.value === filters.keepType)?.label || 'Show all (no filter)'}
-              </span>
-              <svg className="h-4 w-4 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
-            </button>
-          </div>
-
-          {/* Visibility (right on second row) */}
-          <div>
-            <label id="visibility-label" className="block text-sm font-medium text-gray-700 mb-1">
-              Visibility
-            </label>
-            <button
-              type="button"
-              onClick={() => !disabled && setOpenSelect('visibility')}
-              disabled={disabled}
-              className={`w-full ${filterTriggerClass} justify-between ${disabled ? 'text-gray-400 border-gray-200 cursor-not-allowed' : ''}`}
-              name="visibility"
-              aria-labelledby="visibility-label"
-            >
-              <span className="truncate">
-                {visibilityOptions.find(o => o.value === filters.visibility)?.label || 'Any visibility'}
               </span>
               <svg className="h-4 w-4 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
             </button>

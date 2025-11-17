@@ -53,6 +53,7 @@
       { "type": "folder_alignment", "priority": 96 },
       { "type": "manifest_check", "priority": 95 },
       { "type": "folder_check", "priority": 95 },
+      { "type": "cache_validation", "priority": 85 },
       { "type": "manifest_cleaning", "priority": 80 }
     ]
   },
@@ -106,6 +107,14 @@
     "scope": "global",
     "steps": [
       { "type": "folder_discovery", "priority": 95 }
+    ]
+  },
+  "generate_derivatives": {
+    "label": "Generate Derivatives",
+    "user_relevant": true,
+    "scope": "photo_set",
+    "steps": [
+      { "type": "generate_derivatives", "priority": 90 }
     ]
   }
 }

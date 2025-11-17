@@ -15,6 +15,7 @@ const fs = require('fs-extra');
 const requestId = require('./server/middleware/requestId');
 const accessLog = require('./server/middleware/accessLog');
 const errorHandler = require('./server/middleware/errorHandler');
+const compression = require('compression');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -28,6 +29,27 @@ app.use(requestId());
 app.use(accessLog());
 app.use(express.json());
 app.use(cookieParser());
+
+// HTTP compression for API responses and static assets
+// Configured to skip already-compressed content (images) and small responses
+app.use(compression({
+  filter: (req, res) => {
+    // Allow disabling compression via header (useful for debugging)
+    if (req.headers['x-no-compression']) {
+      return false;
+    }
+    // Don't compress images - they're already compressed
+    const contentType = res.getHeader('Content-Type');
+    if (contentType && contentType.toString().startsWith('image/')) {
+      return false;
+    }
+    // Use default compression filter for everything else (JSON, HTML, CSS, JS)
+    return compression.filter(req, res);
+  },
+  level: 6, // Balance between speed and compression ratio
+  threshold: 1024 // Only compress responses larger than 1KB
+}));
+
 // Explicit static mounts to serve built frontend
 // Serve hashed assets with no fallthrough to avoid route interference
 app.use('/assets', express.static(CLIENT_ASSETS_DIR, { fallthrough: false }));
@@ -69,6 +91,10 @@ const PUBLIC_ASSET_PATH = /^\/projects\/[^/]+\/(thumbnail|preview|image)\//;
 const PUBLIC_HASH_METADATA_PATH = /^\/projects\/image\/[^/]+$/;
 app.use('/api', (req, res, next) => {
   if (req.path.startsWith('/auth/')) {
+    return next();
+  }
+  // Allow SSE endpoints to pass through (they handle auth internally if needed)
+  if (req.path.startsWith('/sse/')) {
     return next();
   }
   if (req.method === 'GET' && (PUBLIC_ASSET_PATH.test(req.path) || PUBLIC_HASH_METADATA_PATH.test(req.path))) {

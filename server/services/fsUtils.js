@@ -1,6 +1,8 @@
 const path = require('path');
 const fs = require('fs-extra');
 const { getConfig } = require('./config');
+const makeLogger = require('../utils/logger2');
+const log = makeLogger('fsUtils');
 
 const PROJECT_ROOT = path.join(__dirname, '..', '..');
 const PROJECTS_DIR = process.env.NODE_ENV === 'test'
@@ -55,8 +57,16 @@ function removeDerivatives(projectFolder, baseName) {
   const projectPath = ensureProjectDirs(projectFolder);
   const thumb = path.join(projectPath, '.thumb', `${baseName}.jpg`);
   const preview = path.join(projectPath, '.preview', `${baseName}.jpg`);
-  try { if (fs.existsSync(thumb)) fs.removeSync(thumb); } catch (_) {}
-  try { if (fs.existsSync(preview)) fs.removeSync(preview); } catch (_) {}
+  try {
+    if (fs.existsSync(thumb)) fs.removeSync(thumb);
+  } catch (err) {
+    log.warn('remove_thumbnail_failed', { projectFolder, baseName, error: err.message });
+  }
+  try {
+    if (fs.existsSync(preview)) fs.removeSync(preview);
+  } catch (err) {
+    log.warn('remove_preview_failed', { projectFolder, baseName, error: err.message });
+  }
 }
 
 function buildAcceptPredicate() {
@@ -107,7 +117,9 @@ function statMtimeSafe(fullPath) {
   try {
     const st = fs.statSync(fullPath);
     return st.mtime;
-  } catch (_) {
+  } catch (err) {
+    log.debug('stat_mtime_failed', { path: fullPath, error: err.message });
+    return undefined;
   }
 }
 

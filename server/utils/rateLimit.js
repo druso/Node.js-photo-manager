@@ -3,6 +3,9 @@
 // Notes:
 // - For single-instance deployments this is sufficient. For clustered/multi-instance, use a shared store (e.g., Redis).
 
+const makeLogger = require('./logger2');
+const log = makeLogger('rateLimit');
+
 function rateLimit({ windowMs = 60000, max = 60, keyGenerator, onLimitReached }) {
   const hits = new Map(); // key -> { count, resetAt }
   const getKey = keyGenerator || ((req) => req.ip || 'unknown');
@@ -28,7 +31,11 @@ function rateLimit({ windowMs = 60000, max = 60, keyGenerator, onLimitReached })
       return next();
     }
     if (typeof onLimitReached === 'function') {
-      try { onLimitReached(req, res, key); } catch (_) {}
+      try {
+        onLimitReached(req, res, key);
+      } catch (err) {
+        log.warn('rate_limit_callback_failed', { error: err.message, key });
+      }
     }
     res.status(429).json({ error: 'Too Many Requests', retry_after_ms: entry.resetAt - now });
   };

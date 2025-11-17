@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { listTenantJobs, openJobStream, fetchTaskDefinitions } from '../api/jobsApi';
+import { listTenantJobs, fetchTaskDefinitions } from '../api/jobsApi';
+import sseClient from '../api/sseClient';
 
 export default function ProcessesPanel({ onClose, embedded = false }) {
   const [jobs, setJobs] = useState([]);
@@ -7,7 +8,6 @@ export default function ProcessesPanel({ onClose, embedded = false }) {
   const [loading, setLoading] = useState(false);
   const [advanced, setAdvanced] = useState(false);
   const [defs, setDefs] = useState(null);
-  const esCloseRef = useRef(null);
 
   const refresh = async () => {
     setLoading(true);
@@ -36,8 +36,10 @@ export default function ProcessesPanel({ onClose, embedded = false }) {
   }, []);
 
   useEffect(() => {
-    if (esCloseRef.current) { esCloseRef.current(); esCloseRef.current = null; }
-    esCloseRef.current = openJobStream(async (evt) => {
+    // Connect to jobs channel via unified SSE client
+    sseClient.connect(['jobs']);
+
+    const handleJobUpdate = async (evt) => {
       // Merge where possible; refresh if unknown or completed
       let found = false;
       setJobs(prev => {
@@ -54,8 +56,14 @@ export default function ProcessesPanel({ onClose, embedded = false }) {
         // Ensure list reflects latest server state and ordering
         refresh();
       }
-    });
-    return () => { if (esCloseRef.current) { esCloseRef.current(); esCloseRef.current = null; } };
+    };
+
+    // Register listener
+    sseClient.on('job_update', handleJobUpdate);
+
+    return () => {
+      sseClient.off('job_update', handleJobUpdate);
+    };
   }, []);
 
   const statusBadge = (s) => {

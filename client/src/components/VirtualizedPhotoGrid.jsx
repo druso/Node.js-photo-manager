@@ -28,6 +28,7 @@ const VirtualizedPhotoGrid = ({
   anchorIndex = null,
   onAnchored,
   isPublicView = false,
+  showEmptyDropHint = true,
 }) => {
   const containerRef = useRef(null);
   const [containerWidth, setContainerWidth] = useState(0);
@@ -557,16 +558,18 @@ const VirtualizedPhotoGrid = ({
   return (
     <div ref={containerRef} className="w-full p-1 overflow-x-hidden" style={{ position: 'relative', minHeight: '40vh' }}>
       {isEmpty ? (
-        <div className="flex flex-col items-center justify-center py-12 text-center text-gray-600">
-          <div className="mb-3 text-gray-400" aria-hidden="true">
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="h-8 w-8">
-              <path fillRule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" clipRule="evenodd" />
-            </svg>
+        showEmptyDropHint ? (
+          <div className="flex flex-col items-center justify-center py-12 text-center text-gray-600">
+            <div className="mb-3 text-gray-400" aria-hidden="true">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="h-8 w-8">
+                <path fillRule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" clipRule="evenodd" />
+              </svg>
+            </div>
+            <p className="max-w-md">
+              <span className="font-medium text-gray-800">Drop images anywhere on this page</span> to add them to the current project.
+            </p>
           </div>
-          <p className="max-w-md">
-            <span className="font-medium text-gray-800">Drop images anywhere on this page</span> to add them to the current project.
-          </p>
-        </div>
+        ) : null
       ) : (
         <div className="w-full">
           {containerWidth > 0 && (

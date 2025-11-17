@@ -13,17 +13,6 @@ async function runProjectStopProcesses(job) {
     log.warn('stop_processes_project_not_found', { job_id: job.id, project_id: job.project_id });
     return; // nothing to do
   }
-  // Mark project as canceled/archived if not already
-  if (project.status !== 'canceled') {
-    try {
-      projectsRepo.archive(project.id);
-      log.info('stop_processes_archived', { project_id: project.id, project_folder: project.project_folder, project_name: project.project_name || project.name });
-    } catch (e) {
-      log.error('stop_processes_archive_failed', { project_id: project.id, project_folder: project.project_folder, project_name: project.project_name || project.name, error: e && e.message });
-    }
-  } else {
-    log.info('stop_processes_already_canceled', { project_id: project.id, project_folder: project.project_folder, project_name: project.project_name || project.name });
-  }
   // Cancel any queued/running jobs for this project
   try {
     jobsRepo.cancelByProject(project.id);
@@ -39,11 +28,6 @@ async function runProjectDeleteFiles(job) {
   const project = projectsRepo.getById(job.project_id);
   if (!project) {
     log.warn('delete_files_project_not_found', { job_id: job.id, project_id: job.project_id });
-    return;
-  }
-  // Safety: only operate if project is canceled
-  if (project.status !== 'canceled') {
-    log.warn('delete_files_not_canceled', { project_id: project.id, project_folder: project.project_folder, project_name: project.project_name || project.name, status: project.status });
     return;
   }
   const projectPath = getProjectPath(project);
@@ -72,21 +56,18 @@ async function runProjectCleanupDb(job) {
     log.warn('cleanup_db_project_not_found', { job_id: job.id, project_id: job.project_id });
     return;
   }
-  // Safety: only cleanup if canceled
-  if (project.status !== 'canceled') {
-    log.warn('cleanup_db_not_canceled', { project_id: project.id, project_folder: project.project_folder, project_name: project.project_name || project.name, status: project.status });
-    return;
-  }
-  // Remove photos/tags while keeping the project row as archive record
+  // Remove photos/tags and project from database (immediate deletion)
   try {
     const db = require('../db').getDb();
     const trx = db.transaction((pid) => {
       try { db.prepare(`DELETE FROM photo_tags WHERE photo_id IN (SELECT id FROM photos WHERE project_id = ?);`).run(pid); } catch (e) { try { log.warn('cleanup_db_photo_tags_delete_skipped', { project_id: project.id, error: e && e.message }); } catch {} }
       try { db.prepare(`DELETE FROM tags WHERE project_id = ?;`).run(pid); } catch (e) { try { log.warn('cleanup_db_tags_delete_skipped', { project_id: project.id, error: e && e.message }); } catch {} }
       try { db.prepare(`DELETE FROM photos WHERE project_id = ?;`).run(pid); } catch (e) { try { log.warn('cleanup_db_photos_delete_skipped', { project_id: project.id, error: e && e.message }); } catch {} }
+      // Finally, remove the project itself
+      try { db.prepare(`DELETE FROM projects WHERE id = ?;`).run(pid); } catch (e) { try { log.warn('cleanup_db_project_delete_skipped', { project_id: project.id, error: e && e.message }); } catch {} }
     });
     trx(project.id);
-    log.info('cleanup_db_deleted_related_rows', { project_id: project.id, project_folder: project.project_folder, project_name: project.project_name || project.name });
+    log.info('cleanup_db_deleted_project_and_related_rows', { project_id: project.id, project_folder: project.project_folder, project_name: project.project_name || project.name });
   } catch (e) {
     log.error('cleanup_db_error', { project_id: project.id, project_folder: project.project_folder, project_name: project.project_name || project.name, error: e && e.message });
     throw e;

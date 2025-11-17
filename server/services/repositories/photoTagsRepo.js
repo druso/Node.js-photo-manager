@@ -1,23 +1,27 @@
 const { getDb } = require('../db');
+const stmtCache = require('./preparedStatements');
 
 function addTagToPhoto(photo_id, tag_id) {
   const db = getDb();
-  db.prepare(`INSERT OR IGNORE INTO photo_tags (photo_id, tag_id) VALUES (?, ?)`).run(photo_id, tag_id);
+  const stmt = stmtCache.get(db, 'photoTags:add', 'INSERT OR IGNORE INTO photo_tags (photo_id, tag_id) VALUES (?, ?)');
+  stmt.run(photo_id, tag_id);
 }
 
 function removeTagFromPhoto(photo_id, tag_id) {
   const db = getDb();
-  db.prepare(`DELETE FROM photo_tags WHERE photo_id = ? AND tag_id = ?`).run(photo_id, tag_id);
+  const stmt = stmtCache.get(db, 'photoTags:remove', 'DELETE FROM photo_tags WHERE photo_id = ? AND tag_id = ?');
+  stmt.run(photo_id, tag_id);
 }
 
 function listTagsForPhoto(photo_id) {
   const db = getDb();
-  return db.prepare(`
+  const stmt = stmtCache.get(db, 'photoTags:listForPhoto', `
     SELECT t.* FROM tags t
     JOIN photo_tags pt ON pt.tag_id = t.id
     WHERE pt.photo_id = ?
     ORDER BY t.name ASC
-  `).all(photo_id);
+  `);
+  return stmt.all(photo_id);
 }
 
 /**
@@ -41,13 +45,16 @@ function listTagsForPhotos(photo_ids) {
     const chunk = photo_ids.slice(i, i + CHUNK_SIZE);
     const placeholders = chunk.map(() => '?').join(',');
     
-    const rows = db.prepare(`
+    const cacheKey = `photoTags:listForPhotos:${chunk.length}`;
+    const sql = `
       SELECT pt.photo_id, t.name 
       FROM photo_tags pt
       JOIN tags t ON pt.tag_id = t.id
       WHERE pt.photo_id IN (${placeholders})
       ORDER BY t.name ASC
-    `).all(...chunk);
+    `;
+    const stmt = stmtCache.get(db, cacheKey, sql);
+    const rows = stmt.all(...chunk);
     
     // Group by photo_id
     rows.forEach(row => {
@@ -63,12 +70,13 @@ function listTagsForPhotos(photo_ids) {
 
 function listPhotosForTag(tag_id) {
   const db = getDb();
-  return db.prepare(`
+  const stmt = stmtCache.get(db, 'photoTags:listPhotosForTag', `
     SELECT p.* FROM photos p
     JOIN photo_tags pt ON pt.photo_id = p.id
     WHERE pt.tag_id = ?
     ORDER BY p.filename ASC
-  `).all(tag_id);
+  `);
+  return stmt.all(tag_id);
 }
 
 module.exports = {

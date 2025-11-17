@@ -33,8 +33,7 @@ const apiRateLimit = rateLimit({
 router.get('/', async (req, res) => {
   try {
     const rows = projectsRepo.list();
-    // Hide canceled projects from UI lists
-    const projects = rows.filter(p => p.status !== 'canceled').map(p => ({
+    const projects = rows.map(p => ({
       id: p.id,
       name: p.project_name,
       folder: p.project_folder,
@@ -63,7 +62,7 @@ router.patch('/:folder/rename', rateLimit({ windowMs: 5 * 60 * 1000, max: 10 }),
     
     // Get current project
     const project = projectsRepo.getByFolder(folder);
-    if (!project || project.status === 'canceled') {
+    if (!project) {
       return res.status(404).json({ error: 'Project not found' });
     }
     
@@ -147,7 +146,7 @@ router.get('/:folder', async (req, res) => {
     }
 
     const project = projectsRepo.getByFolder(folder);
-    if (!project || project.status === 'canceled') {
+    if (!project) {
       return res.status(404).json({ error: 'Project not found' });
     }
 
@@ -397,22 +396,53 @@ router.delete('/:id', rateLimit({ windowMs: 5 * 60 * 1000, max: 10 }), async (re
       return res.status(400).json({ error: 'Invalid project id' });
     }
     const project = projectsRepo.getById(id);
-    if (!project || project.status === 'canceled') {
+    if (!project) {
       return res.status(404).json({ error: 'Project not found' });
     }
-    // Soft-delete: mark as canceled (archived), cancel related jobs, enqueue deletion task
-    try { projectsRepo.archive(project.id); } catch {}
-    try { jobsRepo.cancelByProject(project.id); } catch {}
+    
+    // Cancel related jobs before deletion
+    try { 
+      jobsRepo.cancelByProject(project.id); 
+    } catch (e) {
+      log.warn('cancel_jobs_failed', { project_id: project.id, error: e.message });
+    }
+    
     // Start high-priority deletion task (stop processes -> delete files -> cleanup DB)
     try {
-      tasksOrchestrator.startTask({ project_id: project.id, type: 'project_delete', source: 'user', items: null, tenant_id: 'user_0' });
+      tasksOrchestrator.startTask({ 
+        project_id: project.id, 
+        type: 'project_delete', 
+        source: 'user', 
+        items: null, 
+        tenant_id: 'user_0' 
+      });
+      
+      log.info('project_deletion_queued', { 
+        project_id: project.id, 
+        project_folder: project.project_folder, 
+        project_name: project.project_name 
+      });
+      
+      res.json({ 
+        message: 'Project deletion queued', 
+        folder: project.project_folder 
+      });
     } catch (e) {
-      // If orchestration fails, still return archived so UI removes project; background cleanup might be missing.
-      log.error('enqueue_project_delete_failed', { project_id: project.id, project_folder: project.project_folder, project_name: project.project_name, error: e && e.message, stack: e && e.stack });
+      log.error('enqueue_project_delete_failed', { 
+        project_id: project.id, 
+        project_folder: project.project_folder, 
+        project_name: project.project_name, 
+        error: e.message, 
+        stack: e.stack 
+      });
+      res.status(500).json({ error: 'Failed to queue project deletion' });
     }
-    res.json({ message: 'Project deletion queued', folder: project.project_folder });
   } catch (err) {
-    log.error('project_delete_failed', { error: err && err.message, stack: err && err.stack, project_id: req.params && req.params.id });
+    log.error('project_delete_failed', { 
+      error: err.message, 
+      stack: err.stack, 
+      project_id: req.params.id 
+    });
     res.status(500).json({ error: 'Failed to delete project' });
   }
 });

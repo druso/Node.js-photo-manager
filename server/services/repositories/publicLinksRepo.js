@@ -1,4 +1,5 @@
 const { getDb } = require('../db');
+const stmtCache = require('./preparedStatements');
 const crypto = require('crypto');
 
 function nowISO() { return new Date().toISOString(); }
@@ -24,7 +25,7 @@ function create({ title, description = null }) {
   const id = crypto.randomUUID();
   const hashedKey = generateHashedKey();
 
-  const insert = db.prepare(`
+  const insert = stmtCache.get(db, 'publicLinks:create', `
     INSERT INTO public_links (id, title, description, hashed_key, created_at, updated_at)
     VALUES (?, ?, ?, ?, ?, ?)
   `);
@@ -40,7 +41,8 @@ function create({ title, description = null }) {
  */
 function getById(id) {
   const db = getDb();
-  return db.prepare(`SELECT * FROM public_links WHERE id = ?`).get(id);
+  const stmt = stmtCache.get(db, 'publicLinks:getById', 'SELECT * FROM public_links WHERE id = ?');
+  return stmt.get(id);
 }
 
 /**
@@ -50,7 +52,8 @@ function getById(id) {
  */
 function getByHashedKey(hashedKey) {
   const db = getDb();
-  return db.prepare(`SELECT * FROM public_links WHERE hashed_key = ?`).get(hashedKey);
+  const stmt = stmtCache.get(db, 'publicLinks:getByHashedKey', 'SELECT * FROM public_links WHERE hashed_key = ?');
+  return stmt.get(hashedKey);
 }
 
 /**
@@ -59,10 +62,11 @@ function getByHashedKey(hashedKey) {
  */
 function list() {
   const db = getDb();
-  return db.prepare(`
+  const stmt = stmtCache.get(db, 'publicLinks:list', `
     SELECT * FROM public_links 
     ORDER BY created_at DESC
-  `).all();
+  `);
+  return stmt.all();
 }
 
 /**
@@ -96,11 +100,14 @@ function update(id, { title, description }) {
   updates.push('updated_at = ?');
   values.push(ts, id);
   
-  db.prepare(`
+  const cacheKey = `publicLinks:update:${updates.join(':')}`;
+  const sql = `
     UPDATE public_links 
     SET ${updates.join(', ')}
     WHERE id = ?
-  `).run(...values);
+  `;
+  const stmt = stmtCache.get(db, cacheKey, sql);
+  stmt.run(...values);
   
   return getById(id);
 }
@@ -115,11 +122,12 @@ function regenerateKey(id) {
   const ts = nowISO();
   const newHashedKey = generateHashedKey();
   
-  db.prepare(`
+  const stmt = stmtCache.get(db, 'publicLinks:regenerateKey', `
     UPDATE public_links 
     SET hashed_key = ?, updated_at = ?
     WHERE id = ?
-  `).run(newHashedKey, ts, id);
+  `);
+  stmt.run(newHashedKey, ts, id);
   
   return getById(id);
 }
@@ -130,7 +138,8 @@ function regenerateKey(id) {
  */
 function remove(id) {
   const db = getDb();
-  db.prepare(`DELETE FROM public_links WHERE id = ?`).run(id);
+  const stmt = stmtCache.get(db, 'publicLinks:remove', 'DELETE FROM public_links WHERE id = ?');
+  stmt.run(id);
 }
 
 /**
@@ -145,7 +154,7 @@ function associatePhotos(publicLinkId, photoIds) {
   const ts = nowISO();
   
   const trx = db.transaction(() => {
-    const insert = db.prepare(`
+    const insert = stmtCache.get(db, 'publicLinks:associatePhoto', `
       INSERT OR IGNORE INTO photo_public_links (photo_id, public_link_id, created_at)
       VALUES (?, ?, ?)
     `);
@@ -165,10 +174,11 @@ function associatePhotos(publicLinkId, photoIds) {
  */
 function removePhoto(publicLinkId, photoId) {
   const db = getDb();
-  db.prepare(`
+  const stmt = stmtCache.get(db, 'publicLinks:removePhoto', `
     DELETE FROM photo_public_links 
     WHERE public_link_id = ? AND photo_id = ?
-  `).run(publicLinkId, photoId);
+  `);
+  stmt.run(publicLinkId, photoId);
 }
 
 /**
@@ -182,10 +192,13 @@ function removePhotos(publicLinkId, photoIds) {
   const db = getDb();
   const placeholders = photoIds.map(() => '?').join(',');
   
-  db.prepare(`
+  const cacheKey = `publicLinks:removePhotos:${photoIds.length}`;
+  const sql = `
     DELETE FROM photo_public_links 
     WHERE public_link_id = ? AND photo_id IN (${placeholders})
-  `).run(publicLinkId, ...photoIds);
+  `;
+  const stmt = stmtCache.get(db, cacheKey, sql);
+  stmt.run(publicLinkId, ...photoIds);
 }
 
 /**
@@ -195,13 +208,14 @@ function removePhotos(publicLinkId, photoIds) {
  */
 function getLinksForPhoto(photoId) {
   const db = getDb();
-  return db.prepare(`
+  const stmt = stmtCache.get(db, 'publicLinks:getLinksForPhoto', `
     SELECT pl.* 
     FROM public_links pl
     INNER JOIN photo_public_links ppl ON ppl.public_link_id = pl.id
     WHERE ppl.photo_id = ?
     ORDER BY pl.title ASC
-  `).all(photoId);
+  `);
+  return stmt.all(photoId);
 }
 
 /**
@@ -211,11 +225,12 @@ function getLinksForPhoto(photoId) {
  */
 function getPhotoIdsForLink(publicLinkId) {
   const db = getDb();
-  return db.prepare(`
+  const stmt = stmtCache.get(db, 'publicLinks:getPhotoIdsForLink', `
     SELECT photo_id 
     FROM photo_public_links 
     WHERE public_link_id = ?
-  `).all(publicLinkId).map(row => row.photo_id);
+  `);
+  return stmt.all(publicLinkId).map(row => row.photo_id);
 }
 
 /**
@@ -225,11 +240,12 @@ function getPhotoIdsForLink(publicLinkId) {
  */
 function getPhotoCount(publicLinkId) {
   const db = getDb();
-  const result = db.prepare(`
+  const stmt = stmtCache.get(db, 'publicLinks:getPhotoCount', `
     SELECT COUNT(*) as count 
     FROM photo_public_links 
     WHERE public_link_id = ?
-  `).get(publicLinkId);
+  `);
+  const result = stmt.get(publicLinkId);
   return result.count;
 }
 

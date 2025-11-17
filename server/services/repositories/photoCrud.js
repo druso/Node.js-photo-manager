@@ -1,4 +1,5 @@
 const { getDb } = require('../db');
+const stmtCache = require('./preparedStatements');
 const makeLogger = require('../../utils/logger2');
 const log = makeLogger('photoCrud');
 
@@ -11,7 +12,8 @@ function nowISO() { return new Date().toISOString(); }
  */
 function getById(id) {
   const db = getDb();
-  return db.prepare(`SELECT * FROM photos WHERE id = ?`).get(id);
+  const stmt = stmtCache.get(db, 'photos:getById', 'SELECT * FROM photos WHERE id = ?');
+  return stmt.get(id);
 }
 
 /**
@@ -22,7 +24,8 @@ function getById(id) {
 function getByManifestId(manifest_id) {
   if (!manifest_id) return null;
   const db = getDb();
-  return db.prepare(`SELECT * FROM photos WHERE manifest_id = ?`).get(manifest_id);
+  const stmt = stmtCache.get(db, 'photos:getByManifestId', 'SELECT * FROM photos WHERE manifest_id = ?');
+  return stmt.get(manifest_id);
 }
 
 /**
@@ -33,7 +36,8 @@ function getByManifestId(manifest_id) {
  */
 function getByFilename(project_id, filename) {
   const db = getDb();
-  return db.prepare(`SELECT * FROM photos WHERE project_id = ? AND filename = ?`).get(project_id, filename);
+  const stmt = stmtCache.get(db, 'photos:getByFilename', 'SELECT * FROM photos WHERE project_id = ? AND filename = ?');
+  return stmt.get(project_id, filename);
 }
 
 /**
@@ -45,7 +49,8 @@ function getByFilename(project_id, filename) {
 function getByProjectAndFilename(project_id, filename) {
   if (!project_id || !filename) return null;
   const db = getDb();
-  return db.prepare(`SELECT * FROM photos WHERE project_id = ? AND filename = ?`).get(project_id, filename);
+  const stmt = stmtCache.get(db, 'photos:getByProjectAndFilename', 'SELECT * FROM photos WHERE project_id = ? AND filename = ?');
+  return stmt.get(project_id, filename);
 }
 
 /**
@@ -65,7 +70,10 @@ function getGlobalByFilename(filename, { exclude_project_id = null } = {}) {
     params.push(exclude_project_id); 
   }
   const where = `WHERE ${conds.join(' AND ')}`;
-  return db.prepare(`SELECT * FROM photos ${where} LIMIT 1`).get(...params);
+  const cacheKey = `photos:getGlobalByFilename:${conds.join(':')}`;
+  const sql = `SELECT * FROM photos ${where} LIMIT 1`;
+  const stmt = stmtCache.get(db, cacheKey, sql);
+  return stmt.get(...params);
 }
 
 /**
@@ -82,7 +90,7 @@ function upsertPhoto(project_id, photo) {
   const existing = getByProjectAndFilename(project_id, photo.filename) || getByManifestId(photo.manifest_id);
   
   if (existing) {
-    const stmt = db.prepare(`
+    const stmt = stmtCache.get(db, 'photos:upsert:update', `
       UPDATE photos SET
         filename = ?, basename = ?, ext = ?,
         updated_at = ?, date_time_original = ?,
@@ -104,7 +112,7 @@ function upsertPhoto(project_id, photo) {
     );
     return getById(existing.id);
   } else {
-    const stmt = db.prepare(`
+    const stmt = stmtCache.get(db, 'photos:upsert:insert', `
       INSERT INTO photos (
         project_id, manifest_id, filename, basename, ext,
         created_at, updated_at, date_time_original,
@@ -150,9 +158,11 @@ function updateDerivativeStatus(id, { thumbnail_status, preview_status }) {
   
   if (!sets.length) return getById(id);
   
+  const cacheKey = `photos:updateDerivativeStatus:${sets.join(':')}`;
   const sql = `UPDATE photos SET ${sets.join(', ')}, updated_at = ? WHERE id = ?`;
   params.push(nowISO(), id);
-  db.prepare(sql).run(...params);
+  const stmt = stmtCache.get(db, cacheKey, sql);
+  stmt.run(...params);
   return getById(id);
 }
 
@@ -167,8 +177,8 @@ function updateDerivativeStatus(id, { thumbnail_status, preview_status }) {
 function updateKeepFlags(id, { keep_jpg, keep_raw }) {
   const db = getDb();
   const ts = nowISO();
-  db.prepare(`UPDATE photos SET keep_jpg = ?, keep_raw = ?, updated_at = ? WHERE id = ?`)
-    .run(keep_jpg ? 1 : 0, keep_raw ? 1 : 0, ts, id);
+  const stmt = stmtCache.get(db, 'photos:updateKeepFlags', 'UPDATE photos SET keep_jpg = ?, keep_raw = ?, updated_at = ? WHERE id = ?');
+  stmt.run(keep_jpg ? 1 : 0, keep_raw ? 1 : 0, ts, id);
   return getById(id);
 }
 
@@ -190,8 +200,9 @@ function moveToProject({ photo_id, to_project_id }) {
   const keep_jpg = row.jpg_available ? 1 : 0;
   const keep_raw = row.raw_available ? 1 : 0;
 
-  db.prepare(`UPDATE photos SET project_id = ?, manifest_id = ?, keep_jpg = ?, keep_raw = ?, updated_at = ? WHERE id = ?`)
-    .run(to_project_id, manifest_id, keep_jpg, keep_raw, ts, photo_id);
+  const ts = nowISO();
+  const stmt = stmtCache.get(db, 'photos:moveToProject', 'UPDATE photos SET project_id = ?, manifest_id = ?, keep_jpg = ?, keep_raw = ?, updated_at = ? WHERE id = ?');
+  stmt.run(to_project_id, manifest_id, keep_jpg, keep_raw, ts, photo_id);
 
   return getById(photo_id);
 }
@@ -211,7 +222,8 @@ function updateVisibility(id, visibility) {
 
   const db = getDb();
   const ts = nowISO();
-  db.prepare(`UPDATE photos SET visibility = ?, updated_at = ? WHERE id = ?`).run(visibility, ts, id);
+  const stmt = stmtCache.get(db, 'photos:updateVisibility', 'UPDATE photos SET visibility = ?, updated_at = ? WHERE id = ?');
+  stmt.run(visibility, ts, id);
   return getById(id);
 }
 
@@ -221,7 +233,8 @@ function updateVisibility(id, visibility) {
  */
 function removeById(id) {
   const db = getDb();
-  db.prepare(`DELETE FROM photos WHERE id = ?`).run(id);
+  const stmt = stmtCache.get(db, 'photos:removeById', 'DELETE FROM photos WHERE id = ?');
+  stmt.run(id);
 }
 
 /**
@@ -231,13 +244,14 @@ function removeById(id) {
  */
 function countByProject(project_id) {
   const db = getDb();
-  return db.prepare(`SELECT COUNT(*) as c FROM photos WHERE project_id = ?`).get(project_id).c;
+  const stmt = stmtCache.get(db, 'photos:countByProject', 'SELECT COUNT(*) as c FROM photos WHERE project_id = ?');
+  return stmt.get(project_id).c;
 }
 
 function getPublicByFilename(filename) {
   if (!filename) return null;
   const db = getDb();
-  return db.prepare(`
+  const stmt = stmtCache.get(db, 'photos:getPublicByFilename', `
     SELECT ph.*, p.project_folder, p.project_name
     FROM photos ph
     JOIN projects p ON p.id = ph.project_id
@@ -245,14 +259,15 @@ function getPublicByFilename(filename) {
       AND ph.visibility = 'public'
       AND (p.status IS NULL OR p.status != 'canceled')
     LIMIT 1
-  `).get(filename);
+  `);
+  return stmt.get(filename);
 }
 
 function getPublicByBasename(basename) {
   if (!basename) return null;
   const db = getDb();
   const normalized = String(basename).toLowerCase();
-  return db.prepare(`
+  const stmt = stmtCache.get(db, 'photos:getPublicByBasename', `
     SELECT ph.*, p.project_folder, p.project_name
     FROM photos ph
     JOIN projects p ON p.id = ph.project_id
@@ -265,13 +280,14 @@ function getPublicByBasename(basename) {
       AND (p.status IS NULL OR p.status != 'canceled')
     ORDER BY ph.id DESC
     LIMIT 1
-  `).get(normalized, normalized, normalized);
+  `);
+  return stmt.get(normalized, normalized, normalized);
 }
 
 function getAnyVisibilityByFilename(filename) {
   if (!filename) return null;
   const db = getDb();
-  return db.prepare(`
+  const stmt = stmtCache.get(db, 'photos:getAnyVisibilityByFilename', `
     SELECT ph.*, p.project_folder, p.project_name
     FROM photos ph
     JOIN projects p ON p.id = ph.project_id
@@ -279,14 +295,15 @@ function getAnyVisibilityByFilename(filename) {
       AND (p.status IS NULL OR p.status != 'canceled')
     ORDER BY ph.id DESC
     LIMIT 1
-  `).get(filename);
+  `);
+  return stmt.get(filename);
 }
 
 function getAnyVisibilityByBasename(basename) {
   if (!basename) return null;
   const db = getDb();
   const normalized = String(basename).toLowerCase();
-  return db.prepare(`
+  const stmt = stmtCache.get(db, 'photos:getAnyVisibilityByBasename', `
     SELECT ph.*, p.project_folder, p.project_name
     FROM photos ph
     JOIN projects p ON p.id = ph.project_id
@@ -298,7 +315,8 @@ function getAnyVisibilityByBasename(basename) {
       AND (p.status IS NULL OR p.status != 'canceled')
     ORDER BY ph.id DESC
     LIMIT 1
-  `).get(normalized, normalized, normalized);
+  `);
+  return stmt.get(normalized, normalized, normalized);
 }
 
 module.exports = {

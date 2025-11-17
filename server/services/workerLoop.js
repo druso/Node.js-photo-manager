@@ -4,7 +4,7 @@ const { runGenerateDerivatives } = require('./workers/derivativesWorker');
 const { runProjectStopProcesses, runProjectDeleteFiles, runProjectCleanupDb } = require('./workers/projectDeletionWorker');
 const { runProjectScavenge } = require('./workers/projectScavengeWorker');
 const { runImageMoveFiles } = require('./workers/imageMoveWorker');
-const { runTrashMaintenance, runDuplicateResolution, runManifestCheck, runFolderCheck, runManifestCleaning, runFolderAlignment, runOrphanedProjectCleanup } = require('./workers/maintenanceWorker');
+const { runTrashMaintenance, runDuplicateResolution, runManifestCheck, runFolderCheck, runManifestCleaning, runFolderAlignment, runOrphanedProjectCleanup, runDerivativeCacheValidation } = require('./workers/maintenanceWorker');
 const { runFileRemoval } = require('./workers/fileRemovalWorker');
 const { runFolderDiscovery } = require('./workers/folderDiscoveryWorker');
 const { emitJobUpdate } = require('./events');
@@ -152,6 +152,17 @@ async function handleJob(job, { heartbeatMs, maxAttemptsDefault, workerId }) {
     }
     if (job.type === 'orphaned_project_cleanup') {
       await runOrphanedProjectCleanup(job);
+      stopHeartbeat();
+      jobsRepo.complete(job.id);
+      {
+        const p = job.payload_json || {};
+        emitJobUpdate({ id: job.id, status: 'completed', task_id: p.task_id, task_type: p.task_type, source: p.source });
+      }
+      try { tasksOrchestrator.onJobCompleted(job); } catch {}
+      return;
+    }
+    if (job.type === 'cache_validation') {
+      await runDerivativeCacheValidation(job);
       stopHeartbeat();
       jobsRepo.complete(job.id);
       {

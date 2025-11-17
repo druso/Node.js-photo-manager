@@ -21,6 +21,7 @@ function AllPhotosPane({
   selectedPhotos,
   onEnterSelectionMode,
   isPublicView = false,
+  showEmptyDropHint = true,
 }) {
   return (
     <PhotoDisplay
@@ -45,6 +46,7 @@ function AllPhotosPane({
       anchorIndex={anchorIndex}
       onAnchored={onAnchored}
       isPublicView={isPublicView}
+      showEmptyDropHint={showEmptyDropHint}
     />
   );
 }

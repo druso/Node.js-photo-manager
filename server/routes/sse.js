@@ -2,16 +2,70 @@ const express = require('express');
 const router = express.Router();
 const { getDb } = require('../services/db');
 const photosRepo = require('../services/repositories/photosRepo');
+const sseMultiplexer = require('../services/sseMultiplexer');
 const makeLogger = require('../utils/logger2');
 const log = makeLogger('sse-pending');
 
-// Store active SSE connections
+// Store active SSE connections (legacy endpoint)
 const connections = new Map();
 const ipConnCounts = new Map(); // ip -> count
 const MAX_SSE_PER_IP = Number(process.env.SSE_MAX_CONN_PER_IP || 2);
 
 /**
- * SSE endpoint for pending changes notifications
+ * UNIFIED SSE ENDPOINT - Multiplexed stream for all events
+ * Supports channel-based subscriptions via ?channels=jobs,pending-changes
+ * This is the new consolidated endpoint that replaces /pending-changes and /api/jobs/stream
+ */
+router.get('/stream', (req, res) => {
+  const ip = req.ip || req.connection?.remoteAddress || 'unknown';
+  const userId = req.user?.id || ip;
+  const channelsParam = req.query.channels || 'all';
+  const channels = channelsParam === 'all' ? ['all'] : channelsParam.split(',').map(c => c.trim());
+  
+  // Enforce per-IP connection limit for security
+  const currentConnections = sseMultiplexer.getConnectionCountForUser(ip);
+  if (currentConnections >= MAX_SSE_PER_IP) {
+    log.warn('sse_stream_ip_limit_exceeded', { ip, current: currentConnections, max: MAX_SSE_PER_IP });
+    return res.status(429).json({ error: 'Too many SSE connections from this IP' });
+  }
+  
+  // Set SSE headers
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no'); // Disable nginx buffering
+  res.flushHeaders();
+  
+  // Add connection to multiplexer (use IP for connection tracking to enforce limits)
+  sseMultiplexer.addConnection(ip, res, channels);
+  
+  log.info('sse_stream_connected', { ip, userId, channels, totalConnections: sseMultiplexer.getTotalConnections() });
+  
+  // Send initial connected event
+  res.write(`event: connected\n`);
+  res.write(`data: ${JSON.stringify({ channels, timestamp: new Date().toISOString() })}\n\n`);
+  
+  // If subscribed to pending-changes, send initial state
+  if (channels.includes('all') || channels.includes('pending-changes')) {
+    try {
+      const initialState = getPendingChangesState();
+      res.write(`event: pending_changes_state\n`);
+      res.write(`data: ${JSON.stringify(initialState)}\n\n`);
+    } catch (error) {
+      log.error('sse_stream_initial_state_failed', { userId, error: error?.message });
+    }
+  }
+  
+  // Handle client disconnect
+  req.on('close', () => {
+    sseMultiplexer.removeConnection(ip, res);
+    log.info('sse_stream_disconnected', { ip, userId, remainingConnections: sseMultiplexer.getTotalConnections() });
+  });
+});
+
+/**
+ * LEGACY SSE endpoint for pending changes notifications
+ * @deprecated Use /stream?channels=pending-changes instead
  * Sends real-time updates when photos have mismatches between keep flags and availability
  */
 router.get('/pending-changes', (req, res) => {
@@ -151,37 +205,49 @@ function getPendingChangesState() {
 
 /**
  * Broadcast pending changes update to all connected clients
+ * Uses the new multiplexer for unified endpoint and legacy connections for backward compatibility
  * @param {string|null} projectFolder - Optional specific project to update, or null for all projects
  */
 function broadcastPendingChanges(projectFolder = null) {
-  log.debug('sse_pending_broadcast_called', { projectFolder: projectFolder || 'all', activeConnections: connections.size });
-  
-  if (connections.size === 0) {
-    return; // No clients connected, skip
-  }
+  log.debug('sse_pending_broadcast_called', { 
+    projectFolder: projectFolder || 'all', 
+    legacyConnections: connections.size,
+    multiplexerConnections: sseMultiplexer.getTotalConnections()
+  });
   
   try {
     const state = getPendingChangesState();
-    const message = `data: ${JSON.stringify(state)}\n\n`;
     
-    log.info('sse_pending_broadcasting', { recipients: connections.size, projectCount: state.projects?.length || 0, totalPending: state.totals?.total || 0 });
+    // Broadcast via new multiplexer (to /stream endpoint clients)
+    sseMultiplexer.broadcast('pending-changes', 'pending_changes_state', state);
     
-    let successCount = 0;
-    let failCount = 0;
-    
-    for (const [id, res] of connections) {
-      try {
-        res.write(message);
-        successCount++;
-      } catch (error) {
-        log.warn('sse_pending_write_failed', { connectionId: id, error: error?.message });
-        connections.delete(id);
-        failCount++;
+    // Also broadcast to legacy endpoint clients for backward compatibility
+    if (connections.size > 0) {
+      const message = `data: ${JSON.stringify(state)}\n\n`;
+      
+      log.info('sse_pending_broadcasting_legacy', { 
+        recipients: connections.size, 
+        projectCount: state.projects?.length || 0, 
+        totalPending: state.totals?.total || 0 
+      });
+      
+      let successCount = 0;
+      let failCount = 0;
+      
+      for (const [id, res] of connections) {
+        try {
+          res.write(message);
+          successCount++;
+        } catch (error) {
+          log.warn('sse_pending_write_failed', { connectionId: id, error: error?.message });
+          connections.delete(id);
+          failCount++;
+        }
       }
-    }
-    
-    if (failCount > 0) {
-      log.info('sse_pending_broadcast_complete', { successCount, failCount });
+      
+      if (failCount > 0) {
+        log.info('sse_pending_broadcast_complete', { successCount, failCount });
+      }
     }
   } catch (error) {
     log.error('sse_pending_broadcast_failed', { error: error?.message, stack: error?.stack });

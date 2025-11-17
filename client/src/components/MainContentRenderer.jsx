@@ -8,6 +8,7 @@ const MainContentRenderer = ({
   isSharedMode,
   selectedProject,
   projects,
+  showEmptyDropHint = true,
   
   // View settings
   viewMode,
@@ -89,6 +90,7 @@ const MainContentRenderer = ({
         selectedPhotos={allSelectedKeys}
         onEnterSelectionMode={onEnterSelectionMode}
         loading={sharedLoading}
+        showEmptyDropHint={showEmptyDropHint}
       />
     );
   }
@@ -115,6 +117,7 @@ const MainContentRenderer = ({
         onToggleSelection={handleToggleSelectionAll}
         selectedPhotos={allSelectedKeys}
         onEnterSelectionMode={onEnterSelectionMode}
+        showEmptyDropHint={showEmptyDropHint}
       />
     );
   }
@@ -143,6 +146,7 @@ const MainContentRenderer = ({
         onLoadPrev={loadPrev}
         anchorIndex={gridAnchorIndex}
         onAnchored={() => setGridAnchorIndex(null)}
+        showEmptyDropHint={showEmptyDropHint}
       />
     );
   }

@@ -104,6 +104,9 @@ export function useAppState() {
   // UI preferences state
   const [uiPrefsReady, setUiPrefsReady] = useState(false);
 
+  // 404 Not Found state
+  const [notFound, setNotFound] = useState({ is404: false, message: '', details: '' });
+
   // Refs for state management
   const previousProjectRef = useRef(null);
   const suppressUrlRef = useRef(null);
@@ -238,6 +241,10 @@ export function useAppState() {
     // UI preferences state
     uiPrefsReady,
     setUiPrefsReady,
+
+    // 404 Not Found state
+    notFound,
+    setNotFound,
 
     // Refs
     previousProjectRef,

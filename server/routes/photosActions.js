@@ -419,6 +419,7 @@ router.post(
           errors: errors.length ? errors : undefined
         });
       } catch (e) {
+        log.error('queue_processing_failed', { error: e.message, stack: e.stack });
         errors.push({ error: e.message });
         res.status(500).json({
           error: 'Failed to queue processing',

@@ -53,6 +53,7 @@ import RevertModal from './components/RevertModal';
 import CreateProjectModal from './components/CreateProjectModal';
 import MainContentRenderer from './components/MainContentRenderer';
 import SelectionModeBanner from './components/SelectionModeBanner';
+import NotFound from './components/NotFound';
 
 // New hooks
 import { useCommitRevert } from './hooks/useCommitRevert';
@@ -103,6 +104,7 @@ function App({ sharedLinkHash = null, initialPhotoName = null }) {
     showShareModal, setShowShareModal,
     allPendingDeletes, setAllPendingDeletes,
     uiPrefsReady, setUiPrefsReady,
+    notFound, setNotFound,
     // Refs
     suppressUrlRef,
     pendingOpenRef,
@@ -413,7 +415,7 @@ function App({ sharedLinkHash = null, initialPhotoName = null }) {
     setFiltersCollapsed, setActiveFilters, setViewerState,
     setPendingSelectProjectRef: (ref) => { pendingSelectProjectRef.current = ref; },
     setAllDeepLink,
-    setSortKey, setSortDir,
+    setSortKey, setSortDir, setNotFound,
     
     // Unified view context
     view,
@@ -981,6 +983,10 @@ function App({ sharedLinkHash = null, initialPhotoName = null }) {
         projectFolder={view?.project_filter !== null && selectedProject?.folder ? selectedProject.folder : null}
         onCompleted={handlePhotosUploaded}
       >
+        {/* Show 404 page if URL doesn't match any valid route */}
+        {notFound.is404 ? (
+          <NotFound message={notFound.message} details={notFound.details} />
+        ) : (
         <div className="bg-gray-50 overflow-x-hidden">
           {/* Selection Mode Banner (M2) - Show only for authenticated users when selections exist */}
           {isAuthenticated && (() => {
@@ -1223,6 +1229,7 @@ function App({ sharedLinkHash = null, initialPhotoName = null }) {
                               allSelectedKeys={allSelectedKeys}
                               allSelectedPhotos={allSelectedPhotos}
                               setAllSelectedKeys={replaceAllSelection}
+                              allPhotos={allPhotos}
                               config={config}
                               trigger="label"
                               onRequestMove={() => setShowAllMoveModal(true)}
@@ -1234,7 +1241,10 @@ function App({ sharedLinkHash = null, initialPhotoName = null }) {
                           : selectedProject ? (
                             <OperationsMenu
                               projectFolder={selectedProject.folder}
-                              projectData={filteredProjectData}
+                              projectData={{
+                                ...filteredProjectData,
+                                photos: sortedPagedPhotos?.length > 0 ? sortedPagedPhotos : pagedPhotos  // Use sorted if available, otherwise use raw paged photos
+                              }}
                               selectedPhotos={selectedPhotos}
                               setSelectedPhotos={setSelectedPhotos}
                               onTagsUpdated={handleTagsUpdated}
@@ -1470,6 +1480,7 @@ function App({ sharedLinkHash = null, initialPhotoName = null }) {
                 selectedProject={selectedProject}
                 projects={projects}
                 config={config}
+                showEmptyDropHint={projects.length > 0}
                 viewMode={viewMode}
                 sortKey={sortKey}
                 sortDir={sortDir}
@@ -1660,6 +1671,7 @@ function App({ sharedLinkHash = null, initialPhotoName = null }) {
             />
           )}
         </div>
+        )}
       </UploadProvider>
     </PublicHashProvider>
   );

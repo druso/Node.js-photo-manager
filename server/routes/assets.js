@@ -257,7 +257,11 @@ router.get('/:folder/thumbnail/:filename', rateLimit({ windowMs: 60 * 1000, max:
           setNegativeCacheHeaders(res);
           res.status(500).end();
         } else {
-          try { res.destroy(); } catch (_) {}
+          try {
+            res.destroy();
+          } catch (destroyErr) {
+            log.debug('response_destroy_failed', { error: destroyErr.message });
+          }
         }
       });
       return stream.pipe(res);
@@ -333,7 +337,11 @@ router.get('/:folder/preview/:filename', rateLimit({ windowMs: 60 * 1000, max: R
           setNegativeCacheHeaders(res);
           res.status(500).end();
         } else {
-          try { res.destroy(); } catch (_) {}
+          try {
+            res.destroy();
+          } catch (destroyErr) {
+            log.debug('response_destroy_failed', { error: destroyErr.message });
+          }
         }
       });
       return stream.pipe(res);
@@ -391,7 +399,11 @@ router.get('/:folder/file/:type/:filename', rateLimit({ windowMs: 60 * 1000, max
           setNegativeCacheHeaders(res);
           res.status(500).end();
         } else {
-          try { res.destroy(); } catch (_) {}
+          try {
+            res.destroy();
+          } catch (destroyErr) {
+            log.debug('response_destroy_failed', { error: destroyErr.message });
+          }
         }
       });
       return stream.pipe(res);
@@ -546,7 +558,11 @@ router.get('/:folder/image/:filename', rateLimit({ windowMs: 60 * 1000, max: RAT
           setNegativeCacheHeaders(res);
           res.status(500).end();
         } else {
-          try { res.destroy(); } catch (_) {}
+          try {
+            res.destroy();
+          } catch (destroyErr) {
+            log.debug('response_destroy_failed', { error: destroyErr.message });
+          }
         }
       });
       return stream.pipe(res);

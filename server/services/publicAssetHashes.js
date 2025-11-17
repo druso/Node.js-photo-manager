@@ -18,7 +18,7 @@ function readSettings() {
       ttlDays: Number.isFinite(ttlDays) && ttlDays > 0 ? ttlDays : 28,
     };
   } catch (err) {
-    try { log.warn('read_settings_failed', { error: err && err.message }); } catch (_) {}
+    log.warn('read_settings_failed', { error: err.message, stack: err.stack });
     return { rotationDays: 21, ttlDays: 28 };
   }
 }
@@ -121,13 +121,11 @@ function rotateDueHashes(reference = now()) {
       rotated += 1;
     }
     if (rotated > 0) {
-      try {
-        log.info('hashes_rotated', { count: rotated });
-      } catch (_) {}
+      log.info('hashes_rotated', { count: rotated });
     }
     return rotated;
   } catch (err) {
-    try { log.warn('rotate_due_hashes_failed', { error: err && err.message }); } catch (_) {}
+    log.warn('rotate_due_hashes_failed', { error: err.message, stack: err.stack });
     return 0;
   }
 }

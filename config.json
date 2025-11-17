@@ -53,7 +53,8 @@
     "preview": {
       "maxDim": 6000,
       "quality": 50
-    }
+    },
+    "workerCount": 4
   },
   "public_assets": {
     "hash_rotation_days": 21,

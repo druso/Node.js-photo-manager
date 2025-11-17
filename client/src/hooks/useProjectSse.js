@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
-import { openJobStream, listJobs } from '../api/jobsApi';
+import { listJobs } from '../api/jobsApi';
+import sseClient from '../api/sseClient';
 import { stripKnownExt } from './useAllPhotosPagination';
 
 export default function useProjectSse({
@@ -35,7 +36,10 @@ export default function useProjectSse({
     if (!selectedProject?.folder) return;
     if (selectedProject.folder === '__all__') return;
 
-    const close = openJobStream((evt) => {
+    // Connect to jobs channel via unified SSE client
+    sseClient.connect(['jobs']);
+
+    const handleJobUpdate = (evt) => {
       sseReadyRef.current = true;
 
       // 0) Manifest changes: prefer incremental updates, no hard refetch
@@ -219,13 +223,26 @@ export default function useProjectSse({
         const ttype = evt.task_type;
         const meta = taskDefs?.[ttype];
         const userRelevant = meta ? (meta.user_relevant !== false) : true;
+        
+        console.log('[SSE] Task event received:', {
+          task_id: tid,
+          task_type: ttype,
+          status: evt.status,
+          userRelevant,
+          alreadyNotified: notifiedTasksRef.current.has(tid),
+          projectFolder: selectedProject?.folder
+        });
+        
         if (userRelevant && !notifiedTasksRef.current.has(tid)) {
           setTimeout(async () => {
             try {
               const { jobs } = await listJobs(selectedProject.folder, { limit: 100 });
               const sameTask = (jobs || []).filter(j => j?.payload_json?.task_id === tid);
               const anyActive = sameTask.some(j => j.status === 'running' || j.status === 'queued');
-              if (anyActive) return;
+              if (anyActive) {
+                console.log('[SSE] Task still has active jobs, skipping notification');
+                return;
+              }
               const anyFailed = sameTask.some(j => j.status === 'failed');
               const label = meta?.label || ttype;
               if (anyFailed) {
@@ -234,15 +251,32 @@ export default function useProjectSse({
                 toast?.show({ emoji: '✅', message: `${label} completed`, variant: 'success' });
               }
               notifiedTasksRef.current.add(tid);
+              
+              // Refresh project data after upload-related tasks complete
+              // This ensures the grid shows newly uploaded photos
+              if (ttype === 'upload_postprocess' && evt.status === 'completed') {
+                console.log('[SSE] Upload task completed, refreshing project data for:', selectedProject.folder);
+                try {
+                  await fetchProjectDataRef.current?.(selectedProject.folder);
+                  console.log('[SSE] Project data refreshed successfully');
+                } catch (error) {
+                  console.error('[SSE] post-upload refresh failed', error);
+                }
+              }
             } catch (error) {
-              console.debug('[SSE] toast fetch jobs failed', error);
+              console.error('[SSE] toast fetch jobs failed', error);
             }
           }, 400);
         }
       }
-    });
+    };
 
-    return () => close();
+    // Register listener
+    sseClient.on('job_update', handleJobUpdate);
+
+    return () => {
+      sseClient.off('job_update', handleJobUpdate);
+    };
   }, [selectedProject?.folder, taskDefs, setProjectData, mutatePagedPhotos, toast, notifiedTasksRef]);
 
   useEffect(() => {

@@ -2,15 +2,21 @@ import React, { useState } from 'react';
 
 const CreateProjectModal = ({ isOpen, onClose, onCreateProject }) => {
   const [newProjectName, setNewProjectName] = useState('');
+  const [isCreating, setIsCreating] = useState(false);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     const name = newProjectName.trim();
-    if (!name) return;
+    if (!name || isCreating) return;
     
-    await onCreateProject(name);
-    setNewProjectName('');
-    onClose();
+    setIsCreating(true);
+    try {
+      await onCreateProject(name);
+      setNewProjectName('');
+      onClose();
+    } finally {
+      setIsCreating(false);
+    }
   };
 
   const handleClose = () => {
@@ -46,15 +52,16 @@ const CreateProjectModal = ({ isOpen, onClose, onCreateProject }) => {
               type="button"
               className="px-4 py-2 rounded-md bg-gray-200 text-gray-800 hover:bg-gray-300"
               onClick={handleClose}
+              disabled={isCreating}
             >
               Cancel
             </button>
             <button
               type="submit"
               className="px-4 py-2 rounded-md bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
-              disabled={!newProjectName.trim()}
+              disabled={!newProjectName.trim() || isCreating}
             >
-              Create
+              {isCreating ? 'Creating...' : 'Create'}
             </button>
           </div>
         </form>

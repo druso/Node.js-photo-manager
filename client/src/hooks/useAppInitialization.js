@@ -46,6 +46,7 @@ export function useAppInitialization({
   setAllDeepLink,
   setSortKey,
   setSortDir,
+  setNotFound,
   
   // Unified view context
   view,
@@ -307,9 +308,16 @@ export function useAppInitialization({
           return;
         }
 
+        // Project not found - set 404 state
         if (import.meta?.env?.DEV) {
           console.log('Project from URL not found in projects list');
         }
+        setNotFound({
+          is404: true,
+          message: 'Project not found',
+          details: `The project "${view.project_filter}" does not exist or has been deleted.`
+        });
+        return;
       }
       
       // Prefer pending selection set by creation flow
