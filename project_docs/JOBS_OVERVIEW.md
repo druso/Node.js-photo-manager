@@ -60,6 +60,11 @@
 - Steps: `trash_maintenance` (100), `manifest_check` (95), `folder_check` (95), `manifest_cleaning` (80)
 - Purpose: Per-project maintenance
 
+**trash_only** (scope: `project`)
+- Steps: `trash_maintenance` (100)
+- Purpose: Clean `.trash` directories only (24h TTL)
+
+
 **project_delete** (scope: `project`)
 - Steps: `project_stop_processes` (100), `project_delete_files` (100), `project_cleanup_db` (95)
 - Purpose: Orchestrated project deletion (immediate removal, no soft-delete)
@@ -344,7 +349,7 @@ All endpoints enforce max 2,000 items per request:
 
 ## Project Deletion Task
 
-**Endpoint**: `DELETE /api/projects/:folder`
+**Endpoint**: `DELETE /api/projects/:id`
 - Performs soft-delete (`status='canceled'`, `archived_at` set)
 - Enqueues high-priority `project_delete` task
 - UI removal immediate, cleanup runs async
