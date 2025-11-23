@@ -1,4 +1,3 @@
-
 services:
   app:
     build:
@@ -8,17 +7,18 @@ services:
     container_name: photo-manager
     ports:
       - "5000:5000"
+    env_file:
+      - .env
     environment:
       NODE_ENV: production
       PORT: 5000
       # Adjust for your frontend origin in dev; in prod set your real domain(s)
       ALLOWED_ORIGINS: http://localhost:3000,http://localhost:5000,http://localhost:5173,http://127.0.0.1:3000,http://127.0.0.1:5000,http://127.0.0.1:5173
-      # CHANGE THIS IN NON-LOCAL ENVIRONMENTS
-      DOWNLOAD_SECRET: dev-change-me
       # SSE hardening (optional overrides)
       SSE_MAX_CONN_PER_IP: 2
       SSE_IDLE_TIMEOUT_MS: 300000
     user: "1000:1000"
+    restart: unless-stopped
     volumes:
       # Persist database - accessible from host filesystem
       - /var/lib/photo-manager/db:/app/.db
@@ -28,7 +28,7 @@ services:
       # Persist runtime configuration (edit on host)
       - ./config.json:/app/config.json
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:5000/api/config').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      test: [ "CMD", "node", "-e", "fetch('http://127.0.0.1:5000/api/config').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))" ]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -42,7 +42,7 @@ services:
     #   - ALL
     # cap_add: ["CHOWN", "SETGID", "SETUID"]
 
-# Named volumes for persistent data (survives container rebuilds)
+    # Named volumes for persistent data (survives container rebuilds)
 volumes:
   photo-manager-db:
     driver: local
