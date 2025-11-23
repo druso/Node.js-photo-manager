@@ -11,7 +11,7 @@ echo ""
 
 # Configuration
 PROJECTS_DIR="/var/lib/photo-manager/projects"
-DB_VOLUME="photo-manager-db"
+DB_DIR="/var/lib/photo-manager/db"
 
 # Check if running as root or with sudo
 if [ "$EUID" -ne 0 ]; then 
@@ -20,24 +20,23 @@ if [ "$EUID" -ne 0 ]; then
     exit 1
 fi
 
-echo "Step 1: Creating project directory..."
+echo "Step 1: Creating directories..."
 mkdir -p "$PROJECTS_DIR"
+mkdir -p "$DB_DIR"
 echo "✓ Created: $PROJECTS_DIR"
+echo "✓ Created: $DB_DIR"
 
 echo ""
 echo "Step 2: Setting ownership (user 1000:1000)..."
 chown -R 1000:1000 "$PROJECTS_DIR"
+chown -R 1000:1000 "$DB_DIR"
 echo "✓ Ownership set to 1000:1000"
 
 echo ""
 echo "Step 3: Setting permissions..."
 chmod -R 755 "$PROJECTS_DIR"
+chmod -R 755 "$DB_DIR"
 echo "✓ Permissions set to 755"
-
-echo ""
-echo "Step 4: Creating Docker volume for database..."
-sudo -u "#1000" docker volume create "$DB_VOLUME" 2>/dev/null || echo "Volume $DB_VOLUME already exists"
-echo "✓ Database volume ready"
 
 echo ""
 echo "=========================================="
@@ -46,7 +45,7 @@ echo "=========================================="
 echo ""
 echo "Directory structure:"
 echo "  $PROJECTS_DIR - Photos and project files (accessible from host)"
-echo "  $DB_VOLUME - Database (Docker volume)"
+echo "  $DB_DIR - Database files (accessible from host)"
 echo ""
 echo "Access your photos on Ubuntu:"
 echo "  cd $PROJECTS_DIR"
