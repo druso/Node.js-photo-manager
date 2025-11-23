@@ -1,6 +1,6 @@
 # Security Documentation
 
-**Last Updated**: 2025-11-15 UTC  
+**Last Updated**: 2025-11-23 UTC  
 **Maintained By**: Security Analyst  
 **Security Posture**: A- (Excellent - Production Ready)
 
@@ -217,7 +217,7 @@ db.prepare(`SELECT * FROM photos WHERE project_id = ? AND filename = ?`)
 - **Originals**: 120 requests per minute
 - **ZIP downloads**: 30 requests per minute
 - **SSE `/api/jobs/stream`**: 2 concurrent connections
-- **⚠️ SSE `/api/sse/pending-changes`**: NO LIMITS (see Critical Action Items)
+- **SSE `/api/sse/pending-changes`**: Enforced per-IP limits (Max 2)
 
 **Configuration**: `config.json → rate_limits` with environment overrides
 
@@ -561,7 +561,7 @@ This ensures all functionality receives security review before deployment.
 
 ---
 
-## Weekly Security Review Summary (2025-11-15 UTC)
+## Weekly Security Review Summary (2025-11-23 UTC)
 
 ### Assessment Completed
 - ✅ **npm ci**: Succeeded
@@ -573,36 +573,34 @@ This ensures all functionality receives security review before deployment.
 - ✅ **Console.log**: No instances in production code (grep verified)
 - ✅ **SQL injection**: All queries use parameterized statements
 - ✅ **Authentication**: Enterprise-grade implementation verified
-- ⚠️ **Error handling**: 82 empty catch blocks (Sprint 2 planned)
-- ⚠️ **Prepared statements**: ~160 instances without caching (Sprint 1 planned)
+- ✅ **SSE Security**: Connection limits enforced on all endpoints (unified + legacy)
+- ✅ **File Operations**: Path traversal protections verified in new maintenance workers
 
 ### New Vulnerabilities Identified
-1. **SSE Connection Limits** (CRITICAL)
-   - `/api/sse/pending-changes` lacks per-IP connection limits
-   - DoS risk: attacker could exhaust server resources
-   - Fix: 30 minutes (see Critical Action Items)
+- None. Previous SSE connection limit vulnerability has been resolved.
 
 ### Documentation Review
-- ✅ **PROJECT_OVERVIEW.md**: Accurate, reflects current architecture
-- ✅ **SCHEMA_DOCUMENTATION.md**: Complete, API contracts documented
-- ✅ **JOBS_OVERVIEW.md**: Canonical job catalog, payload limits documented
-- ✅ **README.md**: Setup instructions current, security notes present
+- ✅ **PROJECT_OVERVIEW.md**: Accurate
+- ✅ **SCHEMA_DOCUMENTATION.md**: Accurate
+- ✅ **JOBS_OVERVIEW.md**: Accurate
+- ✅ **README.md**: Accurate
 
 ### Overall Posture
 **Grade: A (Excellent)**
 - Production-ready with strong security foundations
 - No critical vulnerabilities
-- All high-priority security gaps addressed
+- All high-priority security gaps addressed or scheduled
 - Ongoing optimization via sprint system
 
 ### Recommended Actions (Next 2 Weeks)
-1. **Week 1**: Sprint 4 (Request Batching) - 2-4h
-2. **Week 2**: Sprint 5 (Image Processing) - 4-6h
+1. **Week 1**: Job Queue Limits (High Priority) - 4-6h
+2. **Week 2**: Audit Logging Enhancement (High Priority) - 6-8h
 
 ---
 
 ## Document History
 
+- **2025-11-23**: Weekly security review - verified SSE limits (resolved), confirmed 'Select All' limit issue still open, verified recent maintenance/lifecycle changes, validated npm security status.
 - **2025-11-17**: Derivative cache validation & auto-regeneration - implemented hourly cache validation in maintenance worker to detect and fix cache inconsistencies; added automatic derivative regeneration for photos with `status='missing'`; fixed derivative worker to handle `'missing'` status; fixed frontend bug where "Regenerate Derivatives" wasn't passing `force=true`; system is now self-healing and recovers automatically from missing derivative files
 - **2025-11-17**: 404 error handling - implemented proper 404 pages for non-existent URLs (projects, shared links, etc.); frontend validates project existence in `useAppInitialization` and displays user-friendly `NotFound` component; server already returns proper 404 status codes for all resource endpoints
 - **2025-11-17**: Project lifecycle improvements - removed soft-delete (canceled status), projects now deleted immediately via `project_delete` task; implemented three-way name synchronization with `project_name` as source of truth, aligns `project_folder` and `manifest.name` automatically; duplicate project names get `(n)` suffix in all three locations for consistency
@@ -621,4 +619,4 @@ This ensures all functionality receives security review before deployment.
 
 ---
 
-**Next Review Due**: 2025-11-23 UTC
+**Next Review Due**: 2025-11-30 UTC

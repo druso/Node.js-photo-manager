@@ -56,7 +56,8 @@ COPY --from=builder /app /app
 # server.js serves from "public"; copy Vite build output there
 RUN mkdir -p public \
   && if [ -d "client/dist" ]; then rm -rf public && cp -r client/dist public; fi \
-  && mkdir -p .projects
+  && mkdir -p .projects \
+  && rm -rf .db
 
 # Use non-root user for better security
 USER node

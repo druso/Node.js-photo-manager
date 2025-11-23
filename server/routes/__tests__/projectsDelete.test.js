@@ -78,7 +78,7 @@ describe('Project Deletion', { concurrency: false }, () => {
     return project;
   }
 
-  test('archives project, cancels jobs, and queues deletion task', async () => {
+  test('queues deletion task and cancels jobs', async () => {
     await withAuthEnv({}, async () => {
       const app = createTestApp();
       const token = issueToken();
@@ -92,10 +92,6 @@ describe('Project Deletion', { concurrency: false }, () => {
       assert.equal(res.body.message, 'Project deletion queued');
       assert.equal(res.body.folder, project.project_folder);
 
-      const projectsRepo = loadRel('../../services/repositories/projectsRepo');
-      const stored = projectsRepo.getById(project.id);
-      assert.equal(stored.status, 'canceled');
-
       assert.deepEqual(canceledProjects, [project.id]);
       assert.equal(startCalls.length, 1);
       assert.deepEqual(startCalls[0], {
@@ -105,25 +101,6 @@ describe('Project Deletion', { concurrency: false }, () => {
         items: null,
         tenant_id: 'user_0',
       });
-    });
-  });
-
-  test('returns 404 when project already canceled', async () => {
-    await withAuthEnv({}, async () => {
-      const app = createTestApp();
-      const token = issueToken();
-      const project = createProject('Already Gone');
-      const projectsRepo = loadRel('../../services/repositories/projectsRepo');
-      projectsRepo.archive(project.id);
-
-      const res = await request(app)
-        .delete(`/api/projects/${project.id}`)
-        .set('Authorization', `Bearer ${token}`);
-
-      assert.equal(res.status, 404);
-      assert.match(res.body.error, /not found/i);
-      assert.equal(startCalls.length, 0);
-      assert.equal(canceledProjects.length, 0);
     });
   });
 

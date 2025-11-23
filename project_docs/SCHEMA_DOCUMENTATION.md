@@ -19,7 +19,7 @@ This project treats the on-disk folder as the primary source of truth for photo 
 - Indexes: `status`, `project_folder`
 
 **photos**
-- Columns: `id` (PK), `project_id` (FK), `filename`, `basename`, `ext`, `date_time_original`, `jpg_available`, `raw_available`, `other_available`, `keep_jpg`, `keep_raw`, `thumbnail_status`, `preview_status`, `orientation`, `meta_json`
+- Columns: `id` (PK), `project_id` (FK), `filename`, `basename`, `ext`, `date_time_original`, `jpg_available`, `raw_available`, `other_available`, `keep_jpg`, `keep_raw`, `thumbnail_status`, `preview_status`, `orientation`, `meta_json`, `visibility`
 - Availability flags (`*_available`): reflect actual files on disk
 - Keep flags (`keep_*`): user intent, default to availability
 - Derivative status (`thumbnail_status`, `preview_status`): `null`, `'pending'`, `'failed'`, `'missing'`, or `'generated'`
@@ -37,7 +37,7 @@ This project treats the on-disk folder as the primary source of truth for photo 
 **jobs** + **job_items**
 - Async task queue with `scope` (`project`/`photo_set`/`global`)
 - Two-lane priority system (priority lane for jobs ≥ threshold)
-- Columns: `id`, `tenant_id`, `project_id` (nullable), `scope`, `type`, `status`, `priority`, `payload_json`, `progress_total`, `progress_done`, `heartbeat_at`
+- Columns: `id`, `tenant_id`, `project_id` (nullable), `scope`, `type`, `status`, `priority`, `payload_json`, `progress_total`, `progress_done`, `heartbeat_at`, `attempts`, `max_attempts`, `last_error_at`, `updated_at`
 - Indexes: `(status, priority DESC, created_at ASC)`, `(tenant_id, status)`, `(scope, status)`
 
 **public_links** + **photo_public_links**
@@ -82,7 +82,7 @@ Data access through modular repositories:
 **Project Details**
 - `GET /api/projects/:folder` → `{ id, name, folder, photos: [...] }`
 - `PATCH /api/projects/:folder/rename` → Update display name (folder + manifest aligned by maintenance)
-- `DELETE /api/projects/:folder` → Enqueue `project_delete` task (immediate removal after completion)
+- `DELETE /api/projects/:id` → Enqueue `project_delete` task (immediate removal after completion)
 
 **Project Photos (Paginated)**
 - `GET /api/projects/:folder/photos`

@@ -231,15 +231,43 @@ Comprehensive documentation in `project_docs/`:
 
 ## Containerization
 
-Production-ready Docker packaging included.
+Production-ready Docker packaging with persistent data volumes.
 
-**Build**:
+**Quick Start**:
+```bash
+# Use docker compose (V2 - with space, not hyphen)
+docker compose up --build
+```
+
+**Ubuntu + Cloudflare Tunnel**:
+For production deployment with direct filesystem access:
+- See `QUICK_START_UBUNTU.md` for 5-minute setup
+- See `UBUNTU_CLOUDFLARE_SETUP.md` for complete guide
+- Photos accessible at `/var/lib/photo-manager/projects/` on host
+
+**Data Persistence**:
+- Database: Docker named volume
+- Photos: Bind mount to host filesystem (direct access)
+- Survives container rebuilds and updates
+- Easy backup with standard tools (rsync, tar, etc.)
+
+See:
+- `docker-compose.yml` for configuration
+- `DOCKER_VOLUMES.md` for volume management
+- `UBUNTU_CLOUDFLARE_SETUP.md` for production deployment
+
+**Manual Build**:
 ```bash
 docker build -t nodejs-photo-manager:local .
 ```
 
-**Run**:
+**Manual Run** (with volumes):
 ```bash
+# Create volumes first
+docker volume create photo-manager-db
+docker volume create photo-manager-projects
+
+# Run container
 docker run --rm -it \
   -p 5000:5000 \
   -e NODE_ENV=production \
@@ -248,17 +276,11 @@ docker run --rm -it \
   -e AUTH_ADMIN_BCRYPT_HASH="..." \
   -e AUTH_JWT_SECRET_ACCESS="..." \
   -e AUTH_JWT_SECRET_REFRESH="..." \
-  -v $(pwd)/.projects:/app/.projects \
+  -v photo-manager-db:/app/.db \
+  -v photo-manager-projects:/app/.projects \
   -v $(pwd)/config.json:/app/config.json \
   nodejs-photo-manager:local
 ```
-
-**Docker Compose**:
-```bash
-docker compose up --build
-```
-
-See `docker-compose.yml` for configuration.
 
 ## Contributing
 
