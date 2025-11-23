@@ -144,12 +144,18 @@ Copy the output hash (starts with `$2b$12$...`) and use it for `AUTH_ADMIN_BCRYP
 
 ### Your `.env` File Should Look Like This
 
+**Replace the placeholder values with your actual secrets and domain:**
+
 ```env
 # Authentication
 AUTH_ADMIN_BCRYPT_HASH="$2b$12$YOUR_GENERATED_HASH_HERE"
 AUTH_JWT_SECRET_ACCESS="YOUR_FIRST_RANDOM_STRING"
 AUTH_JWT_SECRET_REFRESH="YOUR_SECOND_RANDOM_STRING"
 AUTH_BCRYPT_COST="12"
+
+# CORS Configuration
+# Set this to your production domain (e.g., https://foto.dru.so)
+ALLOWED_ORIGINS="https://your-domain.com"
 
 # Download Security
 DOWNLOAD_SECRET="YOUR_THIRD_RANDOM_STRING"
@@ -238,18 +244,6 @@ sudo systemctl status cloudflared
 ```
 
 You should see `active (running)` in green.
-
-### Update App CORS Configuration
-
-Edit `docker-compose.yml` to allow your domain:
-```bash
-nano docker-compose.yml
-```
-
-Find the `ALLOWED_ORIGINS` line and change it to:
-```yaml
-ALLOWED_ORIGINS: https://photos.yourdomain.com
-```
 
 ---
 
