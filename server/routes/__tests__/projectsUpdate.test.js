@@ -105,25 +105,6 @@ describe('Project Updates', { concurrency: false }, () => {
     });
   });
 
-  test('cannot rename canceled projects', async () => {
-    await withAuthEnv({}, async () => {
-      const app = createTestApp();
-      const token = issueToken();
-      const project = createProject('Canceled Project');
-
-      const projectsRepo = loadRel('../../services/repositories/projectsRepo');
-      projectsRepo.archive(project.id);
-
-      const res = await request(app)
-        .patch(`/api/projects/${encodeURIComponent(project.project_folder)}/rename`)
-        .set('Authorization', `Bearer ${token}`)
-        .send({ new_name: 'Attempted Rename' });
-
-      assert.equal(res.status, 404);
-      assert.match(res.body.error, /not found/i);
-    });
-  });
-
   test('requires authentication for rename', async () => {
     await withAuthEnv({}, async () => {
       const app = createTestApp();

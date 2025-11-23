@@ -1,4 +1,4 @@
-version: "3.9"
+
 services:
   app:
     build:
@@ -20,8 +20,11 @@ services:
       SSE_IDLE_TIMEOUT_MS: 300000
     user: "1000:1000"
     volumes:
-      # Persist user data and project files outside container
-      - ./.projects:/app/.projects
+      # Persist database - accessible from host filesystem
+      - /var/lib/photo-manager/db:/app/.db
+      # Persist project files and images - accessible from host filesystem
+      # Change this path to your preferred location on Ubuntu
+      - /var/lib/photo-manager/projects:/app/.projects
       # Persist runtime configuration (edit on host)
       - ./config.json:/app/config.json
     healthcheck:
@@ -38,3 +41,9 @@ services:
     # cap_drop:
     #   - ALL
     # cap_add: ["CHOWN", "SETGID", "SETUID"]
+
+# Named volumes for persistent data (survives container rebuilds)
+volumes:
+  photo-manager-db:
+    driver: local
+  # photo-manager-projects removed - using bind mount for direct host access
