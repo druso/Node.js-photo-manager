@@ -12,6 +12,11 @@ services:
     environment:
       NODE_ENV: production
       PORT: 5000
+      # Cookie settings for local network access (HTTP + IP address)
+      # Set to 'false' to allow HTTP connections (required for local IP access)
+      AUTH_COOKIE_SECURE: 'false'
+      # Set to 'lax' to allow cookies across localhost/IP address contexts
+      AUTH_COOKIE_SAMESITE: 'lax'
       # SSE hardening (optional overrides)
       SSE_MAX_CONN_PER_IP: 2
       SSE_IDLE_TIMEOUT_MS: 300000

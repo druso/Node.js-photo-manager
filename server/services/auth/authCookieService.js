@@ -10,12 +10,18 @@ function resolveSecureFlag(override) {
   return process.env.NODE_ENV !== 'development';
 }
 
+function resolveSameSiteFlag(override) {
+  if (typeof override === 'string') return override;
+  if (process.env.AUTH_COOKIE_SAMESITE) return process.env.AUTH_COOKIE_SAMESITE;
+  return 'strict';
+}
+
 function buildRefreshCookieOptions(overrides = {}) {
   const config = ensureAuthConfig();
   return {
     httpOnly: overrides.httpOnly ?? true,
     secure: resolveSecureFlag(overrides.secure),
-    sameSite: overrides.sameSite ?? 'strict',
+    sameSite: resolveSameSiteFlag(overrides.sameSite),
     path: overrides.path ?? '/api/auth/refresh',
     maxAge: overrides.maxAge ?? (config.jwt.refresh.expiresInSeconds * 1000),
     ...(overrides.domain ? { domain: overrides.domain } : {}),
@@ -27,7 +33,7 @@ function buildAccessCookieOptions(overrides = {}) {
   return {
     httpOnly: overrides.httpOnly ?? true,
     secure: resolveSecureFlag(overrides.secure),
-    sameSite: overrides.sameSite ?? 'strict',
+    sameSite: resolveSameSiteFlag(overrides.sameSite),
     path: overrides.path ?? '/',
     maxAge: overrides.maxAge ?? (config.jwt.access.expiresInSeconds * 1000),
     ...(overrides.domain ? { domain: overrides.domain } : {}),

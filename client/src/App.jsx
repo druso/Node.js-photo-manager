@@ -77,7 +77,7 @@ function App({ sharedLinkHash = null, initialPhotoName = null }) {
   const {
     // Unified view context
     view, setView, updateProjectFilter, selection, setSelection,
-    
+
     // Legacy properties (for backward compatibility)
     projects, setProjects,
     selectedProject, setSelectedProject,
@@ -119,7 +119,7 @@ function App({ sharedLinkHash = null, initialPhotoName = null }) {
     uiPrefsReadyRef,
     commitBarRef
   } = useAppState();
-  
+
   const filtersAndSort = useFiltersAndSort();
   const {
     activeFilters, setActiveFilters,
@@ -152,7 +152,7 @@ function App({ sharedLinkHash = null, initialPhotoName = null }) {
   });
 
   // Legacy compatibility: keep sharedLinkInfo for existing UI code
-  const sharedLinkMeta = isSharedLinkMode 
+  const sharedLinkMeta = isSharedLinkMode
     ? { title: sharedMetadata.title, description: sharedMetadata.description }
     : (sharedLinkInfo ?? { title: null, description: null });
 
@@ -169,7 +169,7 @@ function App({ sharedLinkHash = null, initialPhotoName = null }) {
   const [showOptionsModal, setShowOptionsModal] = useState(false);
   const [optionsTab, setOptionsTab] = useState('settings');
   const [showCreateProject, setShowCreateProject] = useState(false);
-  
+
   // Share modal: track current links for pre-selection and photos to share
   const [currentPhotoLinks, setCurrentPhotoLinks] = useState([]);
   const [photosToShare, setPhotosToShare] = useState([]);
@@ -195,7 +195,7 @@ function App({ sharedLinkHash = null, initialPhotoName = null }) {
     setShowOptionsModal(false);
     updateProjectFilter(null);
     setSelectedProject(null);
-    
+
     // Clear filters to default values
     setActiveFilters({
       textSearch: '',
@@ -206,7 +206,7 @@ function App({ sharedLinkHash = null, initialPhotoName = null }) {
       visibility: 'any',
       tags: undefined,
     });
-    
+
     // Update legacy sharedLinkInfo for backward compatibility
     setSharedLinkInfo({
       title: sharedMetadata.title || null,
@@ -305,19 +305,19 @@ function App({ sharedLinkHash = null, initialPhotoName = null }) {
     // Unified view context
     view,
     updateProjectFilter,
-    
+
     // State setters
     setSelectedProject, setProjectData, setSelectedPhotos,
-    
+
     // Current state
     selectedProject, activeFilters, projects,
-    
+
     // Refs
     previousProjectRef, windowScrollRestoredRef, initialSavedYRef, pendingOpenRef,
-    
+
     // Functions
     registerActiveProject: appStateRegisterActiveProject, fetchProjectData, clearAllSelection: appStateClearAllSelection,
-    
+
     // Constants
     ALL_PROJECT_SENTINEL
   });
@@ -329,7 +329,7 @@ function App({ sharedLinkHash = null, initialPhotoName = null }) {
     updateProjectFilter,
     selection,
     setSelection,
-    
+
     // Legacy properties (for backward compatibility)
     projects,
     selectedProject,
@@ -382,7 +382,7 @@ function App({ sharedLinkHash = null, initialPhotoName = null }) {
     projectLocateTriedRef,
     setViewerList,
     setViewerState,
-    
+
     // Project mode parameters
     selectedProject,
     projectData,
@@ -392,7 +392,7 @@ function App({ sharedLinkHash = null, initialPhotoName = null }) {
     loadMore,
     setGridAnchorIndex,
     applyProjectPage,
-    
+
     // All Photos mode parameters
     allPhotos,
     allDeepLinkRef,
@@ -416,20 +416,20 @@ function App({ sharedLinkHash = null, initialPhotoName = null }) {
     setPendingSelectProjectRef: (ref) => { pendingSelectProjectRef.current = ref; },
     setAllDeepLink,
     setSortKey, setSortDir, setNotFound,
-    
+
     // Unified view context
     view,
     setView,
     updateProjectFilter,
-    
+
     // Current state
     projects, selectedProject, config, activeFilters,
-    
+
     // Refs
     uiPrefsLoadedRef, uiPrefsReadyRef, initialSavedYRef,
     windowScrollRestoredRef, prefsLoadedOnceRef, mainRef,
     pendingOpenRef, projectLocateTriedRef,
-    
+
     // Constants
     ALL_PROJECT_SENTINEL, DEBUG_PERSIST
   });
@@ -437,10 +437,10 @@ function App({ sharedLinkHash = null, initialPhotoName = null }) {
   usePersistence({
     // State
     uiPrefsReady, viewMode, sizeLevel,
-    
+
     // Refs
     uiPrefsReadyRef, prefsLoadedOnceRef, mainRef,
-    
+
     // Config
     DEBUG_PERSIST
   });
@@ -479,7 +479,7 @@ function App({ sharedLinkHash = null, initialPhotoName = null }) {
 
   // Connect to SSE stream for real-time pending changes updates
   const { pendingChanges, connected: sseConnected } = usePendingChangesSSE();
-  
+
   // Pending destructive actions: assets available but marked not to keep
   // Pending deletes calculations extracted to custom hook (now using SSE data)
   const {
@@ -489,16 +489,16 @@ function App({ sharedLinkHash = null, initialPhotoName = null }) {
   } = usePendingDeletes({
     // Unified view context
     view,
-    
+
     // SSE data (real-time pending changes from backend)
     pendingChangesSSE: pendingChanges,
-    
+
     // Aggregated totals (from pollable API / optimistic state)
     allPendingDeletes,
-    
+
     // Per-project totals (when available)
     projectPendingDeletes: projectData?.pending_deletes,
-    
+
     // Legacy properties (for backward compatibility)
     selectedProject,
   });
@@ -507,11 +507,11 @@ function App({ sharedLinkHash = null, initialPhotoName = null }) {
   const { refreshPhotoData, refreshAllPhotos, refreshPendingDeletes } = usePhotoDataRefresh({
     // Unified view context
     view,
-    
+
     // Data loading functions
     loadAllInitial,
     loadProjectData: fetchProjectData,
-    
+
     // Legacy properties (for backward compatibility)
     activeFilters,
     setAllPendingDeletes,
@@ -575,14 +575,14 @@ function App({ sharedLinkHash = null, initialPhotoName = null }) {
 
     const updatesById = new Map();
     if (photoEntries.length) {
-    for (const entry of photoEntries) {
-      if (!entry || typeof entry.photo_id !== 'number') continue;
-      updatesById.set(entry.photo_id, {
-        keep_jpg: entry.keep_jpg === true,
-        keep_raw: entry.keep_raw === true,
-        project_id: entry.project_id ?? null,
-      });
-    }
+      for (const entry of photoEntries) {
+        if (!entry || typeof entry.photo_id !== 'number') continue;
+        updatesById.set(entry.photo_id, {
+          keep_jpg: entry.keep_jpg === true,
+          keep_raw: entry.keep_raw === true,
+          project_id: entry.project_id ?? null,
+        });
+      }
 
     }
 
@@ -716,10 +716,10 @@ function App({ sharedLinkHash = null, initialPhotoName = null }) {
   } = useCommitRevert({
     // Unified view context
     view,
-    
+
     // Data refresh functions
     refreshPhotoData,
-    
+
     // Legacy properties (for backward compatibility)
     selectedProject,
     activeFilters,
@@ -788,7 +788,7 @@ function App({ sharedLinkHash = null, initialPhotoName = null }) {
     notifiedTasksRef,
     committing,
   });
-  
+
   // All Photos filtering is handled server-side, so we don't need client-side filtering
   // The loaded photos (allPhotos) are already filtered by the backend based on active filters
   const filteredProjectData = useMemo(() => {
@@ -821,16 +821,16 @@ function App({ sharedLinkHash = null, initialPhotoName = null }) {
     setProjects, setSelectedProject, setProjectData, setSelectedPhotos,
     setViewerState, setViewerList,
     setPendingSelectProjectRef: (ref) => { pendingSelectProjectRef.current = ref; },
-    
+
     // Current state
     selectedProject, projectData, filteredProjectData,
-    
+
     // Functions
     fetchProjectData,
     refreshPendingDeletes,
     mutatePagedPhotos,
     mutateAllPhotos,
-    
+
     // Constants
     ALL_PROJECT_SENTINEL
   });
@@ -916,7 +916,7 @@ function App({ sharedLinkHash = null, initialPhotoName = null }) {
 
     const targetFilename = sharedDeepLinkRef.current.filename;
     const targetLower = targetFilename.toLowerCase();
-    
+
     // Find photo by filename or basename (without extension)
     const index = sharedPhotos.findIndex(p => {
       const fn = (p.filename || '').toLowerCase();
@@ -968,7 +968,7 @@ function App({ sharedLinkHash = null, initialPhotoName = null }) {
     return () => window.removeEventListener('resize', updateHeight);
   }, [filtersCollapsed, viewMode, view?.project_filter, hasPendingDeletes, showOptionsModal, hasActiveFilters, hasAllSelection, hasProjectSelection]);
 
-  
+
 
 
 
@@ -987,429 +987,356 @@ function App({ sharedLinkHash = null, initialPhotoName = null }) {
         {notFound.is404 ? (
           <NotFound message={notFound.message} details={notFound.details} />
         ) : (
-        <div className="bg-gray-50 overflow-x-hidden">
-          {/* Selection Mode Banner (M2) - Show only for authenticated users when selections exist */}
-          {isAuthenticated && (() => {
-            const isAllMode = view?.project_filter === null;
-            const count = isAllMode ? allSelectedKeys.size : selectedPhotos.size;
-            return count > 0 ? (
-              <SelectionModeBanner
-                selectedCount={count}
-                onClearSelection={clearAllSelections}
-              />
-            ) : null;
-          })()}
+          <div className="bg-gray-50 overflow-x-hidden">
+            {/* Selection Mode Banner (M2) - Show only for authenticated users when selections exist */}
+            {isAuthenticated && (() => {
+              const isAllMode = view?.project_filter === null;
+              const count = isAllMode ? allSelectedKeys.size : selectedPhotos.size;
+              return count > 0 ? (
+                <SelectionModeBanner
+                  selectedCount={count}
+                  onClearSelection={clearAllSelections}
+                />
+              ) : null;
+            })()}
 
-          {/* Sticky Header Container */}
-          <div className="fixed top-0 left-0 right-0 z-20 bg-gray-50" ref={stickyHeaderRef}>
-            {/* Header */}
-            <header className="bg-gray-100 shadow-none border-b-0 relative">
-              <div className="w-full px-4 sm:px-6 lg:px-8">
-                <div className="flex justify-between items-center py-4">
-                  <h1 className="text-2xl font-bold text-gray-900">
-                    Druso Photo Manager
-                  </h1>
-
-                  {/* Right Controls: Upload (+) and Options (hamburger) */}
-                  <div className="flex items-center space-x-2">
-                    {/* Upload button - hide in shared mode and for public users */}
-                    {isAuthenticated && !isSharedLinkMode && (
-                      <UploadButton
-                        isAllMode={view?.project_filter === null}
-                        selectedProject={selectedProject}
-                        allProjectFolder={ALL_PROJECT_SENTINEL.folder}
-                        openProjectSelection={openProjectSelection}
-                      />
-                    )}
-                    
-                    {/* Operations menu - show for authenticated users (including shared mode) */}
-                    {isAuthenticated && (
-                      <>
-                        {showOptionsModal ? (
-                          <button
-                            onClick={() => setShowOptionsModal(false)}
-                            className="inline-flex items-center justify-center rounded-md border shadow-sm px-3 py-2 text-sm font-medium bg-white text-gray-700 hover:bg-gray-50 border-gray-300"
-                            title="Close options"
-                            aria-label="Close options"
-                          >
-                            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                              <path strokeLinecap="round" strokeLinejoin="round" d="M6 6l12 12M18 6L6 18" />
-                            </svg>
-                          </button>
-                        ) : (
-                          <button
-                            onClick={() => {
-                              setOptionsTab('settings');
-                              setShowOptionsModal(true);
-                            }}
-                            className="inline-flex items-center justify-center rounded-md border shadow-sm px-3 py-2 text-sm font-medium bg-white text-gray-700 hover:bg-gray-50 border-gray-300"
-                            title="Options"
-                            aria-label="Options"
-                          >
-                            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
-                            </svg>
-                          </button>
-                        )}
-                      </>
-                    )}
-                    
-                    {/* Public user menu - show login option */}
-                    {!isAuthenticated && (
-                      <button
-                        onClick={() => window.location.href = '/'}
-                        className="inline-flex items-center gap-2 rounded-md border shadow-sm px-3 py-2 text-sm font-medium bg-white text-gray-700 hover:bg-gray-50 border-gray-300"
-                        title="Login"
-                        aria-label="Login"
-                      >
-                        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 16l-4-4m0 0l4-4m-4 4h14m-5 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h7a3 3 0 013 3v1" />
-                        </svg>
-                        Login
-                      </button>
-                    )}
-                  </div>
-                </div>
-                {gridHeading ? (
-                  <div className="pb-3 space-y-1">
-                    <h2 className="text-lg font-semibold text-gray-900">{gridHeading}</h2>
-                    {gridDescription ? (
-                      <p className="text-sm text-gray-600 whitespace-pre-line">{gridDescription}</p>
-                    ) : null}
-                  </div>
-                ) : null}
-              </div>
-            </header>
-
-            {/* Project selector bar (replaces tabs) */}
-            {(selectedProject || view?.project_filter === null || isSharedLinkMode) && (
-              <div className="bg-white border-b-0 relative">
+            {/* Sticky Header Container */}
+            <div className="fixed top-0 left-0 right-0 z-20 bg-gray-50" ref={stickyHeaderRef}>
+              {/* Header */}
+              <header className="bg-gray-100 shadow-none border-b-0 relative">
                 <div className="w-full px-4 sm:px-6 lg:px-8">
-                  <div className="flex items-center justify-between py-2">
-                    {isSharedLinkMode ? (
-                      <div className="flex items-center gap-3">
-                        <div className="text-sm text-gray-600">
-                          Viewing shared link: <span className="font-semibold text-gray-900">{sharedLinkMeta.title || sharedLinkHash}</span>
-                        </div>
-                        {isAuthenticated && (
-                          <button
-                            onClick={exitSharedLink}
-                            className="inline-flex items-center gap-1 rounded-md px-3 py-1.5 text-sm font-medium border border-gray-300 bg-white text-gray-700 hover:bg-gray-50"
-                          >
-                            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 19l-7-7 7-7" />
-                            </svg>
-                            Exit shared link
-                          </button>
-                        )}
-                      </div>
-                    ) : (
-                      <div className="flex items-center gap-3">
-                        <label className="inline-flex items-center gap-2 text-sm text-gray-700 select-none">
-                          <input
-                            type="checkbox"
-                            checked={view?.project_filter === null}
-                            onChange={toggleAllMode}
-                            className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                            aria-label="Toggle All Photos mode"
-                          />
-                          <span>All</span>
-                        </label>
-                        <ProjectSelector
-                          projects={projects}
-                          selectedProject={view?.project_filter === null ? null : selectedProject}
-                          onProjectSelect={handleProjectSelect}
-                          disabled={view?.project_filter === null}
-                          placeholderLabel="All Projects"
+                  <div className="flex justify-between items-center py-4">
+                    <h1 className="text-2xl font-bold text-gray-900">
+                      Druso Photo Manager
+                    </h1>
+
+                    {/* Right Controls: Upload (+) and Options (hamburger) */}
+                    <div className="flex items-center space-x-2">
+                      {/* Upload button - hide in shared mode and for public users */}
+                      {isAuthenticated && !isSharedLinkMode && (
+                        <UploadButton
+                          isAllMode={view?.project_filter === null}
+                          selectedProject={selectedProject}
+                          allProjectFolder={ALL_PROJECT_SENTINEL.folder}
+                          openProjectSelection={openProjectSelection}
                         />
-                      </div>
-                    )}
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={() => setFiltersCollapsed(prev => !prev)}
-                        className="inline-flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium border shadow-sm bg-white text-gray-700 hover:bg-gray-50 border-gray-300"
-                        title={filtersCollapsed ? 'Show filters' : 'Hide filters'}
-                        aria-expanded={filtersCollapsed ? 'false' : 'true'}
-                        aria-controls="filters-panel"
-                      >
-                        <span className="hidden sm:inline">Filters</span>
-                        <span className="relative sm:hidden inline-flex">
-                          <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
-                          </svg>
-                          {activeFilterCount > 0 && (
-                            <span className="absolute -top-1 -right-1 inline-flex items-center justify-center min-w-[0.9rem] h-4 px-[0.2rem] text-[10px] font-semibold rounded-full bg-blue-600 text-white ring-2 ring-white">
-                              {activeFilterCount}
-                            </span>
+                      )}
+
+                      {/* Operations menu - show for authenticated users (including shared mode) */}
+                      {isAuthenticated && (
+                        <>
+                          {showOptionsModal ? (
+                            <button
+                              onClick={() => setShowOptionsModal(false)}
+                              className="inline-flex items-center justify-center rounded-md border shadow-sm px-3 py-2 text-sm font-medium bg-white text-gray-700 hover:bg-gray-50 border-gray-300"
+                              title="Close options"
+                              aria-label="Close options"
+                            >
+                              <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M6 6l12 12M18 6L6 18" />
+                              </svg>
+                            </button>
+                          ) : (
+                            <button
+                              onClick={() => {
+                                setOptionsTab('settings');
+                                setShowOptionsModal(true);
+                              }}
+                              className="inline-flex items-center justify-center rounded-md border shadow-sm px-3 py-2 text-sm font-medium bg-white text-gray-700 hover:bg-gray-50 border-gray-300"
+                              title="Options"
+                              aria-label="Options"
+                            >
+                              <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+                              </svg>
+                            </button>
                           )}
-                        </span>
-                        <svg className={`h-4 w-4 transition-transform ${filtersCollapsed ? '' : 'rotate-180'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                        </svg>
-                      </button>
-                      <span className="text-sm text-gray-600 whitespace-nowrap">
-                        {view?.project_filter === null ? (
-                          hasActiveFilters ? (
-                            <>
-                              <span className="font-medium">{allTotal}</span> of {allUnfilteredTotal} images
-                            </>
-                          ) : (
-                            <>
-                              {allUnfilteredTotal} images
-                            </>
-                          )
-                        ) : (
-                          hasActiveFilters ? (
-                            <>
-                              <span className="font-medium">{pagedTotal}</span> of {pagedUnfilteredTotal} images
-                            </>
-                          ) : (
-                            <>
-                              {pagedUnfilteredTotal} images
-                            </>
-                          )
-                        )}
-                      </span>
-                      {hasActiveFilters && (
+                        </>
+                      )}
+
+                      {/* Public user menu - show login option */}
+                      {!isAuthenticated && (
                         <button
-                          onClick={() => setActiveFilters({
-                            textSearch: '',
-                            dateRange: { start: '', end: '' },
-                            fileType: 'any',
-                            orientation: 'any',
-                            keepType: 'any'
-                          })}
-                          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-full border border-red-300 text-red-600 hover:bg-red-50 hover:border-red-400 leading-none"
-                          title="Clear all filters"
-                          aria-label="Clear all filters"
+                          onClick={() => window.location.href = '/'}
+                          className="inline-flex items-center gap-2 rounded-md border shadow-sm px-3 py-2 text-sm font-medium bg-white text-gray-700 hover:bg-gray-50 border-gray-300"
+                          title="Login"
+                          aria-label="Login"
                         >
-                          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-4 w-4">
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M6 6l12 12M18 6L6 18" />
+                          <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 16l-4-4m0 0l4-4m-4 4h14m-5 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h7a3 3 0 013 3v1" />
                           </svg>
-                          <span>Clear</span>
+                          Login
                         </button>
                       )}
                     </div>
                   </div>
-
-                  <div className="px-4 pb-2" />
-                </div>
-
-                <div className="px-4 py-2 bg-white border-t-0">
-                  <div className="flex items-center justify-between gap-3">
-                    <SelectionToolbar
-                      isAllMode={view?.project_filter === null}
-                      allPhotos={allPhotos}
-                      allSelectedKeys={allSelectedKeys}
-                      onAllSelectAll={selectAllAllPhotos}
-                      onAllClearSelection={clearAllSelection}
-                      filteredProjectPhotos={filteredProjectData?.photos}
-                      selectedPhotos={selectedPhotos}
-                      onProjectToggleSelect={setSelectedPhotos}
-                      onTagsUpdated={handleTagsUpdated}
-                      onKeepBulkUpdated={handleKeepBulkUpdated}
-                      onTagsBulkUpdated={handleTagsBulkUpdated}
-                      selection={selection}
-                      setSelection={setSelection}
-                      activeFilters={activeFilters}
-                      allTotal={allTotal}
-                    />
-
-                    <div className="flex items-center gap-2">
-                      <ViewModeControls
-                        viewMode={viewMode}
-                        onViewModeChange={setViewMode}
-                        sizeLevel={sizeLevel}
-                        onSizeLevelChange={setSizeLevel}
-                        hasSelection={(view?.project_filter === null) ? hasAllSelection : hasProjectSelection}
-                        operationsMenu={(view?.project_filter === null)
-                          ? (
-                            <OperationsMenu
-                              allMode
-                              allSelectedKeys={allSelectedKeys}
-                              allSelectedPhotos={allSelectedPhotos}
-                              setAllSelectedKeys={replaceAllSelection}
-                              allPhotos={allPhotos}
-                              config={config}
-                              trigger="label"
-                              onRequestMove={() => setShowAllMoveModal(true)}
-                              onRequestShare={() => setShowShareModal(true)}
-                              selection={selection}
-                              setSelection={setSelection}
-                            />
-                          )
-                          : selectedProject ? (
-                            <OperationsMenu
-                              projectFolder={selectedProject.folder}
-                              projectData={{
-                                ...filteredProjectData,
-                                photos: sortedPagedPhotos?.length > 0 ? sortedPagedPhotos : pagedPhotos  // Use sorted if available, otherwise use raw paged photos
-                              }}
-                              selectedPhotos={selectedPhotos}
-                              setSelectedPhotos={setSelectedPhotos}
-                              onTagsUpdated={handleTagsUpdated}
-                              onKeepBulkUpdated={handleKeepBulkUpdated}
-                              onTagsBulkUpdated={handleTagsBulkUpdated}
-                              config={config}
-                              trigger="label"
-                              onRequestMove={() => setShowMoveModal(true)}
-                              onRequestShare={() => setShowShareModal(true)}
-                              selection={selection}
-                              setSelection={setSelection}
-                            />
-                          ) : null}
-                      />
+                  {gridHeading ? (
+                    <div className="pb-3 space-y-1">
+                      <h2 className="text-lg font-semibold text-gray-900">{gridHeading}</h2>
+                      {gridDescription ? (
+                        <p className="text-sm text-gray-600 whitespace-pre-line">{gridDescription}</p>
+                      ) : null}
                     </div>
+                  ) : null}
+                </div>
+              </header>
+
+              {/* Project selector bar (replaces tabs) */}
+              {(selectedProject || view?.project_filter === null || isSharedLinkMode) && (
+                <div className="bg-white border-b-0 relative">
+                  <div className="w-full px-4 sm:px-6 lg:px-8">
+                    <div className="flex items-center justify-between py-2">
+                      {isSharedLinkMode ? (
+                        <div className="flex items-center gap-3">
+                          <div className="text-sm text-gray-600">
+                            Viewing shared link: <span className="font-semibold text-gray-900">{sharedLinkMeta.title || sharedLinkHash}</span>
+                          </div>
+                          {isAuthenticated && (
+                            <button
+                              onClick={exitSharedLink}
+                              className="inline-flex items-center gap-1 rounded-md px-3 py-1.5 text-sm font-medium border border-gray-300 bg-white text-gray-700 hover:bg-gray-50"
+                            >
+                              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 19l-7-7 7-7" />
+                              </svg>
+                              Exit shared link
+                            </button>
+                          )}
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-3">
+                          <label className="inline-flex items-center gap-2 text-sm text-gray-700 select-none">
+                            <input
+                              type="checkbox"
+                              checked={view?.project_filter === null}
+                              onChange={toggleAllMode}
+                              className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                              aria-label="Toggle All Photos mode"
+                            />
+                            <span>All</span>
+                          </label>
+                          <ProjectSelector
+                            projects={projects}
+                            selectedProject={view?.project_filter === null ? null : selectedProject}
+                            onProjectSelect={handleProjectSelect}
+                            disabled={view?.project_filter === null}
+                            placeholderLabel="All Projects"
+                          />
+                        </div>
+                      )}
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => setFiltersCollapsed(prev => !prev)}
+                          className="inline-flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium border shadow-sm bg-white text-gray-700 hover:bg-gray-50 border-gray-300"
+                          title={filtersCollapsed ? 'Show filters' : 'Hide filters'}
+                          aria-expanded={filtersCollapsed ? 'false' : 'true'}
+                          aria-controls="filters-panel"
+                        >
+                          <span className="hidden sm:inline">Filters</span>
+                          <span className="relative sm:hidden inline-flex">
+                            <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
+                            </svg>
+                            {activeFilterCount > 0 && (
+                              <span className="absolute -top-1 -right-1 inline-flex items-center justify-center min-w-[0.9rem] h-4 px-[0.2rem] text-[10px] font-semibold rounded-full bg-blue-600 text-white ring-2 ring-white">
+                                {activeFilterCount}
+                              </span>
+                            )}
+                          </span>
+                          <svg className={`h-4 w-4 transition-transform ${filtersCollapsed ? '' : 'rotate-180'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                          </svg>
+                        </button>
+                        <span className="text-sm text-gray-600 whitespace-nowrap">
+                          {view?.project_filter === null ? (
+                            hasActiveFilters ? (
+                              <>
+                                <span className="font-medium">{allTotal}</span> of {allUnfilteredTotal} images
+                              </>
+                            ) : (
+                              <>
+                                {allUnfilteredTotal} images
+                              </>
+                            )
+                          ) : (
+                            hasActiveFilters ? (
+                              <>
+                                <span className="font-medium">{pagedTotal}</span> of {pagedUnfilteredTotal} images
+                              </>
+                            ) : (
+                              <>
+                                {pagedUnfilteredTotal} images
+                              </>
+                            )
+                          )}
+                        </span>
+                        {hasActiveFilters && (
+                          <button
+                            onClick={() => setActiveFilters({
+                              textSearch: '',
+                              dateRange: { start: '', end: '' },
+                              fileType: 'any',
+                              orientation: 'any',
+                              keepType: 'any'
+                            })}
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-full border border-red-300 text-red-600 hover:bg-red-50 hover:border-red-400 leading-none"
+                            title="Clear all filters"
+                            aria-label="Clear all filters"
+                          >
+                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-4 w-4">
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M6 6l12 12M18 6L6 18" />
+                            </svg>
+                            <span>Clear</span>
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="px-4 pb-2" />
                   </div>
-                  {viewMode === 'grid' && (
-                    <div className="mt-2">
-                      <SortControls
-                        sortKey={sortKey}
-                        sortDir={sortDir}
-                        onSortChange={toggleSort}
-                        viewType={view?.project_filter === null ? 'all' : 'project'}
+
+                  <div className="px-4 py-2 bg-white border-t-0">
+                    <div className="flex items-center justify-between gap-3">
+                      <SelectionToolbar
+                        isAllMode={view?.project_filter === null}
+                        allPhotos={allPhotos}
+                        allSelectedKeys={allSelectedKeys}
+                        onAllSelectAll={selectAllAllPhotos}
+                        onAllClearSelection={clearAllSelection}
+                        filteredProjectPhotos={filteredProjectData?.photos}
+                        selectedPhotos={selectedPhotos}
+                        onProjectToggleSelect={setSelectedPhotos}
+                        onTagsUpdated={handleTagsUpdated}
+                        onKeepBulkUpdated={handleKeepBulkUpdated}
+                        onTagsBulkUpdated={handleTagsBulkUpdated}
+                        selection={selection}
+                        setSelection={setSelection}
+                        activeFilters={activeFilters}
+                        allTotal={allTotal}
                       />
+
+                      <div className="flex items-center gap-2">
+                        <ViewModeControls
+                          viewMode={viewMode}
+                          onViewModeChange={setViewMode}
+                          sizeLevel={sizeLevel}
+                          onSizeLevelChange={setSizeLevel}
+                          hasSelection={(view?.project_filter === null) ? hasAllSelection : hasProjectSelection}
+                          operationsMenu={(view?.project_filter === null)
+                            ? (
+                              <OperationsMenu
+                                allMode
+                                allSelectedKeys={allSelectedKeys}
+                                allSelectedPhotos={allSelectedPhotos}
+                                setAllSelectedKeys={replaceAllSelection}
+                                allPhotos={allPhotos}
+                                config={config}
+                                trigger="label"
+                                onRequestMove={() => setShowAllMoveModal(true)}
+                                onRequestShare={() => setShowShareModal(true)}
+                                selection={selection}
+                                setSelection={setSelection}
+                              />
+                            )
+                            : selectedProject ? (
+                              <OperationsMenu
+                                projectFolder={selectedProject.folder}
+                                projectData={{
+                                  ...filteredProjectData,
+                                  photos: sortedPagedPhotos?.length > 0 ? sortedPagedPhotos : pagedPhotos  // Use sorted if available, otherwise use raw paged photos
+                                }}
+                                selectedPhotos={selectedPhotos}
+                                setSelectedPhotos={setSelectedPhotos}
+                                onTagsUpdated={handleTagsUpdated}
+                                onKeepBulkUpdated={handleKeepBulkUpdated}
+                                onTagsBulkUpdated={handleTagsBulkUpdated}
+                                config={config}
+                                trigger="label"
+                                onRequestMove={() => setShowMoveModal(true)}
+                                onRequestShare={() => setShowShareModal(true)}
+                                selection={selection}
+                                setSelection={setSelection}
+                              />
+                            ) : null}
+                        />
+                      </div>
                     </div>
-                  )}
+                    {viewMode === 'grid' && (
+                      <div className="mt-2">
+                        <SortControls
+                          sortKey={sortKey}
+                          sortDir={sortDir}
+                          onSortChange={toggleSort}
+                          viewType={view?.project_filter === null ? 'all' : 'project'}
+                        />
+                      </div>
+                    )}
+                  </div>
                 </div>
-              </div>
-            )}
-          </div>
+              )}
+            </div>
 
-          <UnifiedSelectionModal
-            mode="move"
-            open={showMoveModal}
-            onClose={(res) => {
-              setShowMoveModal(false);
-              if (res && res.moved) {
-                const toRemove = new Set(Array.from(selectedPhotos || []));
-                if (toRemove.size > 0) {
-                  setProjectData(prev => {
-                    if (!prev || !Array.isArray(prev.photos)) return prev;
-                    const photos = prev.photos.filter(p => !toRemove.has(p.filename));
-                    return { ...prev, photos };
-                  });
-                  mutatePagedPhotos(prev => Array.isArray(prev) ? prev.filter(p => !toRemove.has(p.filename)) : prev);
-                }
-                setSelectedPhotos(new Set());
-              }
-            }}
-            sourceFolder={selectedProject ? selectedProject.folder : ''}
-            selectedFilenames={Array.from(selectedPhotos || [])}
-            selectedProjectSummaries={(() => {
-              const folder = selectedProject?.folder ? [selectedProject.folder] : [];
-              return folder.map(f => ({ folder: f, count: selectedPhotos?.size || 0 }));
-            })()}
-          />
-
-          <UnifiedSelectionModal
-            mode="move"
-            open={showAllMoveModal}
-            onClose={(res) => {
-              setShowAllMoveModal(false);
-              if (res && res.moved) {
-                const dest = res.destFolder;
-                const movedKeys = new Set(Array.from(allSelectedKeys || []));
-                if (movedKeys.size > 0) {
-                  mutateAllPhotos(prev => {
-                    if (!Array.isArray(prev)) return prev;
-                    return prev.map(p => {
-                      const key = `${p.project_folder}::${p.filename}`;
-                      return movedKeys.has(key)
-                        ? { ...p, project_folder: dest }
-                        : p;
-                    });
-                  });
-                }
-                appStateClearAllSelection();
-              }
-            }}
-            sourceFolder={''}
-            selectedFilenames={Array.from(allSelectedKeys || []).map(k => {
-              const idx = k.indexOf('::');
-              return idx >= 0 ? k.slice(idx + 2) : k;
-            })}
-            selectedProjectSummaries={Array.from(allSelectedKeys || []).reduce((acc, key) => {
-              const idx = key.indexOf('::');
-              const folder = idx >= 0 ? key.slice(0, idx) : '';
-              if (!folder) return acc;
-              const existing = acc.find(item => item.folder === folder);
-              if (existing) {
-                existing.count += 1;
-              } else {
-                acc.push({ folder, count: 1 });
-              }
-              return acc;
-            }, [])}
-          />
-
-          <UnifiedSelectionModal
-            mode="share"
-            open={showShareModal}
-            onClose={(res) => {
-              setShowShareModal(false);
-              setCurrentPhotoLinks([]);
-              const sharedPhotos = photosToShare;
-              setPhotosToShare([]);
-              
-              // Clear selections and update visibility after successful share
-              if (res && res.shared) {
-                // Update visibility to public for shared photos (optimistic update)
-                if (sharedPhotos.length > 0) {
-                  const photoIds = sharedPhotos.map(p => p.id).filter(Boolean);
-                  
-                  // Update All Photos view
-                  if (view?.project_filter === null) {
-                    mutateAllPhotos(prev => {
-                      if (!Array.isArray(prev)) return prev;
-                      return prev.map(photo => 
-                        photoIds.includes(photo.id) 
-                          ? { ...photo, visibility: 'public' }
-                          : photo
-                      );
-                    });
-                    appStateClearAllSelection();
-                  } else {
-                    // Update Project view
+            <UnifiedSelectionModal
+              mode="move"
+              open={showMoveModal}
+              onClose={(res) => {
+                setShowMoveModal(false);
+                if (res && res.moved) {
+                  const toRemove = new Set(Array.from(selectedPhotos || []));
+                  if (toRemove.size > 0) {
                     setProjectData(prev => {
                       if (!prev || !Array.isArray(prev.photos)) return prev;
-                      return {
-                        ...prev,
-                        photos: prev.photos.map(photo =>
-                          photoIds.includes(photo.id)
-                            ? { ...photo, visibility: 'public' }
-                            : photo
-                        )
-                      };
+                      const photos = prev.photos.filter(p => !toRemove.has(p.filename));
+                      return { ...prev, photos };
                     });
-                    mutatePagedPhotos(prev => {
-                      if (!Array.isArray(prev)) return prev;
-                      return prev.map(photo =>
-                        photoIds.includes(photo.id)
-                          ? { ...photo, visibility: 'public' }
-                          : photo
-                      );
-                    });
-                    setSelectedPhotos(new Set());
+                    mutatePagedPhotos(prev => Array.isArray(prev) ? prev.filter(p => !toRemove.has(p.filename)) : prev);
                   }
-                } else {
-                  // No photos to update, just clear selection
-                  if (view?.project_filter === null) {
-                    appStateClearAllSelection();
-                  } else {
-                    setSelectedPhotos(new Set());
-                  }
+                  setSelectedPhotos(new Set());
                 }
-              }
-            }}
-            selectedPhotos={photosToShare.length > 0 ? photosToShare : (() => {
-              // Collect selected photos with their IDs
-              if (view?.project_filter === null) {
-                // All Photos mode - use allSelectedPhotos Map
+              }}
+              sourceFolder={selectedProject ? selectedProject.folder : ''}
+              selectedPhotos={(() => {
+                // Collect selected photos with their IDs from project data
+                const photos = Array.isArray(projectData?.photos) ? projectData.photos : [];
+                return Array.from(selectedPhotos || [])
+                  .map(filename => photos.find(p => p.filename === filename))
+                  .filter(Boolean);
+              })()}
+              selectedProjectSummaries={(() => {
+                const folder = selectedProject?.folder ? [selectedProject.folder] : [];
+                return folder.map(f => ({ folder: f, count: selectedPhotos?.size || 0 }));
+              })()}
+            />
+
+            <UnifiedSelectionModal
+              mode="move"
+              open={showAllMoveModal}
+              onClose={(res) => {
+                setShowAllMoveModal(false);
+                if (res && res.moved) {
+                  const dest = res.destFolder;
+                  const movedKeys = new Set(Array.from(allSelectedKeys || []));
+                  if (movedKeys.size > 0) {
+                    mutateAllPhotos(prev => {
+                      if (!Array.isArray(prev)) return prev;
+                      return prev.map(p => {
+                        const key = `${p.project_folder}::${p.filename}`;
+                        return movedKeys.has(key)
+                          ? { ...p, project_folder: dest }
+                          : p;
+                      });
+                    });
+                  }
+                  appStateClearAllSelection();
+                }
+              }}
+              sourceFolder={''}
+              selectedPhotos={(() => {
+                // Use allSelectedPhotos Map if available (contains full photo objects)
                 if (allSelectedPhotos && allSelectedPhotos instanceof Map) {
                   return Array.from(allSelectedPhotos.values());
                 }
-                // Fallback to allPhotos list
+                // Fallback: resolve from allPhotos using keys
                 const keys = Array.from(allSelectedKeys || []);
                 const photosList = Array.isArray(allPhotos) ? allPhotos : [];
                 const map = new Map(photosList.map(photo => {
@@ -1417,260 +1344,349 @@ function App({ sharedLinkHash = null, initialPhotoName = null }) {
                   return [key, photo];
                 }));
                 return keys.map(k => map.get(k)).filter(Boolean);
-              } else {
-                // Project mode - use selectedPhotos Set
-                const photos = Array.isArray(projectData?.photos) ? projectData.photos : [];
-                return Array.from(selectedPhotos || [])
-                  .map(filename => photos.find(p => p.filename === filename))
-                  .filter(Boolean);
-              }
-            })()}
-            currentLinkIds={currentPhotoLinks}
-          />
+              })()}
+              selectedProjectSummaries={Array.from(allSelectedKeys || []).reduce((acc, key) => {
+                const idx = key.indexOf('::');
+                const folder = idx >= 0 ? key.slice(0, idx) : '';
+                if (!folder) return acc;
+                const existing = acc.find(item => item.folder === folder);
+                if (existing) {
+                  existing.count += 1;
+                } else {
+                  acc.push({ folder, count: 1 });
+                }
+                return acc;
+              }, [])}
+            />
 
-          <div className="flex-shrink-0" style={{ height: headerHeight || 0 }} aria-hidden="true" />
+            <UnifiedSelectionModal
+              mode="share"
+              open={showShareModal}
+              onClose={(res) => {
+                setShowShareModal(false);
+                setCurrentPhotoLinks([]);
+                const sharedPhotos = photosToShare;
+                setPhotosToShare([]);
 
-          {!filtersCollapsed && (
-            <div id="filters-panel" className="bg-white border-t-0 animate-slideDownFade">
-              <UniversalFilter
-                projectData={projectData}
-                filters={activeFilters}
-                onFilterChange={setActiveFilters}
-                disabled={loading}
-                isAllMode={view?.project_filter === null}
-                onClose={() => setFiltersCollapsed(true)}
-              />
-            </div>
-          )}
+                // Clear selections and update visibility after successful share
+                if (res && res.shared) {
+                  // Update visibility to public for shared photos (optimistic update)
+                  if (sharedPhotos.length > 0) {
+                    const photoIds = sharedPhotos.map(p => p.id).filter(Boolean);
 
-          {projects.length === 0 && (
-            <div className="w-full px-4 sm:px-6 lg:px-8">
-              <div className="max-w-xl mx-auto mt-10 bg-white border rounded-lg shadow-sm p-6 text-center">
-                <div className="text-4xl mb-2">📁</div>
-                <h2 className="text-xl font-semibold mb-2">No projects yet</h2>
-                <p className="text-gray-600 mb-4">Create your first project to start importing and managing photos.</p>
-                <button
-                  onClick={() => setShowCreateProject(true)}
-                  className="inline-flex items-center justify-center px-4 py-2 rounded-md bg-blue-600 text-white hover:bg-blue-700"
-                >
-                  Create project
-                </button>
-              </div>
-            </div>
-          )}
-
-          <RevertModal
-            isOpen={showRevertModal}
-            onClose={() => setShowRevertModal(false)}
-            onConfirm={() => confirmRevertChanges(pendingDeleteTotals)}
-            isReverting={reverting}
-            revertDescription={revertDescription}
-          />
-
-          {loading ? (
-            <div className="flex justify-center items-center py-12">
-              <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500" />
-              <span className="ml-3 text-gray-600">Loading project data...</span>
-            </div>
-          ) : (
-            <div className="w-full px-4 sm:px-6 lg:px-8 pt-2 pb-8" ref={mainRef}>
-              <MainContentRenderer
-                isAllMode={view?.project_filter === null}
-                isSharedMode={isSharedLinkMode}
-                selectedProject={selectedProject}
-                projects={projects}
-                config={config}
-                showEmptyDropHint={projects.length > 0}
-                viewMode={viewMode}
-                sortKey={sortKey}
-                sortDir={sortDir}
-                sizeLevel={sizeLevel}
-                onSortChange={toggleSort}
-                allPhotos={allPhotos}
-                allNextCursor={allNextCursor}
-                allHasPrev={allHasPrev}
-                allGridAnchorIndex={allGridAnchorIndex}
-                loadAllMore={loadAllMore}
-                loadAllPrev={loadAllPrev}
-                setAllGridAnchorIndex={setAllGridAnchorIndex}
-                handleAllPhotoSelect={handleAllPhotoSelect}
-                handleToggleSelectionAll={handleToggleSelectionAll}
-                allSelectedKeys={allSelectedKeys}
-                sharedPhotos={sharedPhotos}
-                sharedTotal={sharedTotal}
-                sharedNextCursor={sharedNextCursor}
-                sharedPrevCursor={sharedPrevCursor}
-                sharedLoadMore={sharedLoadMore}
-                sharedLoadPrev={sharedLoadPrev}
-                sharedHasMore={sharedHasMore}
-                sharedHasPrev={sharedHasPrev}
-                sharedLoading={sharedLoading}
-                filteredProjectData={filteredProjectData}
-                sortedPagedPhotos={sortedPagedPhotos}
-                nextCursor={nextCursor}
-                projectHasPrev={projectHasPrev}
-                gridAnchorIndex={gridAnchorIndex}
-                loadMore={loadMore}
-                loadPrev={loadPrev}
-                setGridAnchorIndex={setGridAnchorIndex}
-                handlePhotoSelect={handlePhotoSelect}
-                handleToggleSelection={handleToggleSelection}
-                selectedPhotos={selectedPhotos}
-                onEnterSelectionMode={enterSelectionMode}
-              />
-            </div>
-          )}
-
-          <CommitModal
-            isOpen={showCommitModal}
-            onClose={() => setShowCommitModal(false)}
-            onConfirm={() => confirmCommitChanges(pendingDeleteTotals)}
-            isCommitting={committing}
-            pendingDeleteTotals={pendingDeleteTotals}
-            commitDescription={commitDescription}
-          />
-
-          {viewerState.isOpen && (
-            <ErrorBoundary>
-              <PhotoViewer
-                key={viewerKey}
-                projectData={{ photos: viewerPhotos }}
-                projectFolder={selectedProject?.folder}
-                startIndex={Number.isFinite(viewerState.startIndex) ? viewerState.startIndex : -1}
-                onClose={handleCloseViewer}
-                config={config}
-                selectedPhotos={selectedPhotos}
-                onToggleSelect={handleToggleSelection}
-                onKeepUpdated={handleKeepUpdated}
-                onCurrentIndexChange={handleViewerIndexChange}
-                fromAllMode={!!(view?.project_filter === null || viewerState.fromAll)}
-                onShowInfoChange={handleShowInfoChange}
-                onRequestMove={(photo) => {
-                  const sourceFolder = photo?.project_folder || selectedProject?.folder || '';
-                  const filename = photo?.filename;
-                  if (!filename) return;
-                  if (view?.project_filter === null || viewerState.fromAll) {
-                    setViewerState(prev => ({ ...(prev || {}), isOpen: false }));
-                    replaceAllSelection(new Set([`${sourceFolder}::${filename}`]));
-                    setShowAllMoveModal(true);
-                  } else {
-                    setViewerState(prev => ({ ...(prev || {}), isOpen: false }));
-                    setSelectedPhotos(new Set([filename]));
-                    setShowMoveModal(true);
-                  }
-                }}
-                onRequestShare={async (photo) => {
-                  if (!photo) return;
-                  
-                  // Load current links for this photo
-                  if (photo.id) {
-                    try {
-                      const links = await getLinksForPhoto(photo.id);
-                      setCurrentPhotoLinks((links || []).map(l => l.id));
-                    } catch (err) {
-                      console.error('Failed to load current links:', err);
-                      setCurrentPhotoLinks([]);
+                    // Update All Photos view
+                    if (view?.project_filter === null) {
+                      mutateAllPhotos(prev => {
+                        if (!Array.isArray(prev)) return prev;
+                        return prev.map(photo =>
+                          photoIds.includes(photo.id)
+                            ? { ...photo, visibility: 'public' }
+                            : photo
+                        );
+                      });
+                      appStateClearAllSelection();
+                    } else {
+                      // Update Project view
+                      setProjectData(prev => {
+                        if (!prev || !Array.isArray(prev.photos)) return prev;
+                        return {
+                          ...prev,
+                          photos: prev.photos.map(photo =>
+                            photoIds.includes(photo.id)
+                              ? { ...photo, visibility: 'public' }
+                              : photo
+                          )
+                        };
+                      });
+                      mutatePagedPhotos(prev => {
+                        if (!Array.isArray(prev)) return prev;
+                        return prev.map(photo =>
+                          photoIds.includes(photo.id)
+                            ? { ...photo, visibility: 'public' }
+                            : photo
+                        );
+                      });
+                      setSelectedPhotos(new Set());
                     }
                   } else {
-                    setCurrentPhotoLinks([]);
+                    // No photos to update, just clear selection
+                    if (view?.project_filter === null) {
+                      appStateClearAllSelection();
+                    } else {
+                      setSelectedPhotos(new Set());
+                    }
                   }
-                  
-                  // Set the photos to share directly
-                  setPhotosToShare([photo]);
-                  
-                  // Close viewer and open share modal with single photo
-                  setViewerState(prev => ({ ...(prev || {}), isOpen: false }));
-                  // Set selection to this single photo
-                  if (view?.project_filter === null || viewerState.fromAll) {
+                }
+              }}
+              selectedPhotos={photosToShare.length > 0 ? photosToShare : (() => {
+                // Collect selected photos with their IDs
+                if (view?.project_filter === null) {
+                  // All Photos mode - use allSelectedPhotos Map
+                  if (allSelectedPhotos && allSelectedPhotos instanceof Map) {
+                    return Array.from(allSelectedPhotos.values());
+                  }
+                  // Fallback to allPhotos list
+                  const keys = Array.from(allSelectedKeys || []);
+                  const photosList = Array.isArray(allPhotos) ? allPhotos : [];
+                  const map = new Map(photosList.map(photo => {
+                    const key = `${photo.project_folder || ''}::${photo.filename}`;
+                    return [key, photo];
+                  }));
+                  return keys.map(k => map.get(k)).filter(Boolean);
+                } else {
+                  // Project mode - use selectedPhotos Set
+                  const photos = Array.isArray(projectData?.photos) ? projectData.photos : [];
+                  return Array.from(selectedPhotos || [])
+                    .map(filename => photos.find(p => p.filename === filename))
+                    .filter(Boolean);
+                }
+              })()}
+              currentLinkIds={currentPhotoLinks}
+            />
+
+            <div className="flex-shrink-0" style={{ height: headerHeight || 0 }} aria-hidden="true" />
+
+            {!filtersCollapsed && (
+              <div id="filters-panel" className="bg-white border-t-0 animate-slideDownFade">
+                <UniversalFilter
+                  projectData={projectData}
+                  filters={activeFilters}
+                  onFilterChange={setActiveFilters}
+                  disabled={loading}
+                  isAllMode={view?.project_filter === null}
+                  onClose={() => setFiltersCollapsed(true)}
+                />
+              </div>
+            )}
+
+            {projects.length === 0 && (
+              <div className="w-full px-4 sm:px-6 lg:px-8">
+                <div className="max-w-xl mx-auto mt-10 bg-white border rounded-lg shadow-sm p-6 text-center">
+                  <div className="text-4xl mb-2">📁</div>
+                  <h2 className="text-xl font-semibold mb-2">No projects yet</h2>
+                  <p className="text-gray-600 mb-4">Create your first project to start importing and managing photos.</p>
+                  <button
+                    onClick={() => setShowCreateProject(true)}
+                    className="inline-flex items-center justify-center px-4 py-2 rounded-md bg-blue-600 text-white hover:bg-blue-700"
+                  >
+                    Create project
+                  </button>
+                </div>
+              </div>
+            )}
+
+            <RevertModal
+              isOpen={showRevertModal}
+              onClose={() => setShowRevertModal(false)}
+              onConfirm={() => confirmRevertChanges(pendingDeleteTotals)}
+              isReverting={reverting}
+              revertDescription={revertDescription}
+            />
+
+            {loading ? (
+              <div className="flex justify-center items-center py-12">
+                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500" />
+                <span className="ml-3 text-gray-600">Loading project data...</span>
+              </div>
+            ) : (
+              <div className="w-full px-4 sm:px-6 lg:px-8 pt-2 pb-8" ref={mainRef}>
+                <MainContentRenderer
+                  isAllMode={view?.project_filter === null}
+                  isSharedMode={isSharedLinkMode}
+                  selectedProject={selectedProject}
+                  projects={projects}
+                  config={config}
+                  showEmptyDropHint={projects.length > 0}
+                  viewMode={viewMode}
+                  sortKey={sortKey}
+                  sortDir={sortDir}
+                  sizeLevel={sizeLevel}
+                  onSortChange={toggleSort}
+                  allPhotos={allPhotos}
+                  allNextCursor={allNextCursor}
+                  allHasPrev={allHasPrev}
+                  allGridAnchorIndex={allGridAnchorIndex}
+                  loadAllMore={loadAllMore}
+                  loadAllPrev={loadAllPrev}
+                  setAllGridAnchorIndex={setAllGridAnchorIndex}
+                  handleAllPhotoSelect={handleAllPhotoSelect}
+                  handleToggleSelectionAll={handleToggleSelectionAll}
+                  allSelectedKeys={allSelectedKeys}
+                  sharedPhotos={sharedPhotos}
+                  sharedTotal={sharedTotal}
+                  sharedNextCursor={sharedNextCursor}
+                  sharedPrevCursor={sharedPrevCursor}
+                  sharedLoadMore={sharedLoadMore}
+                  sharedLoadPrev={sharedLoadPrev}
+                  sharedHasMore={sharedHasMore}
+                  sharedHasPrev={sharedHasPrev}
+                  sharedLoading={sharedLoading}
+                  filteredProjectData={filteredProjectData}
+                  sortedPagedPhotos={sortedPagedPhotos}
+                  nextCursor={nextCursor}
+                  projectHasPrev={projectHasPrev}
+                  gridAnchorIndex={gridAnchorIndex}
+                  loadMore={loadMore}
+                  loadPrev={loadPrev}
+                  setGridAnchorIndex={setGridAnchorIndex}
+                  handlePhotoSelect={handlePhotoSelect}
+                  handleToggleSelection={handleToggleSelection}
+                  selectedPhotos={selectedPhotos}
+                  onEnterSelectionMode={enterSelectionMode}
+                />
+              </div>
+            )}
+
+            <CommitModal
+              isOpen={showCommitModal}
+              onClose={() => setShowCommitModal(false)}
+              onConfirm={() => confirmCommitChanges(pendingDeleteTotals)}
+              isCommitting={committing}
+              pendingDeleteTotals={pendingDeleteTotals}
+              commitDescription={commitDescription}
+            />
+
+            {viewerState.isOpen && (
+              <ErrorBoundary>
+                <PhotoViewer
+                  key={viewerKey}
+                  projectData={{ photos: viewerPhotos }}
+                  projectFolder={selectedProject?.folder}
+                  startIndex={Number.isFinite(viewerState.startIndex) ? viewerState.startIndex : -1}
+                  onClose={handleCloseViewer}
+                  config={config}
+                  selectedPhotos={selectedPhotos}
+                  onToggleSelect={handleToggleSelection}
+                  onKeepUpdated={handleKeepUpdated}
+                  onCurrentIndexChange={handleViewerIndexChange}
+                  fromAllMode={!!(view?.project_filter === null || viewerState.fromAll)}
+                  onShowInfoChange={handleShowInfoChange}
+                  onRequestMove={(photo) => {
                     const sourceFolder = photo?.project_folder || selectedProject?.folder || '';
-                    replaceAllSelection(new Set([`${sourceFolder}::${photo.filename}`]));
-                  } else {
-                    setSelectedPhotos(new Set([photo.filename]));
-                  }
-                  setShowShareModal(true);
+                    const filename = photo?.filename;
+                    if (!filename) return;
+                    if (view?.project_filter === null || viewerState.fromAll) {
+                      setViewerState(prev => ({ ...(prev || {}), isOpen: false }));
+                      replaceAllSelection(new Set([`${sourceFolder}::${filename}`]));
+                      setShowAllMoveModal(true);
+                    } else {
+                      setViewerState(prev => ({ ...(prev || {}), isOpen: false }));
+                      setSelectedPhotos(new Set([filename]));
+                      setShowMoveModal(true);
+                    }
+                  }}
+                  onRequestShare={async (photo) => {
+                    if (!photo) return;
+
+                    // Load current links for this photo
+                    if (photo.id) {
+                      try {
+                        const links = await getLinksForPhoto(photo.id);
+                        setCurrentPhotoLinks((links || []).map(l => l.id));
+                      } catch (err) {
+                        console.error('Failed to load current links:', err);
+                        setCurrentPhotoLinks([]);
+                      }
+                    } else {
+                      setCurrentPhotoLinks([]);
+                    }
+
+                    // Set the photos to share directly
+                    setPhotosToShare([photo]);
+
+                    // Close viewer and open share modal with single photo
+                    setViewerState(prev => ({ ...(prev || {}), isOpen: false }));
+                    // Set selection to this single photo
+                    if (view?.project_filter === null || viewerState.fromAll) {
+                      const sourceFolder = photo?.project_folder || selectedProject?.folder || '';
+                      replaceAllSelection(new Set([`${sourceFolder}::${photo.filename}`]));
+                    } else {
+                      setSelectedPhotos(new Set([photo.filename]));
+                    }
+                    setShowShareModal(true);
+                  }}
+                />
+              </ErrorBoundary>
+            )}
+
+            {showOptionsModal && (
+              <SettingsProcessesModal
+                project={selectedProject}
+                projectFolder={selectedProject?.folder}
+                config={config}
+                onConfigUpdate={setConfig}
+                onProjectDelete={() => {
+                  setShowOptionsModal(false);
+                  handleProjectDeleted();
+                }}
+                onOpenCreateProject={() => {
+                  setShowCreateProject(true);
+                  setShowOptionsModal(false);
+                }}
+                onProjectRenamed={handleProjectRenamed}
+                initialTab={optionsTab}
+                onClose={() => setShowOptionsModal(false)}
+              />
+            )}
+
+            <CreateProjectModal
+              isOpen={showCreateProject}
+              onClose={() => {
+                setShowCreateProject(false);
+                setShowOptionsModal(false);
+              }}
+              onCreateProject={async (name) => {
+                const created = await handleProjectCreate(name);
+                if (created?.folder) {
+                  toast.show({
+                    emoji: '📁',
+                    message: `Project "${created.name || name}" created`,
+                    variant: 'success',
+                  });
+                  pendingSelectProjectRef.current = created.folder;
+                  updateProjectFilter(created.folder);
+                }
+                setShowCreateProject(false);
+                setShowOptionsModal(false);
+              }}
+            />
+
+            <UploadConfirmModal />
+            <BottomUploadBar />
+            <UploadHandler
+              selectedProject={selectedProject}
+              pendingUpload={pendingUpload}
+              onUploadStarted={clearPendingUpload}
+            />
+
+            {(selectedProject?.folder || view?.project_filter === null) && (
+              <GlobalDragDrop
+                onFilesDroppedInAllView={view?.project_filter === null ? handleFilesDroppedInAllView : (files) => {
+                  if (!selectedProject?.folder) return;
+                  openProjectSelection(files, selectedProject);
                 }}
               />
-            </ErrorBoundary>
-          )}
+            )}
 
-          {showOptionsModal && (
-            <SettingsProcessesModal
-              project={selectedProject}
-              projectFolder={selectedProject?.folder}
-              config={config}
-              onConfigUpdate={setConfig}
-              onProjectDelete={() => {
-                setShowOptionsModal(false);
-                handleProjectDeleted();
-              }}
-              onOpenCreateProject={() => {
-                setShowCreateProject(true);
-                setShowOptionsModal(false);
-              }}
-              onProjectRenamed={handleProjectRenamed}
-              initialTab={optionsTab}
-              onClose={() => setShowOptionsModal(false)}
+            <ProjectSelectionModal
+              isOpen={showProjectSelection}
+              projects={projects}
+              initialProject={initialProject}
+              onSelect={handleUploadProjectSelection}
+              onCancel={handleProjectSelectionCancel}
             />
-          )}
 
-          <CreateProjectModal
-            isOpen={showCreateProject}
-            onClose={() => {
-              setShowCreateProject(false);
-              setShowOptionsModal(false);
-            }}
-            onCreateProject={async (name) => {
-              const created = await handleProjectCreate(name);
-              if (created?.folder) {
-                toast.show({
-                  emoji: '📁',
-                  message: `Project "${created.name || name}" created`,
-                  variant: 'success',
-                });
-                pendingSelectProjectRef.current = created.folder;
-                updateProjectFilter(created.folder);
-              }
-              setShowCreateProject(false);
-              setShowOptionsModal(false);
-            }}
-          />
-
-          <UploadConfirmModal />
-          <BottomUploadBar />
-          <UploadHandler
-            selectedProject={selectedProject}
-            pendingUpload={pendingUpload}
-            onUploadStarted={clearPendingUpload}
-          />
-
-          {(selectedProject?.folder || view?.project_filter === null) && (
-            <GlobalDragDrop
-              onFilesDroppedInAllView={view?.project_filter === null ? handleFilesDroppedInAllView : (files) => {
-                if (!selectedProject?.folder) return;
-                openProjectSelection(files, selectedProject);
-              }}
-            />
-          )}
-
-          <ProjectSelectionModal
-            isOpen={showProjectSelection}
-            projects={projects}
-            initialProject={initialProject}
-            onSelect={handleUploadProjectSelection}
-            onCancel={handleProjectSelectionCancel}
-          />
-
-          {hasPendingDeletes && (
-            <CommitRevertBar
-              ref={commitBarRef}
-              pendingDeleteTotals={pendingDeleteTotals}
-              activeFilters={activeFilters}
-              onFilterChange={setActiveFilters}
-              onRevert={openRevertConfirm}
-              onCommit={handleCommitChanges}
-            />
-          )}
-        </div>
+            {hasPendingDeletes && (
+              <CommitRevertBar
+                ref={commitBarRef}
+                pendingDeleteTotals={pendingDeleteTotals}
+                activeFilters={activeFilters}
+                onFilterChange={setActiveFilters}
+                onRevert={openRevertConfirm}
+                onCommit={handleCommitChanges}
+              />
+            )}
+          </div>
         )}
       </UploadProvider>
     </PublicHashProvider>

@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { listProjects, createProject } from '../api/projectsApi';
 import { listSharedLinks, createSharedLink, addPhotosToLink, removePhotoFromLink } from '../api/sharedLinksManagementApi';
-import { startTask } from '../api/jobsApi';
+import { batchMovePhotos } from '../api/batchApi';
 import { useToast } from '../ui/toast/ToastContext';
 
 /**
@@ -17,11 +17,11 @@ export default function UnifiedSelectionModal({
   mode = 'move', // 'move' | 'share'
   // Move mode props
   sourceFolder,
-  selectedFilenames = [],
+  selectedFilenames = [], // DEPRECATED: kept for backward compatibility, use selectedPhotos instead
+  selectedPhotos = [], // Array of photo objects with { id, filename, project_folder } - used for both move and share
   selectedProjectSummaries = [],
   // Share mode props
-  selectedPhotos = [], // Array of photo objects with { id, filename, project_folder }
-  currentLinkIds = [], // NEW: Array of link IDs this photo is already in (for share mode)
+  currentLinkIds = [], // Array of link IDs this photo is already in (for share mode)
 }) {
   const [items, setItems] = useState([]); // projects or shared links
   const [query, setQuery] = useState('');
@@ -45,12 +45,12 @@ export default function UnifiedSelectionModal({
         const list = isShareMode ? await listSharedLinks() : await listProjects();
         if (!alive) return;
         setItems(list || []);
-        
+
         // Pre-select current links in share mode
         if (isShareMode && Array.isArray(currentLinkIds) && currentLinkIds.length > 0) {
           setMultiSelection(new Set(currentLinkIds));
         }
-      } catch (_) {}
+      } catch (_) { }
     })();
     return () => { alive = false; };
   }, [open, isShareMode, currentLinkIds]);
@@ -89,10 +89,10 @@ export default function UnifiedSelectionModal({
 
   // Filter and search items
   const availableItems = useMemo(() => {
-    const pool = Array.isArray(items) 
+    const pool = Array.isArray(items)
       ? items.filter(item => isMoveMode ? !exclusionSet.has(item.folder) : true)
       : [];
-    
+
     let filtered = pool;
     if (normalizedQuery) {
       filtered = pool.filter(item => {
@@ -107,7 +107,7 @@ export default function UnifiedSelectionModal({
         }
       });
     }
-    
+
     // In share mode, sort to show pre-selected links first
     if (isShareMode && currentLinkIds.length > 0) {
       const currentSet = new Set(currentLinkIds);
@@ -115,7 +115,7 @@ export default function UnifiedSelectionModal({
       const others = filtered.filter(item => !currentSet.has(item.id));
       return [...current, ...others].slice(0, 20);
     }
-    
+
     return filtered.slice(0, 20);
   }, [items, exclusionSet, normalizedQuery, isShareMode, isMoveMode, currentLinkIds]);
 
@@ -154,7 +154,7 @@ export default function UnifiedSelectionModal({
   }, [selectedProjectSummaries, projectNameMap, isMoveMode]);
 
   const hasSelection = isMoveMode ? selection != null : multiSelection.size > 0;
-  
+
   const confirmLabel = useMemo(() => {
     if (isMoveMode) {
       return hasSelection || exactMatch ? (loading ? 'Moving…' : 'Confirm') : (creating ? 'Creating…' : 'Create project');
@@ -166,7 +166,8 @@ export default function UnifiedSelectionModal({
   const confirmDisabled = useMemo(() => {
     if (loading || creating) return true;
     if (isMoveMode) {
-      const hasFiles = (selectedFilenames?.length || 0) > 0;
+      // Check if we have photos to move (prefer selectedPhotos, fall back to selectedFilenames)
+      const hasFiles = selectedPhotos.length > 0 || (selectedFilenames?.length || 0) > 0;
       return !hasFiles || (!hasSelection && !exactMatch && !query.trim());
     } else {
       // Share mode: just need at least one change in selection
@@ -174,7 +175,7 @@ export default function UnifiedSelectionModal({
       // Disabled only if no selection changes have been made
       return false; // Always enabled in share mode (user can add/remove)
     }
-  }, [loading, creating, isMoveMode, hasSelection, exactMatch, query, selectedFilenames]);
+  }, [loading, creating, isMoveMode, hasSelection, exactMatch, query, selectedFilenames, selectedPhotos]);
 
   const handleSuggestionClick = (item) => {
     if (isMoveMode) {
@@ -218,14 +219,14 @@ export default function UnifiedSelectionModal({
           title,
           description: newItemDescription.trim() || undefined,
         });
-        
+
         setItems(prev => [...prev, newLink]);
         setMultiSelection(prev => new Set([...prev, newLink.id]));
-        
+
         setQuery('');
         setNewItemDescription('');
         setShowCreateForm(false);
-        
+
         toast.show({
           emoji: '✅',
           message: `Created "${title}"`,
@@ -235,21 +236,21 @@ export default function UnifiedSelectionModal({
         const res = await createProject(title);
         const proj = res && res.project;
         if (!proj || !proj.folder) throw new Error('Invalid create response');
-        
+
         setItems(prev => {
           const next = Array.isArray(prev) ? [...prev] : [];
-          next.push({ 
-            name: proj.name, 
-            folder: proj.folder, 
-            created_at: proj.created_at, 
-            updated_at: proj.updated_at, 
-            photo_count: proj.photo_count ?? 0 
+          next.push({
+            name: proj.name,
+            folder: proj.folder,
+            created_at: proj.created_at,
+            updated_at: proj.updated_at,
+            photo_count: proj.photo_count ?? 0
           });
           return next;
         });
         setSelection(proj);
         setQuery(proj.name || proj.folder || '');
-        
+
         toast.show({
           emoji: '✅',
           message: `Created project "${title}"`,
@@ -257,10 +258,10 @@ export default function UnifiedSelectionModal({
         });
       }
     } catch (e) {
-      toast.show({ 
-        emoji: '⚠️', 
-        message: `Failed to create ${isShareMode ? 'shared link' : 'project'}${e?.message ? `: ${e.message}` : ''}`, 
-        variant: 'error' 
+      toast.show({
+        emoji: '⚠️',
+        message: `Failed to create ${isShareMode ? 'shared link' : 'project'}${e?.message ? `: ${e.message}` : ''}`,
+        variant: 'error'
       });
     } finally {
       setCreating(false);
@@ -271,21 +272,50 @@ export default function UnifiedSelectionModal({
     if (!folder) return;
     setLoading(true);
     try {
-      await startTask(folder, { task_type: 'image_move', items: selectedFilenames });
-      toast.show({ 
-        emoji: '📦', 
-        message: `Moving ${selectedFilenames.length} photo(s) → ${folder}`, 
-        variant: 'notification' 
+      // Use selectedPhotos if available (with IDs), otherwise fall back to selectedFilenames
+      const photosToMove = selectedPhotos.length > 0 ? selectedPhotos : [];
+
+      if (photosToMove.length === 0) {
+        toast.show({
+          emoji: '⚠️',
+          message: 'No photos to move (missing photo data)',
+          variant: 'warning'
+        });
+        return;
+      }
+
+      // Extract photo IDs
+      const photoIds = photosToMove.map(p => p?.id).filter(Boolean);
+
+      if (photoIds.length === 0) {
+        console.error('Selected photos missing IDs:', photosToMove);
+        toast.show({
+          emoji: '⚠️',
+          message: 'Selected photos missing IDs',
+          variant: 'error'
+        });
+        return;
+      }
+
+      // Use batch move API with photo IDs
+      await batchMovePhotos(photoIds, folder);
+
+      toast.show({
+        emoji: '📦',
+        message: `Moving ${photoIds.length} photo(s) → ${folder}`,
+        variant: 'notification'
       });
       onClose && onClose({ moved: true, destFolder: folder });
     } catch (e) {
-      toast.show({ emoji: '⚠️', message: 'Failed to start move', variant: 'error' });
+      console.error('Move failed:', e);
+      toast.show({ emoji: '⚠️', message: e?.message || 'Failed to start move', variant: 'error' });
     } finally {
       setLoading(false);
     }
   };
 
   const performShare = async () => {
+    // In share mode, selectedPhotos contains the photos to share
     if (!Array.isArray(selectedPhotos) || selectedPhotos.length === 0) {
       toast.show({
         emoji: '⚠️',
@@ -294,7 +324,7 @@ export default function UnifiedSelectionModal({
       });
       return;
     }
-    
+
     setLoading(true);
     try {
       const photoIds = selectedPhotos.map(p => p?.id).filter(Boolean);
@@ -306,24 +336,24 @@ export default function UnifiedSelectionModal({
       // Calculate which links to add to and which to remove from
       const currentLinkSet = new Set(currentLinkIds);
       const newLinkSet = new Set(multiSelection);
-      
+
       const linksToAdd = Array.from(newLinkSet).filter(id => !currentLinkSet.has(id));
       const linksToRemove = Array.from(currentLinkSet).filter(id => !newLinkSet.has(id));
-      
+
       const promises = [];
-      
+
       // Add photos to newly selected links
       linksToAdd.forEach(linkId => {
         promises.push(addPhotosToLink(linkId, photoIds));
       });
-      
+
       // Remove photos from deselected links
       linksToRemove.forEach(linkId => {
         photoIds.forEach(photoId => {
           promises.push(removePhotoFromLink(linkId, photoId));
         });
       });
-      
+
       if (promises.length === 0) {
         toast.show({
           emoji: 'ℹ️',
@@ -333,13 +363,13 @@ export default function UnifiedSelectionModal({
         onClose && onClose({ shared: false });
         return;
       }
-      
+
       await Promise.all(promises);
 
       const photoCount = photoIds.length;
       const addedCount = linksToAdd.length;
       const removedCount = linksToRemove.length;
-      
+
       let message = '';
       if (addedCount > 0 && removedCount > 0) {
         message = `Updated ${photoCount} photo${photoCount === 1 ? '' : 's'}: added to ${addedCount} link${addedCount === 1 ? '' : 's'}, removed from ${removedCount}`;
@@ -348,7 +378,7 @@ export default function UnifiedSelectionModal({
       } else if (removedCount > 0) {
         message = `Removed ${photoCount} photo${photoCount === 1 ? '' : 's'} from ${removedCount} link${removedCount === 1 ? '' : 's'}`;
       }
-      
+
       toast.show({
         emoji: '✅',
         message,
@@ -370,7 +400,7 @@ export default function UnifiedSelectionModal({
 
   const handleConfirm = async () => {
     if (confirmDisabled) return;
-    
+
     if (isMoveMode) {
       if (selection) {
         await performMove(selection.folder);
@@ -402,9 +432,9 @@ export default function UnifiedSelectionModal({
             {isShareMode ? 'Share Photos' : 'Move Photos'}
           </h3>
           <p className="text-sm text-gray-600 mt-1">
-            {isShareMode 
+            {isShareMode
               ? `${selectedPhotos.length} photo${selectedPhotos.length === 1 ? '' : 's'} selected`
-              : `Select a destination project. ${selectedFilenames?.length || 0} selected${selectedProjectsLabel ? ` from projects: ${selectedProjectsLabel}` : '.'}`
+              : `Select a destination project. ${selectedPhotos.length > 0 ? selectedPhotos.length : (selectedFilenames?.length || 0)} selected${selectedProjectsLabel ? ` from projects: ${selectedProjectsLabel}` : '.'}`
             }
           </p>
         </div>
@@ -457,11 +487,10 @@ export default function UnifiedSelectionModal({
                       key={isShareMode ? item.id : item.folder}
                       type="button"
                       onClick={() => handleSuggestionClick(item)}
-                      className={`w-full px-4 py-3 text-left rounded-lg border transition-colors ${
-                        isSelected
+                      className={`w-full px-4 py-3 text-left rounded-lg border transition-colors ${isSelected
                           ? 'border-blue-500 bg-blue-50'
                           : 'border-gray-300 hover:border-gray-400 bg-white hover:bg-gray-50'
-                      }`}
+                        }`}
                       disabled={loading || creating}
                     >
                       {isShareMode ? (
@@ -469,7 +498,7 @@ export default function UnifiedSelectionModal({
                           <input
                             type="checkbox"
                             checked={isSelected}
-                            onChange={() => {}}
+                            onChange={() => { }}
                             className="mt-1 h-4 w-4 text-blue-600 rounded border-gray-300 focus:ring-blue-500 pointer-events-none"
                           />
                           <div className="ml-3 flex-1">
@@ -493,12 +522,12 @@ export default function UnifiedSelectionModal({
                 })
               ) : (
                 <div className="px-4 py-8 text-center text-gray-500">
-                  {query.trim().length === 0 
+                  {query.trim().length === 0
                     ? (isShareMode ? 'No shared links yet.' : 'Start typing to see suggestions.')
-                    : (isShareMode 
-                        ? `No shared links found matching "${query.trim()}".`
-                        : `No projects found. Press Confirm to create "${query.trim()}".`
-                      )
+                    : (isShareMode
+                      ? `No shared links found matching "${query.trim()}".`
+                      : `No projects found. Press Confirm to create "${query.trim()}".`
+                    )
                   }
                 </div>
               )}
@@ -585,11 +614,10 @@ export default function UnifiedSelectionModal({
           <button
             onClick={handleConfirm}
             disabled={confirmDisabled}
-            className={`px-4 py-2 rounded-md ${
-              confirmDisabled 
-                ? 'bg-blue-300 text-white cursor-not-allowed' 
+            className={`px-4 py-2 rounded-md ${confirmDisabled
+                ? 'bg-blue-300 text-white cursor-not-allowed'
                 : 'bg-blue-600 text-white hover:bg-blue-700'
-            }`}
+              }`}
           >
             {confirmLabel}
           </button>

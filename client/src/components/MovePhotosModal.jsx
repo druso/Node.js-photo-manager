@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { listProjects, createProject } from '../api/projectsApi';
-import { startTask } from '../api/jobsApi';
+import { batchMovePhotos } from '../api/batchApi';
 import { useToast } from '../ui/toast/ToastContext';
 
 export default function MovePhotosModal({
@@ -25,7 +25,7 @@ export default function MovePhotosModal({
         const list = await listProjects();
         if (!alive) return;
         setProjects(list || []);
-      } catch (_) {}
+      } catch (_) { }
     })();
     return () => { alive = false; };
   }, [open]);
