@@ -81,7 +81,7 @@ cd photo-manager
 
 ```bash
 # Run the setup script
-sudo ./setup-ubuntu-host.sh
+sudo ./scripts/setup-ubuntu-host.sh
 ```
 
 This creates:
@@ -555,7 +555,7 @@ sudo systemctl status cloudflared # Tunnel status
 ---
 
 **Quick Start Summary:**
-1. Run `sudo ./setup-ubuntu-host.sh`
+1. Run `sudo ./scripts/setup-ubuntu-host.sh`
 2. Configure Cloudflare Tunnel
 3. Update `ALLOWED_ORIGINS` in `docker-compose.yml`
 4. Run `docker compose up -d`

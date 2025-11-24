@@ -1,5 +1,5 @@
 // Test script to verify schema migration for jobs refactoring
-const jobsRepo = require('./server/services/repositories/jobsRepo');
+const jobsRepo = require('../server/services/repositories/jobsRepo');
 
 console.log('Testing schema migration...\n');
 
@@ -88,7 +88,7 @@ try {
   });
 
   console.log('\n✅ All tests passed! Schema migration successful.');
-  
+
 } catch (error) {
   console.error('\n❌ Test failed:', error.message);
   console.error(error.stack);

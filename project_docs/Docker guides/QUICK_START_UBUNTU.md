@@ -81,8 +81,8 @@ We need to create specific folders for your photos and database to ensure they p
 ### Run the Setup Script
 
 ```bash
-chmod +x setup-ubuntu-host.sh
-sudo ./setup-ubuntu-host.sh
+chmod +x scripts/setup-ubuntu-host.sh
+sudo ./scripts/setup-ubuntu-host.sh
 ```
 
 **What this does:**
@@ -280,13 +280,13 @@ To ensure your app stays updated when you push changes to Git, we'll use a cron 
 ### Make the Update Script Executable
 
 ```bash
-chmod +x auto_update.sh
+chmod +x scripts/auto_update.sh
 ```
 
 ### Test the Script
 
 ```bash
-./auto_update.sh
+./scripts/auto_update.sh
 ```
 
 You should see output like:
@@ -305,12 +305,12 @@ crontab -e
 
 Add this line to check for updates every hour (replace `<YOUR_USERNAME>` with your actual username):
 ```bash
-0 * * * * /home/<YOUR_USERNAME>/photo-manager/auto_update.sh >> /home/<YOUR_USERNAME>/photo-manager/update.log 2>&1
+0 * * * * /home/<YOUR_USERNAME>/photo-manager/scripts/auto_update.sh >> /home/<YOUR_USERNAME>/photo-manager/update.log 2>&1
 ```
 
 **Example:** If your username is `john`, the line would be:
 ```bash
-0 * * * * /home/john/photo-manager/auto_update.sh >> /home/john/photo-manager/update.log 2>&1
+0 * * * * /home/john/photo-manager/scripts/auto_update.sh >> /home/john/photo-manager/update.log 2>&1
 ```
 
 ### Verify Crontab
@@ -456,7 +456,7 @@ tail -f ~/photo-manager/update.log
 
 Make sure the script is executable:
 ```bash
-chmod +x ~/photo-manager/auto_update.sh
+chmod +x ~/photo-manager/scripts/auto_update.sh
 ```
 
 ---

@@ -4,6 +4,9 @@
 
 set -e
 
+# Ensure we are in the project root
+cd "$(dirname "$0")/.." || exit 1
+
 echo "🔍 Starting Docker Setup Verification..."
 
 # 1. Check Docker Installation

@@ -6,7 +6,8 @@
 
 # Determine the directory where this script is located
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-cd "$SCRIPT_DIR" || { echo "Failed to change directory to $SCRIPT_DIR"; exit 1; }
+# Go to project root (parent of scripts/)
+cd "$SCRIPT_DIR/.." || { echo "Failed to change directory to project root"; exit 1; }
 
 # Log date
 echo "Checking for updates: $(date)"

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-const projectsRepo = require('./server/services/repositories/projectsRepo');
-const photosRepo = require('./server/services/repositories/photosRepo');
+const projectsRepo = require('../server/services/repositories/projectsRepo');
+const photosRepo = require('../server/services/repositories/photosRepo');
 
 const projects = projectsRepo.list().filter(p => !p.status || p.status !== 'canceled');
 

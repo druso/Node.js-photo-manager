@@ -4,6 +4,9 @@
 
 set -e
 
+# Ensure we are in the project root
+cd "$(dirname "$0")/.." || exit 1
+
 echo "=========================================="
 echo "Photo Manager: Migrate to Docker Volumes"
 echo "=========================================="
