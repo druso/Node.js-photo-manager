@@ -8,11 +8,11 @@ RUN npm install -g npm@11.6.2
 # Install build tools for native modules (better-sqlite3) and libvips for sharp
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
-    python3 \
-    build-essential \
-    git \
-    pkg-config \
-    libvips-dev \
+  python3 \
+  build-essential \
+  git \
+  pkg-config \
+  libvips-dev \
   && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -45,7 +45,7 @@ RUN apt-get update \
   && rm -rf /var/lib/apt/lists/*
 
 ENV NODE_ENV=production \
-    PORT=5000
+  PORT=5000
 
 WORKDIR /app
 

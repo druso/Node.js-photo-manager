@@ -119,6 +119,9 @@ const projectsRouter = require('./server/routes/projects');
 app.use('/api/projects', projectsRouter);
 const uploadsRouter = require('./server/routes/uploads');
 app.use('/api/projects', uploadsRouter);
+// tus resumable uploads (authenticated)
+const tusUploadsRouter = require('./server/routes/tusUploads');
+app.use('/api/uploads/tus', authenticateAdmin, tusUploadsRouter);
 const assetsRouter = require('./server/routes/assets');
 app.use('/api/projects', assetsRouter);
 const tagsRouter = require('./server/routes/tags');
@@ -161,7 +164,8 @@ const PROJECTS_DIR = path.join(__dirname, '.projects');
 fs.ensureDirSync(PROJECTS_DIR);
 
 // Config management (centralized in service)
-const CONFIG_PATH = path.join(__dirname, 'config.json');
+// Config stored in .projects directory to avoid Docker permission issues
+const CONFIG_PATH = path.join(PROJECTS_DIR, 'config.json');
 const { getConfig } = require('./server/services/config');
 let config = getConfig();
 

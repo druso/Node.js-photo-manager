@@ -23,8 +23,8 @@ services:
       # Persist project files and images - accessible from host filesystem
       # Change this path to your preferred location on Ubuntu
       - /var/lib/photo-manager/projects:/app/.projects
-      # Persist runtime configuration (edit on host)
-      - ./config.json:/app/config.json
+      # Note: config.json is created internally from config.default.json
+      # To customize config, use environment variables or edit inside container
     healthcheck:
       test: [ "CMD", "node", "-e", "fetch('http://127.0.0.1:5000/api/config').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))" ]
       interval: 30s

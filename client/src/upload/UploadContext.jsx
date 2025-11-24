@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useMemo, useRef, useState, useEffect } from 'react';
 import { analyzeFiles as apiAnalyzeFiles, processPerImage } from '../api/uploadsApi';
+import { uploadFileResumable } from '../api/resumableUpload';
 
 // Public shape
 // operation: null | {
@@ -23,10 +24,13 @@ export function UploadProvider({ children, projectFolder, onCompleted }) {
   const [skipDuplicates, setSkipDuplicates] = useState(true);
   // Conflict-handling flag: cross-project moves
   const [reloadConflictsIntoThisProject, setReloadConflictsIntoThisProject] = useState(false);
+  // Config flag for resumable uploads
+  const [useResumableUploads, setUseResumableUploads] = useState(false);
   const lingerTimerRef = useRef(null);
   const progressTimerRef = useRef(null);
   const hideTimerRef = useRef(null);
   const xhrRef = useRef(null);
+  const tusUploadsRef = useRef([]); // Track active tus uploads
 
   const clearLingerTimer = () => {
     if (lingerTimerRef.current) {
@@ -41,6 +45,26 @@ export function UploadProvider({ children, projectFolder, onCompleted }) {
       progressTimerRef.current = null;
     }
   };
+
+  // Fetch config to determine if resumable uploads are enabled
+  useEffect(() => {
+    const fetchConfig = async () => {
+      try {
+        const response = await fetch('/api/config');
+        if (response.ok) {
+          const config = await response.json();
+          const enabled = config?.uploader?.use_resumable_uploads === true;
+          setUseResumableUploads(enabled);
+          if (enabled) {
+            console.log('[Upload] Resumable uploads (tus) enabled');
+          }
+        }
+      } catch (err) {
+        console.warn('[Upload] Failed to fetch config, using default upload method:', err);
+      }
+    };
+    fetchConfig();
+  }, []);
 
   // Progress polling removed: processing is now handled by background jobs with SSE/Processes panel
 
@@ -156,6 +180,11 @@ export function UploadProvider({ children, projectFolder, onCompleted }) {
       xhr.open('POST', `/api/projects/${encodeURIComponent(projectFolder)}/upload`);
       xhr.send(formData);
       return;
+    }
+
+    // Use tus resumable uploads if enabled
+    if (useResumableUploads) {
+      return uploadWithTus(filesToUpload, { skip, conflictArray });
     }
 
     // Split files into batches
@@ -294,6 +323,94 @@ export function UploadProvider({ children, projectFolder, onCompleted }) {
     }
   };
 
+  // Upload files using tus resumable upload protocol
+  const uploadWithTus = async (filesToUpload, options = {}) => {
+    const totalFiles = filesToUpload.length;
+    let completedFiles = 0;
+    const allErrors = [];
+
+    setOperation({
+      type: 'upload',
+      phase: 'uploading',
+      label: `Uploading ${totalFiles} file${totalFiles > 1 ? 's' : ''} (resumable)…`,
+      percent: 0,
+      meta: { totalFiles, resumable: true }
+    });
+
+    // Clear any previous tus uploads
+    tusUploadsRef.current.forEach(upload => {
+      try {
+        upload.abort();
+      } catch (err) {
+        console.warn('[tus] Failed to abort previous upload:', err);
+      }
+    });
+    tusUploadsRef.current = [];
+
+    try {
+      // Upload files sequentially (can be parallelized if needed)
+      for (let i = 0; i < filesToUpload.length; i++) {
+        const file = filesToUpload[i];
+        const fileNumber = i + 1;
+
+        await new Promise((resolve, reject) => {
+          const upload = uploadFileResumable(file, {
+            projectFolder,
+            onProgress: (percentage, bytesUploaded, bytesTotal) => {
+              // Calculate overall progress
+              const fileProgress = percentage / 100;
+              const overallProgress = (completedFiles + fileProgress) / totalFiles;
+              const pct = Math.round(overallProgress * 100);
+
+              setOperation(prev => prev ? {
+                ...prev,
+                percent: pct,
+                label: `Uploading ${totalFiles} file${totalFiles > 1 ? 's' : ''} (${pct}%) [${fileNumber}/${totalFiles}]…`
+              } : null);
+            },
+            onError: (error) => {
+              console.error(`[tus] Upload failed for ${file.name}:`, error);
+              allErrors.push({
+                file: file.name,
+                error: error.message || String(error)
+              });
+              reject(error);
+            },
+            onSuccess: () => {
+              console.log(`[tus] Upload succeeded for ${file.name}`);
+              completedFiles++;
+              resolve();
+            }
+          });
+
+          // Track upload instance
+          tusUploadsRef.current.push(upload);
+
+          // Start the upload
+          upload.start();
+        });
+      }
+
+      // All uploads completed
+      if (allErrors.length === 0) {
+        finishSuccess({ note: 'Upload complete. Processing in background.' });
+      } else if (completedFiles > 0) {
+        const successCount = completedFiles;
+        const failCount = totalFiles - completedFiles;
+        finishError(`Uploaded ${successCount} of ${totalFiles} files. ${failCount} failed.`);
+      } else {
+        finishError(allErrors[0]?.error || 'Upload failed');
+      }
+
+    } catch (err) {
+      console.error('[tus] Upload error:', err);
+      finishError('Upload failed: ' + String(err));
+    } finally {
+      // Clear tus uploads
+      tusUploadsRef.current = [];
+    }
+  };
+
   // Start processing via unified per-image endpoint (now enqueues a background job).
   // Note: thumbnails/previews flags are ignored; kept for compatibility with callers.
   const startProcess = async ({ thumbnails = true, previews = true, force = false, filenames } = {}) => {
@@ -318,8 +435,18 @@ export function UploadProvider({ children, projectFolder, onCompleted }) {
       clearTimeout(hideTimerRef.current);
       hideTimerRef.current = null;
     }
+    // Abort XHR uploads
     try { xhrRef.current && xhrRef.current.abort && xhrRef.current.abort(); } catch { }
     xhrRef.current = null;
+    // Abort tus uploads
+    tusUploadsRef.current.forEach(upload => {
+      try {
+        upload.abort();
+      } catch (err) {
+        console.warn('[tus] Failed to abort upload:', err);
+      }
+    });
+    tusUploadsRef.current = [];
     setAnalysisResult(null);
     setSummary(null);
     setOperation(null);

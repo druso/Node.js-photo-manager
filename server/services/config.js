@@ -4,12 +4,24 @@ const makeLogger = require('../utils/logger2');
 const log = makeLogger('config');
 
 const ROOT = path.join(__dirname, '..', '..');
-const CONFIG_PATH = path.join(ROOT, 'config.json');
+// Store config.json in .projects directory to avoid Docker permission issues
+// .projects is already mounted with write permissions
+const CONFIG_PATH = path.join(ROOT, '.projects', 'config.json');
 const DEFAULT_CONFIG_PATH = path.join(ROOT, 'config.default.json');
 
 function ensureConfig() {
+  // Create config.json from defaults if it doesn't exist
   if (!fs.existsSync(CONFIG_PATH)) {
-    fs.copySync(DEFAULT_CONFIG_PATH, CONFIG_PATH);
+    try {
+      fs.copySync(DEFAULT_CONFIG_PATH, CONFIG_PATH);
+      log.info('config_created_from_defaults', { path: CONFIG_PATH });
+    } catch (err) {
+      log.error('config_creation_failed', {
+        path: CONFIG_PATH,
+        error: err?.message
+      });
+      throw err;
+    }
   }
 }
 
