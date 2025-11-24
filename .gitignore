@@ -11,13 +11,12 @@ tasks_progress/
 .windsurf/
 
 # Temporary/Backup files (commented out for now)
-# README.md.backup
-# cookies.txt
-# curl_out.json
-# curl_status.txt
-# server.pid
-# photo_manager.test.db-shm
-# photo_manager.test.db-wal
+cookies.txt
+curl_out.json
+curl_status.txt
+server.pid
+photo_manager.test.db-shm
+photo_manager.test.db-wal
 
 # Node.js
 node_modules/
