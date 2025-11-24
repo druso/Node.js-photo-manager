@@ -225,8 +225,28 @@ export function UploadProvider({ children, projectFolder, onCompleted }) {
             const xhr = new XMLHttpRequest();
             xhrRef.current = xhr;
 
+            // Speed calculation state for this batch
+            let lastLoaded = 0;
+            let lastTime = Date.now();
+            let currentSpeed = '';
+
             xhr.upload.onprogress = (event) => {
               if (event.lengthComputable) {
+                // Calculate speed
+                const now = Date.now();
+                const timeDiff = now - lastTime;
+
+                // Update speed every 500ms or if it's the first update
+                if (timeDiff > 500 || lastLoaded === 0) {
+                  const bytesDiff = event.loaded - lastLoaded;
+                  if (timeDiff > 0) {
+                    const speed = (bytesDiff / timeDiff) * 1000; // bytes per second
+                    currentSpeed = formatSpeed(speed);
+                  }
+                  lastLoaded = event.loaded;
+                  lastTime = now;
+                }
+
                 // Calculate overall progress across all batches
                 const batchProgress = event.loaded / event.total;
                 const overallProgress = (filesCompleted + (batchProgress * batch.length)) / totalFiles;
@@ -236,7 +256,12 @@ export function UploadProvider({ children, projectFolder, onCompleted }) {
                 setOperation(prev => prev ? {
                   ...prev,
                   percent: pct,
-                  label: `Uploading ${totalFiles} file${totalFiles > 1 ? 's' : ''} (${pct}%)${retryLabel}…`
+                  label: `Uploading ${totalFiles} file${totalFiles > 1 ? 's' : ''} (${pct}%)${retryLabel}…`,
+                  meta: {
+                    totalFiles,
+                    completedFiles: filesCompleted,
+                    speed: currentSpeed
+                  }
                 } : null);
               }
             };
@@ -296,7 +321,8 @@ export function UploadProvider({ children, projectFolder, onCompleted }) {
         setOperation(prev => prev ? {
           ...prev,
           percent: progressPct,
-          label: `Uploading ${totalFiles} file${totalFiles > 1 ? 's' : ''} (${progressPct}%)…`
+          label: `Uploading ${totalFiles} file${totalFiles > 1 ? 's' : ''} (${progressPct}%)…`,
+          meta: { totalFiles, completedFiles: filesCompleted }
         } : null);
       }
 
@@ -321,6 +347,14 @@ export function UploadProvider({ children, projectFolder, onCompleted }) {
       console.error('Upload error:', err);
       finishError('Upload failed: ' + String(err));
     }
+  };
+
+  const formatSpeed = (bytesPerSecond) => {
+    if (bytesPerSecond === 0) return '';
+    if (bytesPerSecond >= 1024 * 1024) {
+      return `${(bytesPerSecond / (1024 * 1024)).toFixed(1)} MB/s`;
+    }
+    return `${(bytesPerSecond / 1024).toFixed(0)} KB/s`;
   };
 
   // Upload files using tus resumable upload protocol
@@ -353,10 +387,30 @@ export function UploadProvider({ children, projectFolder, onCompleted }) {
         const file = filesToUpload[i];
         const fileNumber = i + 1;
 
+        // Speed calculation state for this file
+        let lastLoaded = 0;
+        let lastTime = Date.now();
+        let currentSpeed = '';
+
         await new Promise((resolve, reject) => {
           const upload = uploadFileResumable(file, {
             projectFolder,
             onProgress: (percentage, bytesUploaded, bytesTotal) => {
+              // Calculate speed
+              const now = Date.now();
+              const timeDiff = now - lastTime;
+
+              // Update speed every 500ms or if it's the first update
+              if (timeDiff > 500 || lastLoaded === 0) {
+                const bytesDiff = bytesUploaded - lastLoaded;
+                if (timeDiff > 0) {
+                  const speed = (bytesDiff / timeDiff) * 1000; // bytes per second
+                  currentSpeed = formatSpeed(speed);
+                }
+                lastLoaded = bytesUploaded;
+                lastTime = now;
+              }
+
               // Calculate overall progress
               const fileProgress = percentage / 100;
               const overallProgress = (completedFiles + fileProgress) / totalFiles;
@@ -365,7 +419,14 @@ export function UploadProvider({ children, projectFolder, onCompleted }) {
               setOperation(prev => prev ? {
                 ...prev,
                 percent: pct,
-                label: `Uploading ${totalFiles} file${totalFiles > 1 ? 's' : ''} (${pct}%) [${fileNumber}/${totalFiles}]…`
+                label: `Uploading ${totalFiles} file${totalFiles > 1 ? 's' : ''} (${pct}%) [${fileNumber}/${totalFiles}]…`,
+                meta: {
+                  totalFiles,
+                  resumable: true,
+                  completedFiles,
+                  currentFile: fileNumber,
+                  speed: currentSpeed
+                }
               } : null);
             },
             onError: (error) => {

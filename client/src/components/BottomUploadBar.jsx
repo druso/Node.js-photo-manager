@@ -9,7 +9,7 @@ const phaseText = (op) => {
     case 'preparation':
       return 'Analyzing files…';
     case 'uploading':
-      return `${typeLabel}…`;
+      return op.label || `${typeLabel}…`;
     case 'post-processing':
       return 'Processing images…';
     case 'completed':
@@ -87,9 +87,24 @@ const BottomUploadBar = () => {
             <div className="flex-1 min-w-0">
               <div className="text-sm font-medium text-gray-900 truncate">{label}</div>
               {operation.phase === 'uploading' && (
-                <div className="text-xs text-gray-600">
-                  {operation.meta?.totalFiles ? `${operation.meta.totalFiles} file${operation.meta.totalFiles > 1 ? 's' : ''}` : ''}
-                  {operation.meta?.totalImages ? ` • ${operation.meta.totalImages} image${operation.meta.totalImages > 1 ? 's' : ''}` : ''}
+                <div className="text-xs text-gray-600 flex gap-2">
+                  <div className="flex-1">
+                    {operation.meta?.currentFile ? (
+                      <span>File {operation.meta.currentFile} of {operation.meta.totalFiles}</span>
+                    ) : operation.meta?.completedFiles !== undefined ? (
+                      <span>{operation.meta.completedFiles} of {operation.meta.totalFiles} files uploaded</span>
+                    ) : (
+                      <>
+                        {operation.meta?.totalFiles ? `${operation.meta.totalFiles} file${operation.meta.totalFiles > 1 ? 's' : ''}` : ''}
+                        {operation.meta?.totalImages ? ` • ${operation.meta.totalImages} image${operation.meta.totalImages > 1 ? 's' : ''}` : ''}
+                      </>
+                    )}
+                  </div>
+                  {operation.meta?.speed && (
+                    <div className="text-gray-500 font-mono text-[10px] self-center bg-gray-100 px-1.5 py-0.5 rounded">
+                      {operation.meta.speed}
+                    </div>
+                  )}
                 </div>
               )}
               {operation.phase === 'post-processing' && (
