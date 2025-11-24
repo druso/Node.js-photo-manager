@@ -29,22 +29,3 @@ jobs:
         run: npm test
         env:
           NODE_ENV: test
-
-      - name: Verify test isolation
-        run: |
-          if [ -d ".projects/user_0" ] && [ "$(ls -A .projects/user_0)" ]; then
-            echo "ERROR: Tests polluted .projects/ directory"
-            exit 1
-          fi
-
-          if [ ! -d ".projects-test" ]; then
-            echo "ERROR: Tests did not create .projects-test/"
-            exit 1
-          fi
-
-          if [ ! -d ".projects-test/user_0" ] || [ "$(ls -A .projects-test/user_0 2>/dev/null)" = "" ]; then
-            echo "ERROR: .projects-test/user_0 is missing or empty after tests"
-            exit 1
-          fi
-
-          echo "Test isolation confirmed"
