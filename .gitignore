@@ -6,8 +6,9 @@ photo_manager.test.db
 projects/
 uploads/
 thumbnails/
-#.windsurf
-tasks_archived
+tasks_archived/
+tasks_progress/
+.windsurf/
 
 # Node.js
 node_modules/
