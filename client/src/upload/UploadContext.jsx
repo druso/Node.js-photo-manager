@@ -110,8 +110,10 @@ export function UploadProvider({ children, projectFolder, onCompleted }) {
     }
 
     // Batch size for sequential uploads (helps avoid Cloudflare Tunnel 100s timeout)
-    // Configurable via server config.json: uploader.batch_size (default: 3)
-    const BATCH_SIZE = 3;
+    // Reduced to 1 for maximum reliability with large files through Cloudflare Tunnel
+    // Configurable via server config.json: uploader.batch_size (default: 1)
+    const BATCH_SIZE = 1;
+    const MAX_RETRIES = 3; // Retry failed uploads up to 3 times
 
     // Phase: uploading (sequential batches with aggregated progress)
     const totalFiles = moveOnly ? 0 : filesToUpload.length;
@@ -173,55 +175,75 @@ export function UploadProvider({ children, projectFolder, onCompleted }) {
         const batch = batches[batchIndex];
         const batchNumber = batchIndex + 1;
 
-        // Create FormData for this batch
-        const formData = new FormData();
-        batch.forEach(file => formData.append('photos', file));
-        formData.append('overwriteInThisProject', String(effectiveOverwrite).toLowerCase());
-        formData.append('reloadConflictsIntoThisProject', String(!!reloadConflictsIntoThisProject).toLowerCase());
+        // Retry logic for this batch
+        let batchResult = null;
+        let retryCount = 0;
 
-        // Only include conflictItems in the first batch to avoid duplicate processing
-        if (batchIndex === 0 && reloadConflictsIntoThisProject && conflictArray.length > 0) {
-          try { formData.append('conflictItems', JSON.stringify(conflictArray)); } catch { }
-        }
+        while (retryCount <= MAX_RETRIES) {
+          // Create FormData for this batch
+          const formData = new FormData();
+          batch.forEach(file => formData.append('photos', file));
+          formData.append('overwriteInThisProject', String(effectiveOverwrite).toLowerCase());
+          formData.append('reloadConflictsIntoThisProject', String(!!reloadConflictsIntoThisProject).toLowerCase());
 
-        // Upload this batch via XHR
-        const batchResult = await new Promise((resolve, reject) => {
-          const xhr = new XMLHttpRequest();
-          xhrRef.current = xhr;
+          // Only include conflictItems in the first batch to avoid duplicate processing
+          if (batchIndex === 0 && reloadConflictsIntoThisProject && conflictArray.length > 0) {
+            try { formData.append('conflictItems', JSON.stringify(conflictArray)); } catch { }
+          }
 
-          xhr.upload.onprogress = (event) => {
-            if (event.lengthComputable) {
-              // Calculate overall progress across all batches
-              const batchProgress = event.loaded / event.total;
-              const overallProgress = (filesCompleted + (batchProgress * batch.length)) / totalFiles;
-              const pct = Math.round(overallProgress * 100);
+          // Upload this batch via XHR
+          batchResult = await new Promise((resolve, reject) => {
+            const xhr = new XMLHttpRequest();
+            xhrRef.current = xhr;
 
-              setOperation(prev => prev ? {
-                ...prev,
-                percent: pct,
-                label: `Uploading ${totalFiles} file${totalFiles > 1 ? 's' : ''} (${pct}%)…`
-              } : null);
-            }
-          };
+            xhr.upload.onprogress = (event) => {
+              if (event.lengthComputable) {
+                // Calculate overall progress across all batches
+                const batchProgress = event.loaded / event.total;
+                const overallProgress = (filesCompleted + (batchProgress * batch.length)) / totalFiles;
+                const pct = Math.round(overallProgress * 100);
 
-          xhr.onload = function () {
-            if (xhr.status >= 200 && xhr.status < 300) {
-              try {
-                const response = JSON.parse(xhr.responseText);
-                resolve({ success: true, response });
-              } catch {
-                resolve({ success: true, response: {} });
+                const retryLabel = retryCount > 0 ? ` (retry ${retryCount}/${MAX_RETRIES})` : '';
+                setOperation(prev => prev ? {
+                  ...prev,
+                  percent: pct,
+                  label: `Uploading ${totalFiles} file${totalFiles > 1 ? 's' : ''} (${pct}%)${retryLabel}…`
+                } : null);
               }
-            } else {
-              resolve({ success: false, error: parseErrorText(xhr) });
-            }
-          };
+            };
 
-          xhr.onerror = () => resolve({ success: false, error: 'Network error during upload' });
+            xhr.onload = function () {
+              if (xhr.status >= 200 && xhr.status < 300) {
+                try {
+                  const response = JSON.parse(xhr.responseText);
+                  resolve({ success: true, response });
+                } catch {
+                  resolve({ success: true, response: {} });
+                }
+              } else {
+                resolve({ success: false, error: parseErrorText(xhr) });
+              }
+            };
 
-          xhr.open('POST', `/api/projects/${encodeURIComponent(projectFolder)}/upload`);
-          xhr.send(formData);
-        });
+            xhr.onerror = () => resolve({ success: false, error: 'Network error during upload' });
+
+            xhr.open('POST', `/api/projects/${encodeURIComponent(projectFolder)}/upload`);
+            xhr.send(formData);
+          });
+
+          // If successful, break out of retry loop
+          if (batchResult.success) {
+            break;
+          }
+
+          // If failed and retries remaining, wait before retrying
+          retryCount++;
+          if (retryCount <= MAX_RETRIES) {
+            const retryDelay = Math.pow(2, retryCount - 1) * 1000; // Exponential backoff: 1s, 2s, 4s
+            console.log(`[Upload] Batch ${batchNumber} failed, retrying in ${retryDelay}ms (attempt ${retryCount}/${MAX_RETRIES})`);
+            await new Promise(resolve => setTimeout(resolve, retryDelay));
+          }
+        }
 
         // Handle batch result
         if (batchResult.success) {
