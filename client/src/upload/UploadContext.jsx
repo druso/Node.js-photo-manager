@@ -109,53 +109,167 @@ export function UploadProvider({ children, projectFolder, onCompleted }) {
       return;
     }
 
-    // Phase: uploading (XHR to get progress)
+    // Batch size for sequential uploads (helps avoid Cloudflare Tunnel 100s timeout)
+    // Configurable via server config.json: uploader.batch_size (default: 3)
+    const BATCH_SIZE = 3;
+
+    // Phase: uploading (sequential batches with aggregated progress)
+    const totalFiles = moveOnly ? 0 : filesToUpload.length;
     const initialLabel = moveOnly
       ? `Consolidating ${conflictArray.length} conflicted item${conflictArray.length > 1 ? 's' : ''}…`
-      : `Uploading ${filesToUpload.length} file${filesToUpload.length > 1 ? 's' : ''}…`;
+      : `Uploading ${totalFiles} file${totalFiles > 1 ? 's' : ''}…`;
     setOperation({
       type: 'upload',
       phase: 'uploading',
       label: initialLabel,
       percent: 0,
-      meta: { totalFiles: moveOnly ? 0 : filesToUpload.length, totalImages: moveOnly ? 0 : imagesToProcess }
+      meta: { totalFiles, totalImages: moveOnly ? 0 : imagesToProcess }
     });
 
-    const formData = new FormData();
-    if (!moveOnly) {
-      filesToUpload.forEach(file => formData.append('photos', file));
-    }
-    // Flags expected by backend: overwrite is implied when not skipping duplicates
+    // Flags expected by backend
     const effectiveOverwrite = !skip;
-    formData.append('overwriteInThisProject', String(effectiveOverwrite).toLowerCase());
-    formData.append('reloadConflictsIntoThisProject', String(!!reloadConflictsIntoThisProject).toLowerCase());
-    if (reloadConflictsIntoThisProject && conflictArray.length > 0) {
-      try { formData.append('conflictItems', JSON.stringify(conflictArray)); } catch {}
+
+    // Handle move-only case (no files to upload, only conflicts to consolidate)
+    if (moveOnly) {
+      const formData = new FormData();
+      formData.append('overwriteInThisProject', String(effectiveOverwrite).toLowerCase());
+      formData.append('reloadConflictsIntoThisProject', 'true');
+      if (conflictArray.length > 0) {
+        try { formData.append('conflictItems', JSON.stringify(conflictArray)); } catch { }
+      }
+
+      const xhr = new XMLHttpRequest();
+      xhrRef.current = xhr;
+
+      xhr.onload = function () {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          finishSuccess({ note: 'Consolidation scheduled.' });
+        } else {
+          finishError(parseErrorText(xhr));
+        }
+      };
+
+      xhr.onerror = () => finishError('Network error during consolidation');
+
+      xhr.open('POST', `/api/projects/${encodeURIComponent(projectFolder)}/upload`);
+      xhr.send(formData);
+      return;
     }
 
-    const xhr = new XMLHttpRequest();
-    xhrRef.current = xhr;
+    // Split files into batches
+    const batches = [];
+    for (let i = 0; i < filesToUpload.length; i += BATCH_SIZE) {
+      batches.push(filesToUpload.slice(i, i + BATCH_SIZE));
+    }
 
-    xhr.upload.onprogress = (event) => {
-      if (event.lengthComputable) {
-        const pct = Math.round((event.loaded * 100) / event.total);
-        setOperation(prev => prev ? { ...prev, percent: pct, label: `Uploading ${prev.meta?.totalFiles ?? filesToUpload.length} files (${pct}%)…` } : null);
+    const totalBatches = batches.length;
+    let filesCompleted = 0;
+    const allWarnings = [];
+    const allErrors = [];
+
+    // Upload batches sequentially
+    try {
+      for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
+        const batch = batches[batchIndex];
+        const batchNumber = batchIndex + 1;
+
+        // Create FormData for this batch
+        const formData = new FormData();
+        batch.forEach(file => formData.append('photos', file));
+        formData.append('overwriteInThisProject', String(effectiveOverwrite).toLowerCase());
+        formData.append('reloadConflictsIntoThisProject', String(!!reloadConflictsIntoThisProject).toLowerCase());
+
+        // Only include conflictItems in the first batch to avoid duplicate processing
+        if (batchIndex === 0 && reloadConflictsIntoThisProject && conflictArray.length > 0) {
+          try { formData.append('conflictItems', JSON.stringify(conflictArray)); } catch { }
+        }
+
+        // Upload this batch via XHR
+        const batchResult = await new Promise((resolve, reject) => {
+          const xhr = new XMLHttpRequest();
+          xhrRef.current = xhr;
+
+          xhr.upload.onprogress = (event) => {
+            if (event.lengthComputable) {
+              // Calculate overall progress across all batches
+              const batchProgress = event.loaded / event.total;
+              const overallProgress = (filesCompleted + (batchProgress * batch.length)) / totalFiles;
+              const pct = Math.round(overallProgress * 100);
+
+              setOperation(prev => prev ? {
+                ...prev,
+                percent: pct,
+                label: `Uploading ${totalFiles} file${totalFiles > 1 ? 's' : ''} (${pct}%)…`
+              } : null);
+            }
+          };
+
+          xhr.onload = function () {
+            if (xhr.status >= 200 && xhr.status < 300) {
+              try {
+                const response = JSON.parse(xhr.responseText);
+                resolve({ success: true, response });
+              } catch {
+                resolve({ success: true, response: {} });
+              }
+            } else {
+              resolve({ success: false, error: parseErrorText(xhr) });
+            }
+          };
+
+          xhr.onerror = () => resolve({ success: false, error: 'Network error during upload' });
+
+          xhr.open('POST', `/api/projects/${encodeURIComponent(projectFolder)}/upload`);
+          xhr.send(formData);
+        });
+
+        // Handle batch result
+        if (batchResult.success) {
+          filesCompleted += batch.length;
+          // Collect warnings from this batch
+          if (batchResult.response?.warnings) {
+            allWarnings.push(...batchResult.response.warnings);
+          }
+        } else {
+          // Batch failed - collect error and continue with remaining batches
+          allErrors.push({
+            batch: batchNumber,
+            files: batch.map(f => f.name),
+            error: batchResult.error
+          });
+          // Don't increment filesCompleted for failed batch
+        }
+
+        // Update progress to reflect completed files
+        const progressPct = Math.round((filesCompleted / totalFiles) * 100);
+        setOperation(prev => prev ? {
+          ...prev,
+          percent: progressPct,
+          label: `Uploading ${totalFiles} file${totalFiles > 1 ? 's' : ''} (${progressPct}%)…`
+        } : null);
       }
-    };
 
-    xhr.onload = async function () {
-      if (xhr.status >= 200 && xhr.status < 300) {
-        // Background job will process uploaded files or consolidation. Mark as complete.
-        finishSuccess({ note: moveOnly ? 'Consolidation scheduled.' : 'Upload complete. Processing in background.' });
+      // All batches processed - show final result
+      if (allErrors.length === 0) {
+        // Complete success
+        const note = allWarnings.length > 0
+          ? `Upload complete. ${allWarnings.length} warning${allWarnings.length > 1 ? 's' : ''}.`
+          : 'Upload complete. Processing in background.';
+        finishSuccess({ note, warnings: allWarnings });
+      } else if (filesCompleted > 0) {
+        // Partial success
+        const successCount = filesCompleted;
+        const failCount = totalFiles - filesCompleted;
+        finishError(`Uploaded ${successCount} of ${totalFiles} files. ${failCount} failed.`);
       } else {
-        finishError(parseErrorText(xhr));
+        // Complete failure
+        finishError(allErrors[0]?.error || 'Upload failed');
       }
-    };
 
-    xhr.onerror = () => finishError('Network error during upload');
-
-    xhr.open('POST', `/api/projects/${encodeURIComponent(projectFolder)}/upload`);
-    xhr.send(formData);
+    } catch (err) {
+      console.error('Upload error:', err);
+      finishError('Upload failed: ' + String(err));
+    }
   };
 
   // Start processing via unified per-image endpoint (now enqueues a background job).
@@ -182,7 +296,7 @@ export function UploadProvider({ children, projectFolder, onCompleted }) {
       clearTimeout(hideTimerRef.current);
       hideTimerRef.current = null;
     }
-    try { xhrRef.current && xhrRef.current.abort && xhrRef.current.abort(); } catch {}
+    try { xhrRef.current && xhrRef.current.abort && xhrRef.current.abort(); } catch { }
     xhrRef.current = null;
     setAnalysisResult(null);
     setSummary(null);
@@ -192,7 +306,7 @@ export function UploadProvider({ children, projectFolder, onCompleted }) {
   const finishSuccess = (details) => {
     setOperation(prev => prev ? { ...prev, phase: 'completed', label: 'Completed', meta: { ...(prev.meta || {}), ...details } } : null);
     if (typeof onCompleted === 'function') {
-      try { onCompleted(); } catch {}
+      try { onCompleted(); } catch { }
     }
     hideTimerRef.current = setTimeout(() => setOperation(null), 3000);
   };
@@ -221,7 +335,7 @@ export function UploadProvider({ children, projectFolder, onCompleted }) {
     // Build conflict set from analysis (cross-project conflicts only)
     try {
       conflictArray = Array.isArray(analysis.conflicts) ? analysis.conflicts.map(c => c.filename) : [];
-    } catch {}
+    } catch { }
     const conflictSet = new Set(conflictArray);
 
     if (skip) {

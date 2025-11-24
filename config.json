@@ -27,6 +27,7 @@
     "remember_last_project": true
   },
   "uploader": {
+    "batch_size": 3,
     "accepted_files": {
       "extensions": [
         "jpg",
