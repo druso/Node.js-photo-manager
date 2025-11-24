@@ -483,22 +483,57 @@ function listAllKeys({
   const { whereSql, params } = buildAllPhotosWhere(baseFilters);
 
   // Lightweight query - only fetch project_folder and filename
+  const orderDir = sort_dir === 'asc' ? 'ASC' : 'DESC';
+  const sortColumn = sort_by === 'name'
+    ? 'ph.filename'
+    : sort_by === 'size'
+      ? 'ph.file_size'
+      : 'COALESCE(ph.date_time_original, ph.created_at)';
+
   const rows = db
     .prepare(`
-      SELECT p.project_folder, ph.filename
+      SELECT 
+        ph.id,
+        ph.project_id,
+        p.project_folder,
+        p.project_name,
+        ph.filename,
+        ph.keep_jpg,
+        ph.keep_raw,
+        ph.visibility,
+        ph.jpg_available,
+        ph.raw_available,
+        ph.file_size,
+        COALESCE(ph.date_time_original, ph.created_at) AS taken_at
       FROM photos ph
       JOIN projects p ON p.id = ph.project_id
       ${whereSql}
-      ORDER BY COALESCE(ph.date_time_original, ph.created_at) ${sort_dir === 'asc' ? 'ASC' : 'DESC'}, ph.id ${sort_dir === 'asc' ? 'ASC' : 'DESC'}
+      ORDER BY ${sortColumn} ${orderDir}, ph.id ${orderDir}
     `)
     .all(...params);
 
   // Build composite keys
   const keys = rows.map(row => `${row.project_folder}::${row.filename}`);
 
+  const items = rows.map(row => ({
+    id: row.id,
+    project_id: row.project_id,
+    project_folder: row.project_folder,
+    project_name: row.project_name,
+    filename: row.filename,
+    keep_jpg: !!row.keep_jpg,
+    keep_raw: !!row.keep_raw,
+    visibility: row.visibility || 'private',
+    jpg_available: !!row.jpg_available,
+    raw_available: !!row.raw_available,
+    file_size: row.file_size ?? null,
+    taken_at: row.taken_at,
+  }));
+
   return {
     keys,
     total: keys.length,
+    items,
   };
 }
 

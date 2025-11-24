@@ -25,7 +25,7 @@ async function handleJob(job, { heartbeatMs, maxAttemptsDefault, workerId }) {
   const startHeartbeat = () => {
     if (hb) return;
     hb = setInterval(() => {
-      try { jobsRepo.heartbeat(job.id); } catch {}
+      try { jobsRepo.heartbeat(job.id); } catch { }
     }, heartbeatMs);
   };
   const stopHeartbeat = () => { if (hb) { clearInterval(hb); hb = null; } };
@@ -33,18 +33,20 @@ async function handleJob(job, { heartbeatMs, maxAttemptsDefault, workerId }) {
   try {
     startHeartbeat();
     if (job.type === 'generate_derivatives' || job.type === 'upload_postprocess') {
-      await runGenerateDerivatives({ job, onProgress: ({ done, total }) => {
-        const p = job.payload_json || {};
-        emitJobUpdate({ id: job.id, status: 'running', progress_done: done, progress_total: total, task_id: p.task_id, task_type: p.task_type, source: p.source });
-        try { jobsRepo.updateProgress(job.id, { done, total }); } catch {}
-      }});
+      await runGenerateDerivatives({
+        job, onProgress: ({ done, total }) => {
+          const p = job.payload_json || {};
+          emitJobUpdate({ id: job.id, status: 'running', progress_done: done, progress_total: total, task_id: p.task_id, task_type: p.task_type, source: p.source });
+          try { jobsRepo.updateProgress(job.id, { done, total }); } catch { }
+        }
+      });
       stopHeartbeat();
       jobsRepo.complete(job.id);
       {
         const p = job.payload_json || {};
-        emitJobUpdate({ id: job.id, status: 'completed', task_id: p.task_id, task_type: p.task_type, source: p.source });
+        emitJobUpdate({ id: job.id, status: 'completed', task_id: p.task_id, task_type: p.task_type, job_type: job.type, source: p.source });
       }
-      try { tasksOrchestrator.onJobCompleted(job); } catch {}
+      try { tasksOrchestrator.onJobCompleted(job); } catch { }
       return;
     }
 
@@ -55,9 +57,9 @@ async function handleJob(job, { heartbeatMs, maxAttemptsDefault, workerId }) {
       jobsRepo.complete(job.id);
       {
         const p = job.payload_json || {};
-        emitJobUpdate({ id: job.id, status: 'completed', task_id: p.task_id, task_type: p.task_type, source: p.source });
+        emitJobUpdate({ id: job.id, status: 'completed', task_id: p.task_id, task_type: p.task_type, job_type: job.type, source: p.source });
       }
-      try { tasksOrchestrator.onJobCompleted(job); } catch {}
+      try { tasksOrchestrator.onJobCompleted(job); } catch { }
       return;
     }
     if (job.type === 'project_delete_files') {
@@ -66,9 +68,9 @@ async function handleJob(job, { heartbeatMs, maxAttemptsDefault, workerId }) {
       jobsRepo.complete(job.id);
       {
         const p = job.payload_json || {};
-        emitJobUpdate({ id: job.id, status: 'completed', task_id: p.task_id, task_type: p.task_type, source: p.source });
+        emitJobUpdate({ id: job.id, status: 'completed', task_id: p.task_id, task_type: p.task_type, job_type: job.type, source: p.source });
       }
-      try { tasksOrchestrator.onJobCompleted(job); } catch {}
+      try { tasksOrchestrator.onJobCompleted(job); } catch { }
       return;
     }
     if (job.type === 'project_cleanup_db') {
@@ -77,9 +79,9 @@ async function handleJob(job, { heartbeatMs, maxAttemptsDefault, workerId }) {
       jobsRepo.complete(job.id);
       {
         const p = job.payload_json || {};
-        emitJobUpdate({ id: job.id, status: 'completed', task_id: p.task_id, task_type: p.task_type, source: p.source });
+        emitJobUpdate({ id: job.id, status: 'completed', task_id: p.task_id, task_type: p.task_type, job_type: job.type, source: p.source });
       }
-      try { tasksOrchestrator.onJobCompleted(job); } catch {}
+      try { tasksOrchestrator.onJobCompleted(job); } catch { }
       return;
     }
 
@@ -90,9 +92,9 @@ async function handleJob(job, { heartbeatMs, maxAttemptsDefault, workerId }) {
       jobsRepo.complete(job.id);
       {
         const p = job.payload_json || {};
-        emitJobUpdate({ id: job.id, status: 'completed', task_id: p.task_id, task_type: p.task_type, source: p.source });
+        emitJobUpdate({ id: job.id, status: 'completed', task_id: p.task_id, task_type: p.task_type, job_type: job.type, source: p.source });
       }
-      try { tasksOrchestrator.onJobCompleted(job); } catch {}
+      try { tasksOrchestrator.onJobCompleted(job); } catch { }
       return;
     }
     if (job.type === 'duplicate_resolution') {
@@ -101,9 +103,9 @@ async function handleJob(job, { heartbeatMs, maxAttemptsDefault, workerId }) {
       jobsRepo.complete(job.id);
       {
         const p = job.payload_json || {};
-        emitJobUpdate({ id: job.id, status: 'completed', task_id: p.task_id, task_type: p.task_type, source: p.source });
+        emitJobUpdate({ id: job.id, status: 'completed', task_id: p.task_id, task_type: p.task_type, job_type: job.type, source: p.source });
       }
-      try { tasksOrchestrator.onJobCompleted(job); } catch {}
+      try { tasksOrchestrator.onJobCompleted(job); } catch { }
       return;
     }
     if (job.type === 'manifest_check') {
@@ -112,9 +114,9 @@ async function handleJob(job, { heartbeatMs, maxAttemptsDefault, workerId }) {
       jobsRepo.complete(job.id);
       {
         const p = job.payload_json || {};
-        emitJobUpdate({ id: job.id, status: 'completed', task_id: p.task_id, task_type: p.task_type, source: p.source });
+        emitJobUpdate({ id: job.id, status: 'completed', task_id: p.task_id, task_type: p.task_type, job_type: job.type, source: p.source });
       }
-      try { tasksOrchestrator.onJobCompleted(job); } catch {}
+      try { tasksOrchestrator.onJobCompleted(job); } catch { }
       return;
     }
     if (job.type === 'folder_check') {
@@ -123,9 +125,9 @@ async function handleJob(job, { heartbeatMs, maxAttemptsDefault, workerId }) {
       jobsRepo.complete(job.id);
       {
         const p = job.payload_json || {};
-        emitJobUpdate({ id: job.id, status: 'completed', task_id: p.task_id, task_type: p.task_type, source: p.source });
+        emitJobUpdate({ id: job.id, status: 'completed', task_id: p.task_id, task_type: p.task_type, job_type: job.type, source: p.source });
       }
-      try { tasksOrchestrator.onJobCompleted(job); } catch {}
+      try { tasksOrchestrator.onJobCompleted(job); } catch { }
       return;
     }
     if (job.type === 'manifest_cleaning') {
@@ -134,9 +136,9 @@ async function handleJob(job, { heartbeatMs, maxAttemptsDefault, workerId }) {
       jobsRepo.complete(job.id);
       {
         const p = job.payload_json || {};
-        emitJobUpdate({ id: job.id, status: 'completed', task_id: p.task_id, task_type: p.task_type, source: p.source });
+        emitJobUpdate({ id: job.id, status: 'completed', task_id: p.task_id, task_type: p.task_type, job_type: job.type, source: p.source });
       }
-      try { tasksOrchestrator.onJobCompleted(job); } catch {}
+      try { tasksOrchestrator.onJobCompleted(job); } catch { }
       return;
     }
     if (job.type === 'folder_alignment') {
@@ -145,9 +147,9 @@ async function handleJob(job, { heartbeatMs, maxAttemptsDefault, workerId }) {
       jobsRepo.complete(job.id);
       {
         const p = job.payload_json || {};
-        emitJobUpdate({ id: job.id, status: 'completed', task_id: p.task_id, task_type: p.task_type, source: p.source });
+        emitJobUpdate({ id: job.id, status: 'completed', task_id: p.task_id, task_type: p.task_type, job_type: job.type, source: p.source });
       }
-      try { tasksOrchestrator.onJobCompleted(job); } catch {}
+      try { tasksOrchestrator.onJobCompleted(job); } catch { }
       return;
     }
     if (job.type === 'orphaned_project_cleanup') {
@@ -156,9 +158,9 @@ async function handleJob(job, { heartbeatMs, maxAttemptsDefault, workerId }) {
       jobsRepo.complete(job.id);
       {
         const p = job.payload_json || {};
-        emitJobUpdate({ id: job.id, status: 'completed', task_id: p.task_id, task_type: p.task_type, source: p.source });
+        emitJobUpdate({ id: job.id, status: 'completed', task_id: p.task_id, task_type: p.task_type, job_type: job.type, source: p.source });
       }
-      try { tasksOrchestrator.onJobCompleted(job); } catch {}
+      try { tasksOrchestrator.onJobCompleted(job); } catch { }
       return;
     }
     if (job.type === 'cache_validation') {
@@ -167,9 +169,9 @@ async function handleJob(job, { heartbeatMs, maxAttemptsDefault, workerId }) {
       jobsRepo.complete(job.id);
       {
         const p = job.payload_json || {};
-        emitJobUpdate({ id: job.id, status: 'completed', task_id: p.task_id, task_type: p.task_type, source: p.source });
+        emitJobUpdate({ id: job.id, status: 'completed', task_id: p.task_id, task_type: p.task_type, job_type: job.type, source: p.source });
       }
-      try { tasksOrchestrator.onJobCompleted(job); } catch {}
+      try { tasksOrchestrator.onJobCompleted(job); } catch { }
       return;
     }
 
@@ -180,9 +182,9 @@ async function handleJob(job, { heartbeatMs, maxAttemptsDefault, workerId }) {
       jobsRepo.complete(job.id);
       {
         const p = job.payload_json || {};
-        emitJobUpdate({ id: job.id, status: 'completed', task_id: p.task_id, task_type: p.task_type, source: p.source });
+        emitJobUpdate({ id: job.id, status: 'completed', task_id: p.task_id, task_type: p.task_type, job_type: job.type, source: p.source });
       }
-      try { tasksOrchestrator.onJobCompleted(job); } catch {}
+      try { tasksOrchestrator.onJobCompleted(job); } catch { }
       return;
     }
 
@@ -193,9 +195,9 @@ async function handleJob(job, { heartbeatMs, maxAttemptsDefault, workerId }) {
       jobsRepo.complete(job.id);
       {
         const p = job.payload_json || {};
-        emitJobUpdate({ id: job.id, status: 'completed', task_id: p.task_id, task_type: p.task_type, source: p.source });
+        emitJobUpdate({ id: job.id, status: 'completed', task_id: p.task_id, task_type: p.task_type, job_type: job.type, source: p.source });
       }
-      try { tasksOrchestrator.onJobCompleted(job); } catch {}
+      try { tasksOrchestrator.onJobCompleted(job); } catch { }
       return;
     }
 
@@ -206,9 +208,9 @@ async function handleJob(job, { heartbeatMs, maxAttemptsDefault, workerId }) {
       jobsRepo.complete(job.id);
       {
         const p = job.payload_json || {};
-        emitJobUpdate({ id: job.id, status: 'completed', task_id: p.task_id, task_type: p.task_type, source: p.source });
+        emitJobUpdate({ id: job.id, status: 'completed', task_id: p.task_id, task_type: p.task_type, job_type: job.type, source: p.source });
       }
-      try { tasksOrchestrator.onJobCompleted(job); } catch {}
+      try { tasksOrchestrator.onJobCompleted(job); } catch { }
       return;
     }
 
@@ -219,9 +221,9 @@ async function handleJob(job, { heartbeatMs, maxAttemptsDefault, workerId }) {
       jobsRepo.complete(job.id);
       {
         const p = job.payload_json || {};
-        emitJobUpdate({ id: job.id, status: 'completed', task_id: p.task_id, task_type: p.task_type, source: p.source });
+        emitJobUpdate({ id: job.id, status: 'completed', task_id: p.task_id, task_type: p.task_type, job_type: job.type, source: p.source });
       }
-      try { tasksOrchestrator.onJobCompleted(job); } catch {}
+      try { tasksOrchestrator.onJobCompleted(job); } catch { }
       return;
     }
 
@@ -232,9 +234,9 @@ async function handleJob(job, { heartbeatMs, maxAttemptsDefault, workerId }) {
       jobsRepo.complete(job.id);
       {
         const p = job.payload_json || {};
-        emitJobUpdate({ id: job.id, status: 'completed', task_id: p.task_id, task_type: p.task_type, source: p.source });
+        emitJobUpdate({ id: job.id, status: 'completed', task_id: p.task_id, task_type: p.task_type, job_type: job.type, source: p.source });
       }
-      try { tasksOrchestrator.onJobCompleted(job); } catch {}
+      try { tasksOrchestrator.onJobCompleted(job); } catch { }
       return;
     }
 
@@ -248,7 +250,7 @@ async function handleJob(job, { heartbeatMs, maxAttemptsDefault, workerId }) {
   } catch (err) {
     stopHeartbeat();
     // Retry policy: increment attempts; if below max, requeue; else fail
-    try { jobsRepo.incrementAttempts(job.id); } catch {}
+    try { jobsRepo.incrementAttempts(job.id); } catch { }
     const current = jobsRepo.getById(job.id) || job;
     const attempts = (current.attempts ?? 0);
     const maxA = current.max_attempts || maxAttemptsDefault || 1;
@@ -295,7 +297,7 @@ function startWorkerLoop() {
   function tick() {
     try {
       // Crash recovery: requeue stale running jobs (heartbeat expired)
-      try { jobsRepo.requeueStaleRunning({ staleSeconds }); } catch {}
+      try { jobsRepo.requeueStaleRunning({ staleSeconds }); } catch { }
       // 1) Fill priority lane
       while (activePriority.size < prioritySlots) {
         const job = jobsRepo.claimNext({ workerId, minPriority: priorityThreshold });

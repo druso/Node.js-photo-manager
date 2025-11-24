@@ -57,11 +57,35 @@ function SelectionToolbar({
           public_link_id: activeFilters?.publicLinkId,
         });
 
-        // Convert keys to minimal photo objects
-        const photoObjects = result.keys.map(key => {
+        const buildPhotoFromKey = (key) => {
+          if (typeof key !== 'string') return null;
           const [project_folder, filename] = key.split('::');
+          if (!project_folder || !filename) return null;
           return { project_folder, filename };
-        });
+        };
+
+        let photoObjects = Array.isArray(result?.items) && result.items.length
+          ? result.items.map(item => ({
+              id: item.id,
+              project_id: item.project_id,
+              project_folder: item.project_folder,
+              project_name: item.project_name,
+              filename: item.filename,
+              keep_jpg: item.keep_jpg,
+              keep_raw: item.keep_raw,
+              visibility: item.visibility,
+              jpg_available: item.jpg_available,
+              raw_available: item.raw_available,
+              file_size: item.file_size,
+              taken_at: item.taken_at,
+            })).filter(Boolean)
+          : null;
+
+        if (!photoObjects || photoObjects.length === 0) {
+          photoObjects = Array.isArray(result?.keys)
+            ? result.keys.map(buildPhotoFromKey).filter(Boolean)
+            : [];
+        }
 
         onAllSelectAll(photoObjects);
       } catch (err) {

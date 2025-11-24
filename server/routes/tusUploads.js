@@ -76,6 +76,67 @@ async function extractExifMetadata(filePath) {
     return {};
 }
 
+// Batch processing for upload post-processing tasks
+// This prevents creating a separate job for every single file, while still
+// allowing processing to start during the upload (not waiting for all files).
+const BATCH_SIZE = 10;
+const BATCH_TIMEOUT = 5000; // 5 seconds
+const batchBuffer = {}; // { [projectId]: { items: [], timer: null } }
+
+function flushBatch(projectId) {
+    const buffer = batchBuffer[projectId];
+    if (!buffer || buffer.items.length === 0) return;
+
+    // Clear timer if it exists
+    if (buffer.timer) {
+        clearTimeout(buffer.timer);
+        buffer.timer = null;
+    }
+
+    const itemsToProcess = [...buffer.items];
+    buffer.items = []; // Reset buffer immediately
+
+    try {
+        tasksOrchestrator.startTask({
+            project_id: projectId,
+            type: 'upload_postprocess',
+            source: 'tus_upload',
+            items: itemsToProcess
+        });
+        log.info('tus_postprocess_batch_queued', {
+            project_id: projectId,
+            count: itemsToProcess.length,
+            items: itemsToProcess.slice(0, 3) // Log first few
+        });
+    } catch (err) {
+        log.error('tus_postprocess_batch_failed', {
+            project_id: projectId,
+            count: itemsToProcess.length,
+            error: err?.message
+        });
+    }
+}
+
+function addToBatch(projectId, filename) {
+    if (!batchBuffer[projectId]) {
+        batchBuffer[projectId] = { items: [], timer: null };
+    }
+
+    const buffer = batchBuffer[projectId];
+    buffer.items.push(filename);
+
+    // If buffer full, flush immediately
+    if (buffer.items.length >= BATCH_SIZE) {
+        flushBatch(projectId);
+    }
+    // If timer not running, start it
+    else if (!buffer.timer) {
+        buffer.timer = setTimeout(() => {
+            flushBatch(projectId);
+        }, BATCH_TIMEOUT);
+    }
+}
+
 // Configure tus server
 const tusServer = new Server({
     path: '/files',
@@ -199,15 +260,9 @@ const tusServer = new Server({
             photosRepo.upsertPhoto(project.id, photoPayload);
             log.info('tus_photo_upserted', { project_id: project.id, filename: originalName });
 
-            // Queue post-processing
+            // Queue post-processing (batched)
             try {
-                tasksOrchestrator.startTask({
-                    project_id: project.id,
-                    type: 'upload_postprocess',
-                    source: 'tus_upload',
-                    items: [originalName]
-                });
-                log.info('tus_postprocess_queued', { project_id: project.id, filename: originalName });
+                addToBatch(project.id, originalName);
             } catch (err) {
                 log.warn('tus_postprocess_queue_failed', {
                     project_id: project.id,
