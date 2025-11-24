@@ -1,8 +1,7 @@
 require('dotenv').config();
 const express = require('express');
 const cookieParser = require('cookie-parser');
-// Remove global console timestamp prefixer to avoid duplicate timestamps with structured logger
-// require('./server/utils/logger');
+
 const makeLogger = require('./server/utils/logger2');
 const log = makeLogger('server');
 const { initAuth } = require('./server/services/auth/initAuth');
@@ -72,7 +71,7 @@ const rawAllowed = process.env.ALLOWED_ORIGINS || [
 ].join(',');
 const allowedOrigins = rawAllowed.split(',').map(s => s.trim()).filter(Boolean);
 app.use(cors({
-  origin: function(origin, cb) {
+  origin: function (origin, cb) {
     // Allow same-origin/non-browser (no Origin header)
     if (!origin) return cb(null, true);
     if (allowedOrigins.includes(origin)) return cb(null, true);
