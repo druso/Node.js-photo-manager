@@ -65,12 +65,38 @@ function getGlobalByFilename(filename, { exclude_project_id = null } = {}) {
   const db = getDb();
   const conds = ['filename = ?'];
   const params = [filename];
-  if (exclude_project_id != null) { 
-    conds.push('project_id != ?'); 
-    params.push(exclude_project_id); 
+  if (exclude_project_id != null) {
+    conds.push('project_id != ?');
+    params.push(exclude_project_id);
   }
   const where = `WHERE ${conds.join(' AND ')}`;
   const cacheKey = `photos:getGlobalByFilename:${conds.join(':')}`;
+  const sql = `SELECT * FROM photos ${where} LIMIT 1`;
+  const stmt = stmtCache.get(db, cacheKey, sql);
+  return stmt.get(...params);
+}
+
+/**
+ * Get photo by filename across all projects, case-insensitive, optionally excluding a project
+ * @param {string} filename - Photo filename
+ * @param {Object} options - Options object
+ * @param {number} [options.exclude_project_id] - Project ID to exclude from search
+ * @returns {Object|null} Photo record or null if not found
+ */
+function getGlobalByFilenameInsensitive(filename, { exclude_project_id = null } = {}) {
+  if (!filename) return null;
+  const db = getDb();
+  // SQLite default collation is usually binary, so we use explicit LOWER() comparison
+  // or COLLATE NOCASE if the column was defined that way (it probably wasn't).
+  // Using LOWER() is safer for ad-hoc case insensitivity.
+  const conds = ['lower(filename) = lower(?)'];
+  const params = [filename];
+  if (exclude_project_id != null) {
+    conds.push('project_id != ?');
+    params.push(exclude_project_id);
+  }
+  const where = `WHERE ${conds.join(' AND ')}`;
+  const cacheKey = `photos:getGlobalByFilenameInsensitive:${conds.join(':')}`;
   const sql = `SELECT * FROM photos ${where} LIMIT 1`;
   const stmt = stmtCache.get(db, cacheKey, sql);
   return stmt.get(...params);
@@ -85,10 +111,10 @@ function getGlobalByFilename(filename, { exclude_project_id = null } = {}) {
 function upsertPhoto(project_id, photo) {
   const db = getDb();
   const ts = nowISO();
-  
+
   // Prefer project-scoped lookup by filename to avoid cross-project collisions
   const existing = getByProjectAndFilename(project_id, photo.filename) || getByManifestId(photo.manifest_id);
-  
+
   if (existing) {
     const stmt = stmtCache.get(db, 'photos:upsert:update', `
       UPDATE photos SET
@@ -146,18 +172,18 @@ function updateDerivativeStatus(id, { thumbnail_status, preview_status }) {
   const db = getDb();
   const sets = [];
   const params = [];
-  
-  if (thumbnail_status !== undefined) { 
-    sets.push('thumbnail_status = ?'); 
-    params.push(thumbnail_status); 
+
+  if (thumbnail_status !== undefined) {
+    sets.push('thumbnail_status = ?');
+    params.push(thumbnail_status);
   }
-  if (preview_status !== undefined) { 
-    sets.push('preview_status = ?'); 
-    params.push(preview_status); 
+  if (preview_status !== undefined) {
+    sets.push('preview_status = ?');
+    params.push(preview_status);
   }
-  
+
   if (!sets.length) return getById(id);
-  
+
   const cacheKey = `photos:updateDerivativeStatus:${sets.join(':')}`;
   const sql = `UPDATE photos SET ${sets.join(', ')}, updated_at = ? WHERE id = ?`;
   params.push(nowISO(), id);
@@ -325,6 +351,7 @@ module.exports = {
   getByFilename,
   getByProjectAndFilename,
   getGlobalByFilename,
+  getGlobalByFilenameInsensitive,
   getPublicByFilename,
   getPublicByBasename,
   getAnyVisibilityByFilename,

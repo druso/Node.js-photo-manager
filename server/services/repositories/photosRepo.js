@@ -31,6 +31,7 @@ const getByManifestId = photoCrud.getByManifestId;
 const getByFilename = photoCrud.getByFilename;
 const getByProjectAndFilename = photoCrud.getByProjectAndFilename;
 const getGlobalByFilename = photoCrud.getGlobalByFilename;
+const getGlobalByFilenameInsensitive = photoCrud.getGlobalByFilenameInsensitive;
 const moveToProject = photoCrud.moveToProject;
 const removeById = photoCrud.removeById;
 const countByProject = photoCrud.countByProject;
@@ -101,6 +102,7 @@ module.exports = {
   getByFilename,
   getByProjectAndFilename,
   getGlobalByFilename,
+  getGlobalByFilenameInsensitive,
   getPublicByFilename,
   getPublicByBasename,
   getAnyVisibilityByFilename,
@@ -109,18 +111,18 @@ module.exports = {
   removeById,
   countByProject,
   updateVisibility,
-  
+
   // Filtering & listing
   listAll,
   listProjectFiltered,
   listSharedLinkPhotos,
   listAllKeys,
-  
+
   // Pagination
   locateProjectPage,
   locateAllPage,
   listPaged,
-  
+
   // Pending operations
   listPendingDeletesForProject,
   listPendingDeletesByProject,

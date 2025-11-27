@@ -8,6 +8,9 @@ const { emitJobUpdate } = require('../events');
 const makeLogger = require('../../utils/logger2');
 const log = makeLogger('imageMoveWorker');
 
+const JPG_EXTS = ['.jpg', '.jpeg', '.JPG', '.JPEG'];
+const RAW_EXTS = ['.arw', '.ARW', '.dng', '.DNG', '.cr2', '.CR2', '.nef', '.NEF'];
+
 async function moveIfExists(fpFrom, fpToDir) {
   if (!fpFrom) return false;
   if (await fs.pathExists(fpFrom)) {
@@ -44,7 +47,22 @@ async function runImageMoveFiles(job) {
     try {
       log.debug('move_item_started', { job_id: job.id, filename });
       // Find global photo by filename outside destination
-      const srcEntry = photosRepo.getGlobalByFilename(filename, { exclude_project_id: destProject.id });
+      let srcEntry = photosRepo.getGlobalByFilename(filename, { exclude_project_id: destProject.id });
+
+      if (!srcEntry) {
+        // Fallback: try case-insensitive lookup
+        const insensitiveMatch = photosRepo.getGlobalByFilenameInsensitive(filename, { exclude_project_id: destProject.id });
+        if (insensitiveMatch) {
+          log.info('move_item_case_insensitive_match', {
+            job_id: job.id,
+            requested_filename: filename,
+            found_filename: insensitiveMatch.filename,
+            found_id: insensitiveMatch.id
+          });
+          srcEntry = insensitiveMatch;
+        }
+      }
+
       if (!srcEntry) {
         // Already in destination or missing; ensure DB consistency and mark done
         jobsRepo.updateItemStatus(item.id, { status: 'done', message: 'no source found; assumed already moved' });

@@ -26,7 +26,7 @@ const apiRateLimit = rateLimit({
 router.get('/photos/locate-page', apiRateLimit, async (req, res) => {
   try {
     // Prevent caching to ensure fresh pagination data
-    
+
     const q = req.query || {};
     const { project_folder, filename, name, limit, date_from, date_to, file_type, keep_type, orientation } = q;
     const includeTags = q.include === 'tags';
@@ -99,7 +99,7 @@ router.get('/photos/locate-page', apiRateLimit, async (req, res) => {
         public_hash_expires_at: r.public_hash_expires_at || null,
       };
     });
-    
+
     // Optionally include tags when requested
     if (includeTags && items.length > 0) {
       try {
@@ -115,7 +115,7 @@ router.get('/photos/locate-page', apiRateLimit, async (req, res) => {
         log.warn('locate_page_tags_fetch_failed', { error: tagErr?.message });
       }
     }
-    
+
     log.debug('locate_page_resp', {
       count: items.length,
       position: result.position,
@@ -123,7 +123,7 @@ router.get('/photos/locate-page', apiRateLimit, async (req, res) => {
       idx_in_items: result.idx_in_items,
       target_id: result.target?.id,
     });
-    
+
     // Return response in the same format as /api/photos but with additional metadata
     res.json({
       items,
@@ -137,14 +137,14 @@ router.get('/photos/locate-page', apiRateLimit, async (req, res) => {
       date_from: date_from || null,
       date_to: date_to || null,
     });
-    
+
   } catch (err) {
-    log.error('locate_page_failed', { 
-      error: err && err.message, 
+    log.error('locate_page_failed', {
+      error: err && err.message,
       code: err && err.code,
-      stack: err && err.stack 
+      stack: err && err.stack
     });
-    
+
     // Map specific error codes to appropriate HTTP status codes
     if (err.code === 'NOT_FOUND') {
       return res.status(404).json({ error: err.message || 'Photo not found or filtered out' });
@@ -153,9 +153,9 @@ router.get('/photos/locate-page', apiRateLimit, async (req, res) => {
     } else if (err.code === 'INVALID') {
       return res.status(400).json({ error: err.message || 'Invalid request parameters' });
     }
-    
+
     // Default error response
-    res.status(500).json({ 
+    res.status(500).json({
       error: 'Failed to locate photo',
       details: process.env.NODE_ENV === 'development' ? err.message : undefined
     });
@@ -190,7 +190,7 @@ router.get('/photos', async (req, res) => {
     const tags = typeof q.tags === 'string' && q.tags.length ? q.tags : null; // comma-separated list of tags, with optional - prefix for exclusion
     const sort = typeof q.sort === 'string' && q.sort.length ? q.sort : null; // filename | date_time_original | file_size
     const dir = typeof q.dir === 'string' && q.dir.length ? q.dir : null; // ASC | DESC
-    
+
     // Calculate total count directly
     let totalCount = 0;
     try {
@@ -286,19 +286,19 @@ router.get('/photos', async (req, res) => {
         visibility: r.visibility || 'private',
       };
     });
-    
+
     // Optionally include tags when requested
     if (includeTags && items.length > 0) {
       try {
         // Fetch tags for all photos in the page in a single efficient query
         const photoIds = items.map(item => item.id);
         const tagsMap = photoTagsRepo.listTagsForPhotos(photoIds);
-        
+
         // Add tags to each item
         items.forEach(item => {
           item.tags = tagsMap[item.id] || [];
         });
-        
+
         log.debug('all_photos_tags_included', { count: photoIds.length });
       } catch (tagErr) {
         log.warn('all_photos_tags_fetch_failed', { error: tagErr?.message });
@@ -318,13 +318,13 @@ router.get('/photos', async (req, res) => {
     });
     // Simple response with real SQL totals and ensuring prevCursor is passed correctly
     res.json({
-      items, 
-      next_cursor: page.nextCursor, 
-      prev_cursor: page.prevCursor, 
-      total: page.total, 
+      items,
+      next_cursor: page.nextCursor,
+      prev_cursor: page.prevCursor,
+      total: page.total,
       unfiltered_total: page.unfiltered_total,
-      limit, 
-      date_from, 
+      limit,
+      date_from,
       date_to
     });
   } catch (err) {
@@ -365,6 +365,8 @@ router.get('/photos/all-keys', apiRateLimit, async (req, res) => {
       publicLinkId = link.id;
     }
 
+    const project_folder = typeof q.project_folder === 'string' && q.project_folder.length ? q.project_folder : null;
+
     const result = photosRepo.listAllKeys({
       date_from,
       date_to,
@@ -374,6 +376,7 @@ router.get('/photos/all-keys', apiRateLimit, async (req, res) => {
       tags,
       visibility: visibilityValue,
       public_link_id: publicLinkId,
+      project_folder,
       sort_by,
       sort_dir,
     });

@@ -75,7 +75,7 @@ export default function OperationsMenu({
     if (allSelectedPhotos && allSelectedPhotos instanceof Map) {
       return Array.from(allSelectedPhotos.values());
     }
-    
+
     // Fallback to old behavior if Map not provided (backward compatibility)
     const keys = Array.from(allSelectedKeys || []);
     if (!keys.length) return [];
@@ -162,7 +162,7 @@ export default function OperationsMenu({
     const selectedItems = Array.from(projectSelected)
       .map(filename => photos.find(e => e.filename === filename))
       .filter(Boolean);
-    
+
     if (selectedItems.length === 0) {
       toast.show({ emoji: '⚠️', message: 'No valid photos selected', variant: 'warning' });
       return;
@@ -178,12 +178,12 @@ export default function OperationsMenu({
       } else {
         result = await batchRemoveTags(photoIds, tagsArray);
       }
-      
+
       setTagInput('');
       if (typeof setSelectedPhotos === 'function') {
         setSelectedPhotos(new Set());
       }
-      
+
       // Show success message
       const action = mode === 'add' ? 'added to' : 'removed from';
       if (result.errors && result.errors.length > 0) {
@@ -199,7 +199,7 @@ export default function OperationsMenu({
           variant: 'success'
         });
       }
-      
+
       // Trigger parent refresh
       if (onTagsUpdated) {
         onTagsUpdated();
@@ -233,7 +233,7 @@ export default function OperationsMenu({
         const selectedItems = Array.from(projectSelected)
           .map(filename => photos.find(e => e.filename === filename))
           .filter(Boolean);
-        
+
         if (selectedItems.length === 0) {
           toast.show({ emoji: '⚠️', message: 'No valid photos selected', variant: 'warning' });
           return;
@@ -241,11 +241,11 @@ export default function OperationsMenu({
 
         const photoIds = selectedItems.map(p => p.id);
         const result = await batchUpdateKeep(photoIds, target);
-        
+
         if (typeof setSelectedPhotos === 'function') {
           setSelectedPhotos(new Set());
         }
-        
+
         // Show success message
         let msg;
         if (!target.keep_jpg && !target.keep_raw) {
@@ -255,7 +255,7 @@ export default function OperationsMenu({
         } else {
           msg = `Planned to keep JPG + RAW for ${result.updated}`;
         }
-        
+
         if (result.errors && result.errors.length > 0) {
           toast.show({
             emoji: '⚠️',
@@ -265,7 +265,7 @@ export default function OperationsMenu({
         } else {
           toast.show({ emoji: '📝', message: msg, variant: 'notification' });
         }
-        
+
         // Trigger parent refresh
         if (onTagsUpdated) {
           onTagsUpdated();
@@ -280,12 +280,12 @@ export default function OperationsMenu({
 
         const photoIds = selectedItems.map(p => p.id);
         const result = await batchUpdateKeep(photoIds, target);
-        
+
         if (typeof setAllSelectedKeys === 'function') setAllSelectedKeys(new Set());
-        
+
         // Count unique projects
         const projectFolders = new Set(selectedItems.map(p => p.project_folder));
-        
+
         let msg;
         if (!target.keep_jpg && !target.keep_raw) {
           msg = `${result.updated} planned for delete across ${projectFolders.size} project(s)`;
@@ -294,7 +294,7 @@ export default function OperationsMenu({
         } else {
           msg = `Planned to keep JPG + RAW for ${result.updated} across ${projectFolders.size} project(s)`;
         }
-        
+
         if (result.errors && result.errors.length > 0) {
           toast.show({
             emoji: '⚠️',
@@ -326,11 +326,10 @@ export default function OperationsMenu({
           onClick={(e) => { e.stopPropagation(); if (!busy) setOpen(prev => !prev); }}
           disabled={busy}
           aria-disabled={busy}
-          className={`inline-flex justify-center items-center w-full rounded-md border shadow-sm px-3 py-2 text-sm font-medium pointer-events-auto relative z-10 ${
-            busy
+          className={`inline-flex justify-center items-center w-full rounded-md border shadow-sm px-3 py-2 text-sm font-medium pointer-events-auto relative z-10 ${busy
               ? 'bg-gray-200 text-gray-500 border-gray-300 cursor-not-allowed'
               : 'bg-white text-gray-700 hover:bg-gray-50 border-gray-300'
-          }`}
+            }`}
           title={trigger === 'hamburger' ? 'Actions' : undefined}
         >
           {trigger === 'hamburger' ? (
@@ -385,18 +384,18 @@ export default function OperationsMenu({
             <button
               onClick={async () => {
                 if (selectionIsEmpty) return;
-                
+
                 try {
                   setBusy(true);
-                  
+
                   // Collect selected items using the unified helper
                   const selectedItems = collectSelectedItems();
-                  
+
                   if (selectedItems.length === 0) {
                     toast.show({ emoji: '⚠️', message: 'No valid photos selected', variant: 'warning' });
                     return;
                   }
-                  
+
                   // Filter out items without IDs and log warning
                   const validItems = selectedItems.filter(p => p && p.id);
                   if (validItems.length === 0) {
@@ -404,30 +403,30 @@ export default function OperationsMenu({
                     toast.show({ emoji: '⚠️', message: 'Selected photos missing IDs', variant: 'warning' });
                     return;
                   }
-                  
+
                   if (validItems.length < selectedItems.length) {
                     console.warn(`${selectedItems.length - validItems.length} photos skipped (missing IDs)`);
                   }
 
                   const photoIds = validItems.map(p => p.id);
                   const result = await batchProcessPhotos(photoIds, true); // force=true for regeneration
-                  
+
                   if (allMode) {
                     const projectFolders = new Set(validItems.map(p => p.project_folder));
-                    toast.show({ 
-                      emoji: '🔄', 
-                      message: `Processing queued for ${validItems.length} photo(s) across ${projectFolders.size} project(s)`, 
-                      variant: 'notification' 
+                    toast.show({
+                      emoji: '🔄',
+                      message: `Processing queued for ${validItems.length} photo(s) across ${projectFolders.size} project(s)`,
+                      variant: 'notification'
                     });
-                    
+
                     if (typeof setAllSelectedKeys === 'function') setAllSelectedKeys(new Set());
                   } else {
-                    toast.show({ 
-                      emoji: '🔄', 
-                      message: `Processing queued for ${validItems.length} photo(s)`, 
-                      variant: 'notification' 
+                    toast.show({
+                      emoji: '🔄',
+                      message: `Processing queued for ${validItems.length} photo(s)`,
+                      variant: 'notification'
                     });
-                    
+
                     if (typeof setSelectedPhotos === 'function') {
                       setSelectedPhotos(new Set());
                     }

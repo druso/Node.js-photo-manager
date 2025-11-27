@@ -29,11 +29,11 @@ import { authFetch } from './httpClient';
  */
 export async function locateAllPhotosPage(opts = {}) {
   const params = new URLSearchParams();
-  
+
   // Required parameters
   if (!opts.project_folder) throw new Error('project_folder is required');
   if (!opts.filename && !opts.name) throw new Error('Either filename or name is required');
-  
+
   // Add parameters
   params.set('project_folder', opts.project_folder);
   if (opts.filename) params.set('filename', opts.filename);
@@ -45,10 +45,10 @@ export async function locateAllPhotosPage(opts = {}) {
   if (opts.keep_type && opts.keep_type !== 'any') params.set('keep_type', String(opts.keep_type));
   if (opts.orientation && opts.orientation !== 'any') params.set('orientation', String(opts.orientation));
   if (opts.public_link_id) params.set('public_link_id', String(opts.public_link_id));
-  
+
   const url = `/api/photos/locate-page?${params.toString()}`;
   const res = await authFetch(url, { cache: 'no-store' });
-  
+
   if (!res.ok) {
     const errorData = await res.json().catch(() => ({}));
     const errorMessage = errorData.error || `Failed to locate photo: ${res.status} ${res.statusText}`;
@@ -57,7 +57,7 @@ export async function locateAllPhotosPage(opts = {}) {
     error.code = errorData.code || 'LOCATE_PHOTO_FAILED';
     throw error;
   }
-  
+
   return res.json();
 }
 
@@ -144,9 +144,10 @@ export async function listAllPhotoKeys(opts = {}) {
   if (opts.tags) params.set('tags', String(opts.tags));
   if (opts.visibility && opts.visibility !== 'any') params.set('visibility', String(opts.visibility));
   if (opts.public_link_id) params.set('public_link_id', String(opts.public_link_id));
+  if (opts.project_folder) params.set('project_folder', String(opts.project_folder));
   if (opts.sort_by) params.set('sort_by', String(opts.sort_by));
   if (opts.sort_dir) params.set('sort_dir', String(opts.sort_dir));
-  
+
   const url = `/api/photos/all-keys${params.toString() ? `?${params.toString()}` : ''}`;
   const res = await authFetch(url, { cache: 'no-store' });
   if (!res.ok) {

@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { listProjects, createProject } from '../api/projectsApi';
 import { listSharedLinks, createSharedLink, addPhotosToLink, removePhotoFromLink } from '../api/sharedLinksManagementApi';
-import { batchMovePhotos } from '../api/batchApi';
+import { startTask } from '../api/jobsApi';
 import { useToast } from '../ui/toast/ToastContext';
 
 /**
@@ -17,11 +17,11 @@ export default function UnifiedSelectionModal({
   mode = 'move', // 'move' | 'share'
   // Move mode props
   sourceFolder,
-  selectedFilenames = [], // DEPRECATED: kept for backward compatibility, use selectedPhotos instead
-  selectedPhotos = [], // Array of photo objects with { id, filename, project_folder } - used for both move and share
+  selectedFilenames = [],
   selectedProjectSummaries = [],
   // Share mode props
-  currentLinkIds = [], // Array of link IDs this photo is already in (for share mode)
+  selectedPhotos = [], // Array of photo objects with { id, filename, project_folder }
+  currentLinkIds = [], // NEW: Array of link IDs this photo is already in (for share mode)
 }) {
   const [items, setItems] = useState([]); // projects or shared links
   const [query, setQuery] = useState('');
@@ -166,8 +166,7 @@ export default function UnifiedSelectionModal({
   const confirmDisabled = useMemo(() => {
     if (loading || creating) return true;
     if (isMoveMode) {
-      // Check if we have photos to move (prefer selectedPhotos, fall back to selectedFilenames)
-      const hasFiles = selectedPhotos.length > 0 || (selectedFilenames?.length || 0) > 0;
+      const hasFiles = (selectedFilenames?.length || 0) > 0;
       return !hasFiles || (!hasSelection && !exactMatch && !query.trim());
     } else {
       // Share mode: just need at least one change in selection
@@ -175,7 +174,7 @@ export default function UnifiedSelectionModal({
       // Disabled only if no selection changes have been made
       return false; // Always enabled in share mode (user can add/remove)
     }
-  }, [loading, creating, isMoveMode, hasSelection, exactMatch, query, selectedFilenames, selectedPhotos]);
+  }, [loading, creating, isMoveMode, hasSelection, exactMatch, query, selectedFilenames]);
 
   const handleSuggestionClick = (item) => {
     if (isMoveMode) {
@@ -272,50 +271,21 @@ export default function UnifiedSelectionModal({
     if (!folder) return;
     setLoading(true);
     try {
-      // Use selectedPhotos if available (with IDs), otherwise fall back to selectedFilenames
-      const photosToMove = selectedPhotos.length > 0 ? selectedPhotos : [];
-
-      if (photosToMove.length === 0) {
-        toast.show({
-          emoji: '⚠️',
-          message: 'No photos to move (missing photo data)',
-          variant: 'warning'
-        });
-        return;
-      }
-
-      // Extract photo IDs
-      const photoIds = photosToMove.map(p => p?.id).filter(Boolean);
-
-      if (photoIds.length === 0) {
-        console.error('Selected photos missing IDs:', photosToMove);
-        toast.show({
-          emoji: '⚠️',
-          message: 'Selected photos missing IDs',
-          variant: 'error'
-        });
-        return;
-      }
-
-      // Use batch move API with photo IDs
-      await batchMovePhotos(photoIds, folder);
-
+      await startTask(folder, { task_type: 'image_move', items: selectedFilenames });
       toast.show({
         emoji: '📦',
-        message: `Moving ${photoIds.length} photo(s) → ${folder}`,
+        message: `Moving ${selectedFilenames.length} photo(s) → ${folder}`,
         variant: 'notification'
       });
       onClose && onClose({ moved: true, destFolder: folder });
     } catch (e) {
-      console.error('Move failed:', e);
-      toast.show({ emoji: '⚠️', message: e?.message || 'Failed to start move', variant: 'error' });
+      toast.show({ emoji: '⚠️', message: 'Failed to start move', variant: 'error' });
     } finally {
       setLoading(false);
     }
   };
 
   const performShare = async () => {
-    // In share mode, selectedPhotos contains the photos to share
     if (!Array.isArray(selectedPhotos) || selectedPhotos.length === 0) {
       toast.show({
         emoji: '⚠️',
@@ -434,7 +404,7 @@ export default function UnifiedSelectionModal({
           <p className="text-sm text-gray-600 mt-1">
             {isShareMode
               ? `${selectedPhotos.length} photo${selectedPhotos.length === 1 ? '' : 's'} selected`
-              : `Select a destination project. ${selectedPhotos.length > 0 ? selectedPhotos.length : (selectedFilenames?.length || 0)} selected${selectedProjectsLabel ? ` from projects: ${selectedProjectsLabel}` : '.'}`
+              : `Select a destination project. ${selectedFilenames?.length || 0} selected${selectedProjectsLabel ? ` from projects: ${selectedProjectsLabel}` : '.'}`
             }
           </p>
         </div>

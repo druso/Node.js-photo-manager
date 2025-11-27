@@ -256,7 +256,30 @@ function App({ sharedLinkHash = null, initialPhotoName = null }) {
     clearSelection: clearAllSelection,
     toggleSelection: toggleAllSelection,
     selectAllFromPhotos: selectAllAllPhotos,
+    selectBatch: selectAllBatch,
+    deselectBatch: deselectAllBatch,
   } = useAllPhotosSelection();
+
+  // Reset filters and selection when switching between All Photos and Project views
+  const prevProjectFilterRef = useRef(view?.project_filter);
+  useEffect(() => {
+    if (prevProjectFilterRef.current !== view?.project_filter) {
+      // View changed
+      setActiveFilters({
+        textSearch: '',
+        dateRange: { start: '', end: '' },
+        fileType: 'any',
+        orientation: 'any',
+        keepType: 'any',
+        visibility: 'any',
+        tags: undefined,
+      });
+      // Clear selection when switching views
+      console.log('[App] View switched, clearing selection. New filter:', view?.project_filter);
+      clearAllSelection();
+      prevProjectFilterRef.current = view?.project_filter;
+    }
+  }, [view?.project_filter, setActiveFilters, clearAllSelection]);
 
   // Use the existing allPhotos from useAllPhotosPagination
   // but avoid variable name conflicts with our unified view context
@@ -1204,8 +1227,11 @@ function App({ sharedLinkHash = null, initialPhotoName = null }) {
                         onAllSelectAll={selectAllAllPhotos}
                         onAllClearSelection={clearAllSelection}
                         filteredProjectPhotos={filteredProjectData?.photos}
-                        selectedPhotos={selectedPhotos}
-                        onProjectToggleSelect={setSelectedPhotos}
+                        projectTotal={pagedTotal}
+                        projectFolder={selectedProject?.folder}
+                        selectedPhotos={allSelectedKeys}
+                        onSelectBatch={selectAllBatch}
+                        onDeselectBatch={deselectAllBatch}
                         onTagsUpdated={handleTagsUpdated}
                         onKeepBulkUpdated={handleKeepBulkUpdated}
                         onTagsBulkUpdated={handleTagsBulkUpdated}
@@ -1243,10 +1269,19 @@ function App({ sharedLinkHash = null, initialPhotoName = null }) {
                                 projectFolder={selectedProject.folder}
                                 projectData={{
                                   ...filteredProjectData,
-                                  photos: sortedPagedPhotos?.length > 0 ? sortedPagedPhotos : pagedPhotos  // Use sorted if available, otherwise use raw paged photos
+                                  photos: sortedPagedPhotos?.length > 0 ? sortedPagedPhotos : pagedPhotos
                                 }}
-                                selectedPhotos={selectedPhotos}
-                                setSelectedPhotos={setSelectedPhotos}
+                                selectedPhotos={allSelectedKeys}
+                                setSelectedPhotos={(newSet) => {
+                                  // OperationsMenu might try to set a Set of filenames
+                                  // We need to handle this if it happens, but ideally it should use unified methods
+                                  if (newSet instanceof Set && newSet.size === 0) {
+                                    clearAllSelection();
+                                  }
+                                }}
+                                allSelectedKeys={allSelectedKeys}
+                                allSelectedPhotos={allSelectedPhotos}
+                                setAllSelectedKeys={replaceAllSelection}
                                 onTagsUpdated={handleTagsUpdated}
                                 onKeepBulkUpdated={handleKeepBulkUpdated}
                                 onTagsBulkUpdated={handleTagsBulkUpdated}
@@ -1295,13 +1330,7 @@ function App({ sharedLinkHash = null, initialPhotoName = null }) {
                 }
               }}
               sourceFolder={selectedProject ? selectedProject.folder : ''}
-              selectedPhotos={(() => {
-                // Collect selected photos with their IDs from project data
-                const photos = Array.isArray(projectData?.photos) ? projectData.photos : [];
-                return Array.from(selectedPhotos || [])
-                  .map(filename => photos.find(p => p.filename === filename))
-                  .filter(Boolean);
-              })()}
+              selectedFilenames={Array.from(selectedPhotos || [])}
               selectedProjectSummaries={(() => {
                 const folder = selectedProject?.folder ? [selectedProject.folder] : [];
                 return folder.map(f => ({ folder: f, count: selectedPhotos?.size || 0 }));
@@ -1331,20 +1360,10 @@ function App({ sharedLinkHash = null, initialPhotoName = null }) {
                 }
               }}
               sourceFolder={''}
-              selectedPhotos={(() => {
-                // Use allSelectedPhotos Map if available (contains full photo objects)
-                if (allSelectedPhotos && allSelectedPhotos instanceof Map) {
-                  return Array.from(allSelectedPhotos.values());
-                }
-                // Fallback: resolve from allPhotos using keys
-                const keys = Array.from(allSelectedKeys || []);
-                const photosList = Array.isArray(allPhotos) ? allPhotos : [];
-                const map = new Map(photosList.map(photo => {
-                  const key = `${photo.project_folder || ''}::${photo.filename}`;
-                  return [key, photo];
-                }));
-                return keys.map(k => map.get(k)).filter(Boolean);
-              })()}
+              selectedFilenames={Array.from(allSelectedKeys || []).map(k => {
+                const idx = k.indexOf('::');
+                return idx >= 0 ? k.slice(idx + 2) : k;
+              })}
               selectedProjectSummaries={Array.from(allSelectedKeys || []).reduce((acc, key) => {
                 const idx = key.indexOf('::');
                 const folder = idx >= 0 ? key.slice(0, idx) : '';
@@ -1530,8 +1549,8 @@ function App({ sharedLinkHash = null, initialPhotoName = null }) {
                   loadPrev={loadPrev}
                   setGridAnchorIndex={setGridAnchorIndex}
                   handlePhotoSelect={handlePhotoSelect}
-                  handleToggleSelection={handleToggleSelection}
-                  selectedPhotos={selectedPhotos}
+                  handleToggleSelection={toggleAllSelection}
+                  selectedPhotos={allSelectedKeys}
                   onEnterSelectionMode={enterSelectionMode}
                 />
               </div>

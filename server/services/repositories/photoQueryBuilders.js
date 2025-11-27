@@ -13,19 +13,19 @@ const log = makeLogger('photoQueryBuilders');
  * @param {string} [options.tags] - Comma-separated tags filter
  * @returns {Object} { whereSql, params }
  */
-function buildProjectPhotosWhere({ 
-  project_id, 
-  date_from = null, 
-  date_to = null, 
-  file_type = null, 
-  keep_type = null, 
-  orientation = null, 
+function buildProjectPhotosWhere({
+  project_id,
+  date_from = null,
+  date_to = null,
+  file_type = null,
+  keep_type = null,
+  orientation = null,
   tags = null,
-  visibility = null 
+  visibility = null
 } = {}) {
   const params = [project_id];
   const where = ['ph.project_id = ?'];
-  
+
   // Date filters operate on date_time_original with created_at fallback
   if (date_from) {
     where.push(`COALESCE(ph.date_time_original, ph.created_at) >= ?`);
@@ -35,7 +35,7 @@ function buildProjectPhotosWhere({
     where.push(`COALESCE(ph.date_time_original, ph.created_at) <= ?`);
     params.push(String(date_to));
   }
-  
+
   // File type availability filter
   if (file_type && typeof file_type === 'string' && file_type !== 'any') {
     if (file_type === 'jpg_only') {
@@ -46,7 +46,7 @@ function buildProjectPhotosWhere({
       where.push(`ph.jpg_available = 1 AND ph.raw_available = 1`);
     }
   }
-  
+
   // Keep type filter
   if (keep_type && typeof keep_type === 'string' && keep_type !== 'any') {
     if (keep_type === 'any_kept') {
@@ -59,27 +59,27 @@ function buildProjectPhotosWhere({
       where.push(`ph.keep_jpg = 0 AND ph.keep_raw = 0`);
     }
   }
-  
+
   // Orientation filter with EXIF rotation handling
   if (orientation && typeof orientation === 'string' && orientation !== 'any') {
     const wExpr = `COALESCE(CAST(json_extract(ph.meta_json, '$.exif_image_width') AS INTEGER), CAST(json_extract(ph.meta_json, '$.ExifImageWidth') AS INTEGER), CAST(json_extract(ph.meta_json, '$.ImageWidth') AS INTEGER))`;
     const hExpr = `COALESCE(CAST(json_extract(ph.meta_json, '$.exif_image_height') AS INTEGER), CAST(json_extract(ph.meta_json, '$.ExifImageHeight') AS INTEGER), CAST(json_extract(ph.meta_json, '$.ImageHeight') AS INTEGER))`;
     const oExpr = `COALESCE(ph.orientation, CAST(json_extract(ph.meta_json, '$.orientation') AS INTEGER), CAST(json_extract(ph.meta_json, '$.Orientation') AS INTEGER), 1)`;
-    
+
     if (orientation === 'vertical') {
       where.push(`(${wExpr} IS NOT NULL AND ${hExpr} IS NOT NULL AND (CASE WHEN ${oExpr} IN (6,8) THEN ${wExpr} > ${hExpr} ELSE ${hExpr} > ${wExpr} END))`);
     } else if (orientation === 'horizontal') {
       where.push(`(${wExpr} IS NOT NULL AND ${hExpr} IS NOT NULL AND (CASE WHEN ${oExpr} IN (6,8) THEN ${hExpr} > ${wExpr} ELSE ${wExpr} > ${hExpr} END))`);
     }
   }
-  
+
   // Handle tags filter: comma-separated list where names without prefix are required, and names with leading '-' are exclusions
   if (tags && typeof tags === 'string') {
     const tagsList = tags.split(',').map(t => t.trim()).filter(Boolean);
     if (tagsList.length > 0) {
       const includeTags = tagsList.filter(t => !t.startsWith('-')).map(t => t.trim());
       const excludeTags = tagsList.filter(t => t.startsWith('-')).map(t => t.substring(1).trim());
-      
+
       // For include tags: photo must have ALL specified tags (AND logic)
       if (includeTags.length > 0) {
         includeTags.forEach(tag => {
@@ -91,7 +91,7 @@ function buildProjectPhotosWhere({
           params.push(tag);
         });
       }
-      
+
       // For exclude tags: photo must have NONE of the specified tags (NOT ANY logic)
       if (excludeTags.length > 0) {
         const excludePlaceholders = excludeTags.map(() => '?').join(',');
@@ -104,7 +104,7 @@ function buildProjectPhotosWhere({
       }
     }
   }
-  
+
   if (visibility && typeof visibility === 'string' && visibility !== 'any') {
     where.push(`ph.visibility = ?`);
     params.push(visibility);
@@ -128,36 +128,42 @@ function buildProjectPhotosWhere({
  * @param {number} [options.project_id] - Optional project ID constraint
  * @returns {Object} { whereSql, params }
  */
-function buildAllPhotosWhere({ 
-  date_from = null, 
-  date_to = null, 
-  file_type = null, 
-  keep_type = null, 
-  orientation = null, 
-  cursor = null, 
-  before_cursor = null, 
-  tags = null, 
+function buildAllPhotosWhere({
+  date_from = null,
+  date_to = null,
+  file_type = null,
+  keep_type = null,
+  orientation = null,
+  cursor = null,
+  before_cursor = null,
+  tags = null,
   project_id = null,
+  project_folder = null,
   visibility = null,
   public_link_id = null,
   sort_direction = 'DESC',
 } = {}) {
   const params = [];
   const where = [];
-  
+
   // Exclude archived projects (wrap OR to preserve AND precedence with other filters)
   where.push(`(p.status IS NULL OR p.status != 'canceled')`);
-  
+
   if (project_id != null) {
     where.push(`p.id = ?`);
     params.push(project_id);
+  }
+
+  if (project_folder != null) {
+    where.push(`p.project_folder = ?`);
+    params.push(project_folder);
   }
 
   if (public_link_id) {
     where.push(`ph.id IN (SELECT ppl.photo_id FROM photo_public_links ppl WHERE ppl.public_link_id = ?)`);
     params.push(public_link_id);
   }
-  
+
   // Date filters operate on taken_at
   if (date_from) {
     where.push(`COALESCE(ph.date_time_original, ph.created_at) >= ?`);
@@ -167,7 +173,7 @@ function buildAllPhotosWhere({
     where.push(`COALESCE(ph.date_time_original, ph.created_at) <= ?`);
     params.push(String(date_to));
   }
-  
+
   // File type availability filter
   if (file_type && typeof file_type === 'string' && file_type !== 'any') {
     if (file_type === 'jpg_only') {
@@ -178,7 +184,7 @@ function buildAllPhotosWhere({
       where.push(`ph.jpg_available = 1 AND ph.raw_available = 1`);
     }
   }
-  
+
   // Keep-type filter (planned keep flags)
   if (keep_type && typeof keep_type === 'string' && keep_type !== 'any') {
     if (keep_type === 'any_kept') {
@@ -191,20 +197,20 @@ function buildAllPhotosWhere({
       where.push(`ph.keep_jpg = 0 AND ph.keep_raw = 0`);
     }
   }
-  
+
   // Orientation filter: compute vertical/horizontal considering EXIF rotation (6/8 swaps)
   if (orientation && typeof orientation === 'string' && orientation !== 'any') {
     const wExpr = `COALESCE(CAST(json_extract(ph.meta_json, '$.exif_image_width') AS INTEGER), CAST(json_extract(ph.meta_json, '$.ExifImageWidth') AS INTEGER), CAST(json_extract(ph.meta_json, '$.ImageWidth') AS INTEGER))`;
     const hExpr = `COALESCE(CAST(json_extract(ph.meta_json, '$.exif_image_height') AS INTEGER), CAST(json_extract(ph.meta_json, '$.ExifImageHeight') AS INTEGER), CAST(json_extract(ph.meta_json, '$.ImageHeight') AS INTEGER))`;
     const oExpr = `COALESCE(ph.orientation, CAST(json_extract(ph.meta_json, '$.orientation') AS INTEGER), CAST(json_extract(ph.meta_json, '$.Orientation') AS INTEGER), 1)`;
-    
+
     if (orientation === 'vertical') {
       where.push(`(${wExpr} IS NOT NULL AND ${hExpr} IS NOT NULL AND (CASE WHEN ${oExpr} IN (6,8) THEN ${wExpr} > ${hExpr} ELSE ${hExpr} > ${wExpr} END))`);
     } else if (orientation === 'horizontal') {
       where.push(`(${wExpr} IS NOT NULL AND ${hExpr} IS NOT NULL AND (CASE WHEN ${oExpr} IN (6,8) THEN ${hExpr} > ${wExpr} ELSE ${wExpr} > ${hExpr} END))`);
     }
   }
-  
+
   // Forward pagination: items after the cursor position (direction depends on sort order)
   // DESC (newest first): "after" means older (<)
   // ASC (oldest first): "after" means newer (>)
@@ -229,14 +235,14 @@ function buildAllPhotosWhere({
       log.warn('build_where_cursor_parse_failed', { cursor_sample: String(cursor).slice(0, 16), message: e && e.message });
     }
   }
-  
+
   // Handle tags filter: comma-separated list where names without prefix are required, and names with leading '-' are exclusions
   if (tags && typeof tags === 'string') {
     const tagsList = tags.split(',').map(t => t.trim()).filter(Boolean);
     if (tagsList.length > 0) {
       const includeTags = tagsList.filter(t => !t.startsWith('-')).map(t => t.trim());
       const excludeTags = tagsList.filter(t => t.startsWith('-')).map(t => t.substring(1).trim());
-      
+
       // For include tags: photo must have ALL specified tags (AND logic)
       if (includeTags.length > 0) {
         includeTags.forEach(tag => {
@@ -248,7 +254,7 @@ function buildAllPhotosWhere({
           params.push(tag);
         });
       }
-      
+
       // For exclude tags: photo must have NONE of the specified tags (NOT ANY logic)
       if (excludeTags.length > 0) {
         const excludePlaceholders = excludeTags.map(() => '?').join(',');
@@ -261,7 +267,7 @@ function buildAllPhotosWhere({
       }
     }
   }
-  
+
   if (visibility && typeof visibility === 'string' && visibility !== 'any') {
     where.push(`ph.visibility = ?`);
     params.push(visibility);

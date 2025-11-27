@@ -37,7 +37,7 @@ router.post(
 router.get('/photos/pending-deletes', async (req, res) => {
   try {
     const { date_from, date_to, file_type, orientation } = req.query;
-    
+
     // Get all pending deletions across projects
     const pendingRows = photosRepo.listPendingDeletesByProject({
       date_from,
@@ -45,10 +45,10 @@ router.get('/photos/pending-deletes', async (req, res) => {
       file_type,
       orientation,
     });
-    
+
     let jpg = 0, raw = 0;
     const projects = [];
-    
+
     for (const row of pendingRows) {
       jpg += row.pending_jpg || 0;
       raw += row.pending_raw || 0;
@@ -56,7 +56,7 @@ router.get('/photos/pending-deletes', async (req, res) => {
         projects.push(row.project_folder);
       }
     }
-    
+
     res.json({
       jpg,
       raw,
@@ -359,7 +359,7 @@ router.post(
           if (!it || !('photo_id' in it)) throw new Error('Missing photo_id');
           const photo = mustGetPhotoById(it.photo_id);
           const projectId = photo.project_id;
-          
+
           if (!photosByProject[projectId]) {
             photosByProject[projectId] = [];
           }
@@ -377,7 +377,7 @@ router.post(
         // Return what would be processed without actually doing it
         const projectCount = Object.keys(photosByProject).length;
         const photoCount = Object.values(photosByProject).reduce((sum, photos) => sum + photos.length, 0);
-        
+
         return res.json({
           dry_run: {
             projects: projectCount,
@@ -444,33 +444,33 @@ router.post(
       validatePayloadSize(items); // Enforce 2K item limit
       const dryRun = parseDryRun(req.body);
       const destFolder = req.body && req.body.dest_folder;
-      
+
       if (!destFolder || typeof destFolder !== 'string') {
         return res.status(400).json({ error: 'dest_folder is required' });
       }
-      
+
       // Validate destination project
       const destProject = projectsRepo.getByFolder(destFolder);
       if (!destProject) {
         return res.status(404).json({ error: 'Destination project not found' });
       }
-      
+
       // Group photos by source project for efficient processing
       const photosByProject = {};
       const errors = [];
-      
+
       // First pass: validate and group photos by source project
       for (const it of items) {
         try {
           if (!it || !('photo_id' in it)) throw new Error('Missing photo_id');
           const photo = mustGetPhotoById(it.photo_id);
-          
+
           // Skip if already in destination project
           if (photo.project_id === destProject.id) {
             errors.push({ photo_id: photo.id, error: 'Photo already in destination project' });
             continue;
           }
-          
+
           const sourceProjectId = photo.project_id;
           if (!photosByProject[sourceProjectId]) {
             photosByProject[sourceProjectId] = [];
@@ -484,12 +484,12 @@ router.post(
           errors.push({ photo_id: it && it.photo_id, error: e.message });
         }
       }
-      
+
       if (dryRun) {
         // Return what would be moved without actually doing it
         const sourceProjectCount = Object.keys(photosByProject).length;
         const photoCount = Object.values(photosByProject).reduce((sum, photos) => sum + photos.length, 0);
-        
+
         return res.json({
           dry_run: {
             source_projects: sourceProjectCount,
@@ -513,7 +513,7 @@ router.post(
           errors: errors.length ? errors : undefined
         });
       }
-      
+
       // Second pass: enqueue move jobs per source project
       const jobIds = [];
       for (const [sourceProjectId, photos] of Object.entries(photosByProject)) {
@@ -523,7 +523,7 @@ router.post(
             errors.push({ project_id: sourceProjectId, error: 'Source project not found' });
             continue;
           }
-          
+
           // Enqueue an image_move job for this source project
           const jobInfo = await tasksOrchestrator.startTask({
             project_id: sourceProject.id,
@@ -536,13 +536,13 @@ router.post(
               destination_project_folder: destProject.project_folder
             }
           });
-          
+
           jobIds.push(jobInfo.id);
         } catch (e) {
           errors.push({ project_id: sourceProjectId, error: e.message });
         }
       }
-      
+
       res.status(202).json({
         message: 'Move queued',
         job_count: jobIds.length,

@@ -102,12 +102,12 @@ function listAll({
   // Normalize sort parameters and construct ORDER BY clause
   const sortField = sort === 'filename' ? 'filename' : sort === 'file_size' ? 'file_size' : 'date_time_original';
   const sortDirection = dir === 'ASC' ? 'ASC' : 'DESC';
-  
+
   // Construct ORDER BY clause for SQL (cannot use template literals in prepared statements)
   const sortColumn = sortField === 'filename' ? 'ph.filename' : sortField === 'file_size' ? 'ph.file_size' : 'taken_at';
   const orderByAsc = `ORDER BY ${sortColumn} ASC, ph.id ASC`;
   const orderByDir = `ORDER BY ${sortColumn} ${sortDirection}, ph.id ${sortDirection}`;
-  
+
   const baseFilters = { date_from, date_to, file_type, keep_type, orientation, tags, project_id, visibility, public_link_id };
 
   const computeTotals = (baseWhereSql, baseParams) => {
@@ -250,13 +250,13 @@ function listAll({
     // Check if there are items after the last item (for nextCursor)
     // "After" depends on sort direction: DESC means older (<), ASC means newer (>)
     const afterOp = sortDirection === 'DESC' ? '<' : '>';
-    const compareColumn = sortColumn === 'taken_at' 
-      ? 'COALESCE(ph.date_time_original, ph.created_at)' 
+    const compareColumn = sortColumn === 'taken_at'
+      ? 'COALESCE(ph.date_time_original, ph.created_at)'
       : sortColumn;
     // Get the comparison value from the last item based on sort field
-    const lastValue = sortField === 'filename' ? last.filename : 
-                      sortField === 'file_size' ? last.file_size : 
-                      last.taken_at;
+    const lastValue = sortField === 'filename' ? last.filename :
+      sortField === 'file_size' ? last.file_size :
+        last.taken_at;
     const hasMore = db
       .prepare(`
         SELECT 1
@@ -282,13 +282,13 @@ function listAll({
       // "Before" depends on sort direction: DESC means newer (>), ASC means older (<)
       const beforeOp = sortDirection === 'DESC' ? '>' : '<';
       // Build the comparison column - for date sorting use COALESCE, for others use the column directly
-      const compareColumn = sortColumn === 'taken_at' 
-        ? 'COALESCE(ph.date_time_original, ph.created_at)' 
+      const compareColumn = sortColumn === 'taken_at'
+        ? 'COALESCE(ph.date_time_original, ph.created_at)'
         : sortColumn;
       // Get the comparison value from the first item based on sort field
-      const firstValue = sortField === 'filename' ? first.filename : 
-                         sortField === 'file_size' ? first.file_size : 
-                         first.taken_at;
+      const firstValue = sortField === 'filename' ? first.filename :
+        sortField === 'file_size' ? first.file_size :
+          first.taken_at;
       const hasItemsBefore = db
         .prepare(`
           SELECT 1
@@ -320,7 +320,7 @@ function listAll({
   }
 
   const { filteredTotal, unfilteredTotal } = computeTotals(baseWhereSql, baseParams);
-  
+
   return { items, nextCursor, prevCursor, total: filteredTotal, unfiltered_total: unfilteredTotal };
 }
 
@@ -342,7 +342,7 @@ function listSharedLinkPhotos({
   includePrivate = false,
 }) {
   const db = getDb();
-  
+
   // Base WHERE clause: photos must be in the link
   // For public access (includePrivate=false): also filter to public photos only
   // For admin access (includePrivate=true): include all photos (public + private)
@@ -350,7 +350,7 @@ function listSharedLinkPhotos({
     WHERE ppl.public_link_id = ?${includePrivate ? '' : ' AND ph.visibility = \'public\''}
   `;
   const params = [public_link_id];
-  
+
   // Handle cursor-based pagination
   if (cursor) {
     const { timestamp, id } = parseCursor(cursor);
@@ -367,11 +367,11 @@ function listSharedLinkPhotos({
     )`;
     params.push(timestamp, timestamp, id);
   }
-  
+
   const orderSql = before_cursor
     ? 'ORDER BY COALESCE(ph.date_time_original, ph.created_at) ASC, ph.id ASC'
     : 'ORDER BY COALESCE(ph.date_time_original, ph.created_at) DESC, ph.id DESC';
-  
+
   const rows = db
     .prepare(`
       SELECT 
@@ -390,21 +390,21 @@ function listSharedLinkPhotos({
       LIMIT ?
     `)
     .all(...params, limit);
-  
+
   let items = rows || [];
-  
+
   // Reverse items if backward pagination
   if (before_cursor && items.length) {
     items = items.reverse();
   }
-  
+
   let nextCursor = null;
   let prevCursor = null;
-  
+
   if (items.length) {
     const last = items[items.length - 1];
     const first = items[0];
-    
+
     // Check if there are more items after the last one
     const hasMore = db
       .prepare(`
@@ -424,16 +424,16 @@ function listSharedLinkPhotos({
         last.date_time_original || last.created_at,
         last.id,
       );
-    
+
     if (hasMore) {
       nextCursor = createCursor(last.date_time_original || last.created_at, last.id);
     }
-    
+
     if (cursor || before_cursor) {
       prevCursor = createCursor(first.date_time_original || first.created_at, first.id);
     }
   }
-  
+
   // Get total count of photos in this link (filtered by visibility if not includePrivate)
   const totalResult = db
     .prepare(`
@@ -443,9 +443,9 @@ function listSharedLinkPhotos({
       WHERE ppl.public_link_id = ?${includePrivate ? '' : ' AND ph.visibility = \'public\''}
     `)
     .get(public_link_id);
-  
+
   const total = totalResult ? totalResult.c : 0;
-  
+
   return { items, nextCursor, prevCursor, total };
 }
 
@@ -464,6 +464,7 @@ function listAllKeys({
   tags = null,
   visibility = null,
   public_link_id = null,
+  project_folder = null,
   sort_by = 'date',
   sort_dir = 'desc',
 } = {}) {
@@ -478,17 +479,17 @@ function listAllKeys({
     tags,
     visibility,
     public_link_id,
+    project_folder,
   };
 
   const { whereSql, params } = buildAllPhotosWhere(baseFilters);
 
   // Lightweight query - only fetch project_folder and filename
   const orderDir = sort_dir === 'asc' ? 'ASC' : 'DESC';
+  // Fallback to date sort if size is requested but column doesn't exist
   const sortColumn = sort_by === 'name'
     ? 'ph.filename'
-    : sort_by === 'size'
-      ? 'ph.file_size'
-      : 'COALESCE(ph.date_time_original, ph.created_at)';
+    : 'COALESCE(ph.date_time_original, ph.created_at)';
 
   const rows = db
     .prepare(`
@@ -503,7 +504,6 @@ function listAllKeys({
         ph.visibility,
         ph.jpg_available,
         ph.raw_available,
-        ph.file_size,
         COALESCE(ph.date_time_original, ph.created_at) AS taken_at
       FROM photos ph
       JOIN projects p ON p.id = ph.project_id
@@ -526,7 +526,7 @@ function listAllKeys({
     visibility: row.visibility || 'private',
     jpg_available: !!row.jpg_available,
     raw_available: !!row.raw_available,
-    file_size: row.file_size ?? null,
+    file_size: null,
     taken_at: row.taken_at,
   }));
 

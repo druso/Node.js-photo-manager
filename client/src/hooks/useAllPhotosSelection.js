@@ -58,7 +58,31 @@ export default function useAllPhotosSelection() {
       const key = `${photo.project_folder}::${photo.filename}`;
       map.set(key, photo);
     });
+    console.log('[useAllPhotosSelection] Setting selected photos:', map.size, 'First key:', map.keys().next().value);
     setSelectedPhotos(map);
+  }, []);
+
+  const selectBatch = useCallback((photos) => {
+    if (!Array.isArray(photos) || photos.length === 0) return;
+    setSelectedPhotos(prev => {
+      const next = new Map(prev);
+      photos.forEach(photo => {
+        const key = `${photo.project_folder}::${photo.filename}`;
+        next.set(key, photo);
+      });
+      return next;
+    });
+  }, []);
+
+  const deselectBatch = useCallback((keys) => {
+    if (!Array.isArray(keys) || keys.length === 0) return;
+    setSelectedPhotos(prev => {
+      const next = new Map(prev);
+      keys.forEach(key => {
+        next.delete(key);
+      });
+      return next;
+    });
   }, []);
 
   // Expose selectedKeys as a Set for backward compatibility with existing code
@@ -72,5 +96,7 @@ export default function useAllPhotosSelection() {
     clearSelection,
     toggleSelection,
     selectAllFromPhotos,
+    selectBatch,
+    deselectBatch,
   };
 }

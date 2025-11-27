@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { listProjects, createProject } from '../api/projectsApi';
-import { batchMovePhotos } from '../api/batchApi';
+import { startTask } from '../api/jobsApi';
 import { useToast } from '../ui/toast/ToastContext';
 
 export default function MovePhotosModal({
