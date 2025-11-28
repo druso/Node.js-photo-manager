@@ -64,7 +64,8 @@ const PhotoViewer = ({
   const toast = useToast();
 
   const photos = projectData?.photos || [];
-  const currentPhoto = photos[currentIndex];
+  // Ensure we don't crash if currentIndex is temporarily out of bounds during updates
+  const currentPhoto = photos[currentIndex] || (photos.length > 0 ? photos[Math.min(currentIndex, photos.length - 1)] : null);
 
   // Auto-advance if current photo is filtered out (e.g., planned for deletion in preview mode)
   useEffect(() => {
@@ -81,6 +82,7 @@ const PhotoViewer = ({
       setCurrentIndex(0);
     }
   }, [photos.length, currentIndex, onClose]);
+
 
   useEffect(() => {
     if (typeof onCurrentIndexChange === 'function') {

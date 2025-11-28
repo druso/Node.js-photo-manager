@@ -66,6 +66,21 @@ router.get('/photos/locate-page', apiRateLimit, async (req, res) => {
       visibility: visibility || undefined,
     });
 
+    const result = await photosRepo.locatePage({
+      project_folder,
+      filename,
+      name,
+      limit: limit ? parseInt(limit, 10) : undefined,
+      date_from,
+      date_to,
+      file_type,
+      keep_type,
+      orientation,
+      tags,
+      visibility,
+      public_link_id: publicLinkId,
+    });
+
     // Map items to the same format as the /api/photos endpoint
     const items = (result.items || []).map((r) => {
       let metadata;
