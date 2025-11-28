@@ -534,6 +534,7 @@ function App({ sharedLinkHash = null, initialPhotoName = null }) {
 
     // Data loading functions
     loadAllInitial,
+    loadProjectInitial, // Pass the project pagination loader
     loadProjectData: fetchProjectData,
 
     // Legacy properties (for backward compatibility)
@@ -811,6 +812,7 @@ function App({ sharedLinkHash = null, initialPhotoName = null }) {
     taskDefs,
     notifiedTasksRef,
     committing,
+    refreshPhotoData, // Pass unified refresh function
   });
 
   // All Photos filtering is handled server-side, so we don't need client-side filtering
@@ -851,6 +853,7 @@ function App({ sharedLinkHash = null, initialPhotoName = null }) {
 
     // Functions
     fetchProjectData, refreshPendingDeletes, mutatePagedPhotos, mutateAllPhotos,
+    refreshPhotoData, // Pass unified refresh function
     toggleSelection: toggleAllSelection, // Pass unified toggle
     clearSelection: clearAllSelection,   // Pass unified clear
 

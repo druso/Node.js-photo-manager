@@ -24,6 +24,7 @@ export class EventHandlersService {
     // Functions
     fetchProjectData,
     refreshPendingDeletes,
+    refreshPhotoData, // NEW
     mutatePagedPhotos,
     mutateAllPhotos,
     toggleSelection, // NEW
@@ -45,6 +46,7 @@ export class EventHandlersService {
     this.filteredProjectData = filteredProjectData;
     this.fetchProjectData = fetchProjectData;
     this.refreshPendingDeletes = refreshPendingDeletes;
+    this.refreshPhotoData = refreshPhotoData;
     this.mutatePagedPhotos = mutatePagedPhotos;
     this.mutateAllPhotos = mutateAllPhotos;
     this.toggleSelection = toggleSelection;
@@ -85,7 +87,9 @@ export class EventHandlersService {
     // Refresh the currently selected project after upload completes
     const currentFolder = this.selectedProject?.folder;
     if (currentFolder && currentFolder !== this.ALL_PROJECT_SENTINEL.folder) {
-      const reload = this.fetchProjectData(currentFolder);
+      const reload = this.refreshPhotoData
+        ? this.refreshPhotoData()
+        : this.fetchProjectData(currentFolder);
       Promise.resolve(reload)
         .catch(() => { })
         .finally(() => {
@@ -96,7 +100,11 @@ export class EventHandlersService {
 
   handleTagsUpdated() {
     if (this.projects) {
-      this.fetchProjectData(this.projects.find(p => p.folder === this.ALL_PROJECT_SENTINEL.folder)?.folder);
+      if (this.refreshPhotoData) {
+        this.refreshPhotoData();
+      } else {
+        this.fetchProjectData(this.projects.find(p => p.folder === this.ALL_PROJECT_SENTINEL.folder)?.folder);
+      }
     }
   }
 
@@ -238,6 +246,7 @@ export function useEventHandlers({
   // Functions
   fetchProjectData,
   refreshPendingDeletes,
+  refreshPhotoData, // NEW
   mutatePagedPhotos,
   mutateAllPhotos,
   toggleSelection, // NEW
@@ -260,6 +269,7 @@ export function useEventHandlers({
     filteredProjectData,
     fetchProjectData,
     refreshPendingDeletes,
+    refreshPhotoData,
     mutatePagedPhotos,
     mutateAllPhotos,
     toggleSelection,

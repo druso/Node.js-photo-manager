@@ -14,11 +14,12 @@ import { listAllPendingDeletes } from '../api/allPhotosApi';
 export function usePhotoDataRefresh({
   // Unified view context
   view,
-  
+
   // Data loading functions
   loadAllInitial,
+  loadProjectInitial, // NEW: Required to refresh pagination in project mode
   loadProjectData,
-  
+
   // Legacy properties (for backward compatibility)
   isAllMode,
   activeFilters,
@@ -31,15 +32,15 @@ export function usePhotoDataRefresh({
   const refreshPhotoData = useCallback(async () => {
     // Use unified view context to determine which data to refresh
     const isAllPhotosView = view?.project_filter === null;
-    
+
     // For backward compatibility, fall back to isAllMode if view context is not available
     const shouldRefreshAllPhotos = (view !== undefined) ? isAllPhotosView : isAllMode;
-    
+
     try {
       if (shouldRefreshAllPhotos) {
         // Refresh All Photos data
         await loadAllInitial();
-        
+
         // Also refresh pending deletions count
         const range = activeFilters?.dateRange || {};
         // Don't pass keep_type to pending deletes API - it has its own internal filter
@@ -58,6 +59,10 @@ export function usePhotoDataRefresh({
       } else if (selectedProject?.folder) {
         // Refresh Project data
         await loadProjectData(selectedProject.folder);
+        // Also refresh pagination data to ensure grid is not empty
+        if (loadProjectInitial) {
+          await loadProjectInitial();
+        }
       }
     } catch (error) {
       console.debug('Error refreshing photo data:', error);
@@ -67,6 +72,7 @@ export function usePhotoDataRefresh({
     view?.project_filter,
     isAllMode,
     loadAllInitial,
+    loadProjectInitial,
     loadProjectData,
     activeFilters?.dateRange,
     activeFilters?.fileType,
@@ -74,7 +80,7 @@ export function usePhotoDataRefresh({
     setAllPendingDeletes,
     selectedProject?.folder
   ]);
-  
+
   // For backward compatibility
   const refreshAllPhotos = useCallback(async () => {
     if (!isAllMode) return;
@@ -109,7 +115,7 @@ export function usePhotoDataRefresh({
     setAllPendingDeletes
   ]);
 
-  return { 
+  return {
     refreshPhotoData,
     refreshAllPhotos, // For backward compatibility
     refreshPendingDeletes

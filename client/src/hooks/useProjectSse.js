@@ -14,6 +14,7 @@ export default function useProjectSse({
   taskDefs,
   notifiedTasksRef,
   committing,
+  refreshPhotoData, // NEW: Unified refresh function
 }) {
   const sseReadyRef = useRef(false);
   const fetchProjectDataRef = useRef(fetchProjectData);
@@ -148,21 +149,21 @@ export default function useProjectSse({
         const currentPagedPhotos = pagedPhotosRef.current;
         const existsInProjectData = Array.isArray(currentProjectData?.photos)
           ? currentProjectData.photos.findIndex(p => {
-              if (!p) return false;
-              if (targetId != null && Number.isFinite(Number(p.id)) && Number(p.id) === targetId) return true;
-              const existingFile = String(p.filename || '');
-              if (existingFile === fname) return true;
-              return stripKnownExt(existingFile) === base;
-            }) !== -1
+            if (!p) return false;
+            if (targetId != null && Number.isFinite(Number(p.id)) && Number(p.id) === targetId) return true;
+            const existingFile = String(p.filename || '');
+            if (existingFile === fname) return true;
+            return stripKnownExt(existingFile) === base;
+          }) !== -1
           : false;
         const existsInPaged = Array.isArray(currentPagedPhotos)
           ? currentPagedPhotos.findIndex(p => {
-              if (!p) return false;
-              if (targetId != null && Number.isFinite(Number(p.id)) && Number(p.id) === targetId) return true;
-              const existingFile = String(p.filename || '');
-              if (existingFile === fname) return true;
-              return stripKnownExt(existingFile) === base;
-            }) !== -1
+            if (!p) return false;
+            if (targetId != null && Number.isFinite(Number(p.id)) && Number(p.id) === targetId) return true;
+            const existingFile = String(p.filename || '');
+            if (existingFile === fname) return true;
+            return stripKnownExt(existingFile) === base;
+          }) !== -1
           : false;
 
         setProjectData(prev => {
@@ -223,7 +224,7 @@ export default function useProjectSse({
         const ttype = evt.task_type;
         const meta = taskDefs?.[ttype];
         const userRelevant = meta ? (meta.user_relevant !== false) : true;
-        
+
         console.log('[SSE] Task event received:', {
           task_id: tid,
           task_type: ttype,
@@ -232,7 +233,7 @@ export default function useProjectSse({
           alreadyNotified: notifiedTasksRef.current.has(tid),
           projectFolder: selectedProject?.folder
         });
-        
+
         if (userRelevant && !notifiedTasksRef.current.has(tid)) {
           setTimeout(async () => {
             try {
@@ -251,13 +252,17 @@ export default function useProjectSse({
                 toast?.show({ emoji: '✅', message: `${label} completed`, variant: 'success' });
               }
               notifiedTasksRef.current.add(tid);
-              
+
               // Refresh project data after upload-related tasks complete
               // This ensures the grid shows newly uploaded photos
               if (ttype === 'upload_postprocess' && evt.status === 'completed') {
                 console.log('[SSE] Upload task completed, refreshing project data for:', selectedProject.folder);
                 try {
-                  await fetchProjectDataRef.current?.(selectedProject.folder);
+                  if (refreshPhotoData) {
+                    await refreshPhotoData();
+                  } else {
+                    await fetchProjectDataRef.current?.(selectedProject.folder);
+                  }
                   console.log('[SSE] Project data refreshed successfully');
                 } catch (error) {
                   console.error('[SSE] post-upload refresh failed', error);
@@ -277,7 +282,7 @@ export default function useProjectSse({
     return () => {
       sseClient.off('job_update', handleJobUpdate);
     };
-  }, [selectedProject?.folder, taskDefs, setProjectData, mutatePagedPhotos, toast, notifiedTasksRef]);
+  }, [selectedProject?.folder, taskDefs, setProjectData, mutatePagedPhotos, toast, notifiedTasksRef, refreshPhotoData]);
 
   useEffect(() => {
     if (!selectedProject?.folder) return;
@@ -292,7 +297,11 @@ export default function useProjectSse({
     const id = setInterval(() => {
       const folder = selectedProject?.folder;
       if (folder) {
-        fetchProjectDataRef.current?.(folder);
+        if (refreshPhotoData) {
+          refreshPhotoData();
+        } else {
+          fetchProjectDataRef.current?.(folder);
+        }
       }
     }, 10000);
 
