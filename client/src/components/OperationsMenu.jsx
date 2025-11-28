@@ -24,6 +24,7 @@ export default function OperationsMenu({
   allSelectedKeys, // Set of 'project_folder::filename' (for backward compatibility)
   allSelectedPhotos, // NEW: Map<key, photo> with full photo objects
   setAllSelectedKeys,
+  clearSelection, // NEW: Unified clear function
   allPhotos,
   selection,
   setSelection,
@@ -35,8 +36,8 @@ export default function OperationsMenu({
   const rootRef = useRef(null);
   const toast = useToast();
 
-  const projectSelected = selectedPhotos instanceof Set ? selectedPhotos : new Set();
-  const selectionCount = allMode ? (allSelectedKeys?.size || 0) : projectSelected.size;
+  // Unified selection derivation
+  const selectionCount = allSelectedPhotos instanceof Map ? allSelectedPhotos.size : (allMode ? (allSelectedKeys?.size || 0) : selectedPhotos.size);
   const selectionIsEmpty = selectionCount === 0;
 
   const visibilityMutation = useVisibilityMutation();
@@ -52,63 +53,45 @@ export default function OperationsMenu({
     return () => document.removeEventListener('click', handleDocClick);
   }, []);
 
-  const collectProjectSelection = () => {
-    const photos = Array.isArray(projectData?.photos) ? projectData.photos : [];
-    const resolved = Array.from(projectSelected)
-      .map(filename => {
-        const entry = photos.find(p => p.filename === filename);
-        if (!entry) return null;
-        return {
-          ...entry,
-          project_folder: entry.project_folder || projectFolder || entry.folder || null,
-        };
-      })
-      .filter(Boolean);
-    return resolved.map(item => ({
-      ...item,
-      project_folder: item.project_folder || projectFolder || null,
-    }));
-  };
-
-  const collectAllSelection = () => {
-    // Use the selectedPhotos Map directly - it already contains full photo objects
-    if (allSelectedPhotos && allSelectedPhotos instanceof Map) {
-      return Array.from(allSelectedPhotos.values());
-    }
-
-    // Fallback to old behavior if Map not provided (backward compatibility)
-    const keys = Array.from(allSelectedKeys || []);
-    if (!keys.length) return [];
-    const photosList = Array.isArray(allPhotos) ? allPhotos : [];
-    const map = new Map(photosList.map(photo => {
-      const key = `${photo.project_folder || ''}::${photo.filename}`;
-      return [key, photo];
-    }));
-    const resolved = [];
-    const missing = [];
-    keys.forEach(key => {
-      const photo = map.get(key);
-      if (photo) {
-        resolved.push(photo);
-      } else {
-        missing.push(key);
-      }
-    });
-    if (missing.length && toast?.show) {
-      toast.show({
-        emoji: '⚠️',
-        message: `Some selections are unavailable in the current page (${missing.length}).`,
-        variant: 'warning',
-      });
-    }
-    return resolved;
-  };
-
   const collectSelectedItems = () => {
-    if (allMode) {
-      return collectAllSelection();
+    // Prefer unified Map if available
+    if (allSelectedPhotos instanceof Map) {
+      const items = Array.from(allSelectedPhotos.values());
+      // If in project mode, we might want to filter? 
+      // But usually "Actions" apply to what is selected.
+      // If I am in Project A, but I have selected items from Project B (via All Photos), 
+      // and I open the menu, should I act on Project B items too?
+      // Probably yes, if the selection is unified.
+      return items;
     }
-    return collectProjectSelection();
+
+    // Fallback to legacy logic
+    if (allMode) {
+      const keys = Array.from(allSelectedKeys || []);
+      if (!keys.length) return [];
+      const photosList = Array.isArray(allPhotos) ? allPhotos : [];
+      const map = new Map(photosList.map(photo => {
+        const key = `${photo.project_folder || ''}::${photo.filename}`;
+        return [key, photo];
+      }));
+      return keys.map(key => map.get(key)).filter(Boolean);
+    } else {
+      const photos = Array.isArray(projectData?.photos) ? projectData.photos : [];
+      return Array.from(selectedPhotos)
+        .map(key => {
+          // Handle unified key "folder::filename" or legacy "filename"
+          const parts = key.split('::');
+          const filename = parts.length === 2 ? parts[1] : key;
+
+          const entry = photos.find(p => p.filename === filename);
+          if (!entry) return null;
+          return {
+            ...entry,
+            project_folder: entry.project_folder || projectFolder || entry.folder || null,
+          };
+        })
+        .filter(Boolean);
+    }
   };
 
   const handleVisibilityChange = async (visibility) => {
@@ -129,7 +112,9 @@ export default function OperationsMenu({
         onVisibilityBulkUpdated(changed);
       }
 
-      if (allMode) {
+      if (typeof clearSelection === 'function') {
+        clearSelection();
+      } else if (allMode) {
         if (typeof setAllSelectedKeys === 'function') setAllSelectedKeys(new Set());
       } else if (typeof setSelectedPhotos === 'function') {
         setSelectedPhotos(new Set());
@@ -180,7 +165,9 @@ export default function OperationsMenu({
       }
 
       setTagInput('');
-      if (typeof setSelectedPhotos === 'function') {
+      if (typeof clearSelection === 'function') {
+        clearSelection();
+      } else if (typeof setSelectedPhotos === 'function') {
         setSelectedPhotos(new Set());
       }
 
@@ -227,83 +214,50 @@ export default function OperationsMenu({
     else return;
     setBusy(true);
     try {
-      if (!isAll) {
-        // Project mode: use batch API
-        const photos = Array.isArray(projectData?.photos) ? projectData.photos : [];
-        const selectedItems = Array.from(projectSelected)
-          .map(filename => photos.find(e => e.filename === filename))
-          .filter(Boolean);
+      // Unified logic: use collectSelectedItems
+      const selectedItems = collectSelectedItems();
 
-        if (selectedItems.length === 0) {
-          toast.show({ emoji: '⚠️', message: 'No valid photos selected', variant: 'warning' });
-          return;
-        }
+      if (selectedItems.length === 0) {
+        toast.show({ emoji: '⚠️', message: 'No valid photos selected', variant: 'warning' });
+        return;
+      }
 
-        const photoIds = selectedItems.map(p => p.id);
-        const result = await batchUpdateKeep(photoIds, target);
+      const photoIds = selectedItems.map(p => p.id);
+      const result = await batchUpdateKeep(photoIds, target);
 
-        if (typeof setSelectedPhotos === 'function') {
-          setSelectedPhotos(new Set());
-        }
+      if (typeof clearSelection === 'function') {
+        clearSelection();
+      } else if (typeof setSelectedPhotos === 'function') {
+        setSelectedPhotos(new Set());
+      } else if (typeof setAllSelectedKeys === 'function') {
+        setAllSelectedKeys(new Set());
+      }
 
-        // Show success message
-        let msg;
-        if (!target.keep_jpg && !target.keep_raw) {
-          msg = `${result.updated} planned for delete`;
-        } else if (target.keep_jpg && !target.keep_raw) {
-          msg = `Planned to keep only JPG for ${result.updated}`;
-        } else {
-          msg = `Planned to keep JPG + RAW for ${result.updated}`;
-        }
+      // Count unique projects
+      const projectFolders = new Set(selectedItems.map(p => p.project_folder));
 
-        if (result.errors && result.errors.length > 0) {
-          toast.show({
-            emoji: '⚠️',
-            message: `${msg}, ${result.errors.length} failed`,
-            variant: 'warning'
-          });
-        } else {
-          toast.show({ emoji: '📝', message: msg, variant: 'notification' });
-        }
-
-        // Trigger parent refresh
-        if (onTagsUpdated) {
-          onTagsUpdated();
-        }
+      let msg;
+      if (!target.keep_jpg && !target.keep_raw) {
+        msg = `${result.updated} planned for delete across ${projectFolders.size} project(s)`;
+      } else if (target.keep_jpg && !target.keep_raw) {
+        msg = `Planned to keep only JPG for ${result.updated} across ${projectFolders.size} project(s)`;
       } else {
-        // All Photos mode: collect photo IDs and use batch API
-        const selectedItems = collectAllSelection();
-        if (selectedItems.length === 0) {
-          toast.show({ emoji: '⚠️', message: 'No valid photos selected', variant: 'warning' });
-          return;
-        }
+        msg = `Planned to keep JPG + RAW for ${result.updated} across ${projectFolders.size} project(s)`;
+      }
 
-        const photoIds = selectedItems.map(p => p.id);
-        const result = await batchUpdateKeep(photoIds, target);
+      if (result.errors && result.errors.length > 0) {
+        toast.show({
+          emoji: '⚠️',
+          message: `${msg}, ${result.errors.length} failed`,
+          variant: 'warning'
+        });
+      } else {
+        toast.show({ emoji: '📝', message: msg, variant: 'notification' });
+      }
 
-        if (typeof setAllSelectedKeys === 'function') setAllSelectedKeys(new Set());
-
-        // Count unique projects
-        const projectFolders = new Set(selectedItems.map(p => p.project_folder));
-
-        let msg;
-        if (!target.keep_jpg && !target.keep_raw) {
-          msg = `${result.updated} planned for delete across ${projectFolders.size} project(s)`;
-        } else if (target.keep_jpg && !target.keep_raw) {
-          msg = `Planned to keep only JPG for ${result.updated} across ${projectFolders.size} project(s)`;
-        } else {
-          msg = `Planned to keep JPG + RAW for ${result.updated} across ${projectFolders.size} project(s)`;
-        }
-
-        if (result.errors && result.errors.length > 0) {
-          toast.show({
-            emoji: '⚠️',
-            message: `${msg}, ${result.errors.length} failed`,
-            variant: 'warning'
-          });
-        } else {
-          toast.show({ emoji: '📝', message: msg, variant: 'notification' });
-        }
+      // Trigger parent refresh
+      if (onTagsUpdated) {
+        onTagsUpdated();
       }
     } catch (e) {
       console.error('Batch keep operation failed:', e);
@@ -327,8 +281,8 @@ export default function OperationsMenu({
           disabled={busy}
           aria-disabled={busy}
           className={`inline-flex justify-center items-center w-full rounded-md border shadow-sm px-3 py-2 text-sm font-medium pointer-events-auto relative z-10 ${busy
-              ? 'bg-gray-200 text-gray-500 border-gray-300 cursor-not-allowed'
-              : 'bg-white text-gray-700 hover:bg-gray-50 border-gray-300'
+            ? 'bg-gray-200 text-gray-500 border-gray-300 cursor-not-allowed'
+            : 'bg-white text-gray-700 hover:bg-gray-50 border-gray-300'
             }`}
           title={trigger === 'hamburger' ? 'Actions' : undefined}
         >
@@ -411,25 +365,19 @@ export default function OperationsMenu({
                   const photoIds = validItems.map(p => p.id);
                   const result = await batchProcessPhotos(photoIds, true); // force=true for regeneration
 
-                  if (allMode) {
-                    const projectFolders = new Set(validItems.map(p => p.project_folder));
-                    toast.show({
-                      emoji: '🔄',
-                      message: `Processing queued for ${validItems.length} photo(s) across ${projectFolders.size} project(s)`,
-                      variant: 'notification'
-                    });
+                  const projectFolders = new Set(validItems.map(p => p.project_folder));
+                  toast.show({
+                    emoji: '🔄',
+                    message: `Processing queued for ${validItems.length} photo(s) across ${projectFolders.size} project(s)`,
+                    variant: 'notification'
+                  });
 
+                  if (typeof clearSelection === 'function') {
+                    clearSelection();
+                  } else if (allMode) {
                     if (typeof setAllSelectedKeys === 'function') setAllSelectedKeys(new Set());
-                  } else {
-                    toast.show({
-                      emoji: '🔄',
-                      message: `Processing queued for ${validItems.length} photo(s)`,
-                      variant: 'notification'
-                    });
-
-                    if (typeof setSelectedPhotos === 'function') {
-                      setSelectedPhotos(new Set());
-                    }
+                  } else if (typeof setSelectedPhotos === 'function') {
+                    setSelectedPhotos(new Set());
                   }
                 } catch (e) {
                   console.error('Batch process failed:', e);

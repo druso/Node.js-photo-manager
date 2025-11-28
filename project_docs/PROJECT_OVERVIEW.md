@@ -10,7 +10,7 @@ A web-based photo management tool for photographers. Upload, organize, and view 
 
 **Photo Ingestion**: Drag-and-drop or button upload. System analyzes for conflicts, handles storage, creates DB records, queues processing.
 
-**Unified Views**: "All Photos" and "Project view" use identical architecture. Project view = All Photos with project filter applied. Single codebase, consistent behavior.
+**Unified Views**: "All Photos" and "Project view" use identical architecture. Project view = All Photos with project filter applied. Single codebase, consistent behavior, unified selection state.
 
 **Filtering & Sorting**: Server-side filtering (date, file type, keep status, orientation, tags) and sorting (date/filename/size, ASC/DESC). URL-synchronized, persists across reloads.
 

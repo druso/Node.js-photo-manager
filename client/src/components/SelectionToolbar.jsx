@@ -23,47 +23,42 @@ function SelectionToolbar({
   const handleToggle = async () => {
     if (isLoading) return;
 
-    // Determine current state for UI logic (Select All vs Deselect All)
+    // Determine context
+    const folder = projectFolder || (Array.isArray(filteredProjectPhotos) && filteredProjectPhotos.length > 0 ? filteredProjectPhotos[0].project_folder : null);
+    const isProjectContext = !!folder && !isAllMode;
+
+    // Determine total count for context
+    const total = isProjectContext
+      ? (typeof projectTotal === 'number' ? projectTotal : (Array.isArray(filteredProjectPhotos) ? filteredProjectPhotos.length : 0))
+      : (allTotal || 0);
+
+    // Determine currently selected count in context
     let currentSelectedCount = 0;
-    let isAllSelectedInContext = false; // Refers to whether all *currently filtered/visible* items are selected
-
-    if (isAllMode) {
-      const totalFiltered = allTotal || 0;
-      currentSelectedCount = allSelectedKeys instanceof Set ? allSelectedKeys.size : 0;
-      isAllSelectedInContext = totalFiltered > 0 && currentSelectedCount === totalFiltered;
-    } else {
-      // Project mode
-      const folder = projectFolder || (Array.isArray(filteredProjectPhotos) && filteredProjectPhotos.length > 0 ? filteredProjectPhotos[0].project_folder : null);
-      const total = typeof projectTotal === 'number' ? projectTotal : (Array.isArray(filteredProjectPhotos) ? filteredProjectPhotos.length : 0);
-
-      if (folder) {
-        if (selectedPhotos instanceof Set) {
-          for (const key of selectedPhotos) {
-            if (key.startsWith(folder + '::')) {
-              currentSelectedCount++;
-            }
+    if (isProjectContext) {
+      if (selectedPhotos instanceof Set) {
+        for (const key of selectedPhotos) {
+          if (key.startsWith(folder + '::')) {
+            currentSelectedCount++;
           }
         }
-        // Heuristic: if we have selected all known photos (total), or if we have selected all visible photos
-        // Ideally we want to know if currentSelectedCount === total
-        if (total > 0) {
-          isAllSelectedInContext = currentSelectedCount >= total;
-        } else {
-          // Fallback to visible check if total is 0 (shouldn't happen if disabled correctly)
-          const photosInCurrentView = Array.isArray(filteredProjectPhotos) ? filteredProjectPhotos : [];
-          isAllSelectedInContext = photosInCurrentView.length > 0 && currentSelectedCount >= photosInCurrentView.length;
-        }
       }
+    } else {
+      currentSelectedCount = allSelectedKeys instanceof Set ? allSelectedKeys.size : 0;
+    }
+
+    // Determine if "All Selected"
+    let isAllSelectedInContext = false;
+    if (total > 0) {
+      isAllSelectedInContext = currentSelectedCount >= total;
+    } else if (isProjectContext) {
+      // Fallback for project mode if total is 0
+      const photosInCurrentView = Array.isArray(filteredProjectPhotos) ? filteredProjectPhotos : [];
+      isAllSelectedInContext = photosInCurrentView.length > 0 && currentSelectedCount >= photosInCurrentView.length;
     }
 
     if (isAllSelectedInContext || currentSelectedCount > 0) {
       // Deselect All
-      if (isAllMode) {
-        onAllClearSelection();
-      } else {
-        // Project mode deselect
-        const folder = projectFolder || (Array.isArray(filteredProjectPhotos) && filteredProjectPhotos.length > 0 ? filteredProjectPhotos[0].project_folder : null);
-
+      if (isProjectContext) {
         if (onDeselectBatch && folder) {
           const keysToRemove = [];
           if (selectedPhotos instanceof Set) {
@@ -75,6 +70,8 @@ function SelectionToolbar({
           }
           onDeselectBatch(keysToRemove);
         }
+      } else {
+        onAllClearSelection();
       }
       setError(null);
       return;
@@ -96,12 +93,8 @@ function SelectionToolbar({
         public_link_id: activeFilters?.publicLinkId,
       };
 
-      // Add project_folder filter if in project mode
-      if (!isAllMode) {
-        const folder = projectFolder || (Array.isArray(filteredProjectPhotos) && filteredProjectPhotos.length > 0 ? filteredProjectPhotos[0].project_folder : null);
-        if (folder) {
-          filters.project_folder = folder;
-        }
+      if (isProjectContext) {
+        filters.project_folder = folder;
       }
 
       console.log('[SelectionToolbar] Fetching all keys with filters:', filters);
@@ -140,7 +133,7 @@ function SelectionToolbar({
       }
 
       // Show confirmation for large selections only if in All Mode and selecting
-      if (isAllMode && photoObjects.length > 1000) {
+      if (!isProjectContext && photoObjects.length > 1000) {
         const confirmed = window.confirm(
           `This will select ${photoObjects.length.toLocaleString()} photos matching your current filters. Continue?`
         );
@@ -152,12 +145,12 @@ function SelectionToolbar({
 
       console.log('[SelectionToolbar] Calling selection handler with count:', photoObjects.length);
 
-      if (isAllMode) {
-        onAllSelectAll(photoObjects);
-      } else {
+      if (isProjectContext) {
         if (onSelectBatch) {
           onSelectBatch(photoObjects);
         }
+      } else {
+        onAllSelectAll(photoObjects);
       }
     } catch (err) {
       console.error('Failed to select all photos:', err);
@@ -169,37 +162,32 @@ function SelectionToolbar({
 
   // Render logic
   const renderContent = () => {
-    let label = 'Select All';
-    let countLabel = '';
-    let isDisabled = false;
+    // Determine context
+    const folder = projectFolder || (Array.isArray(filteredProjectPhotos) && filteredProjectPhotos.length > 0 ? filteredProjectPhotos[0].project_folder : null);
+    const isProjectContext = !!folder && !isAllMode;
 
-    if (isAllMode) {
-      const selectedCount = allSelectedKeys instanceof Set ? allSelectedKeys.size : 0;
-      const totalFiltered = allTotal || 0;
-      const allSelected = totalFiltered > 0 && selectedCount === totalFiltered;
+    // Determine total count for context
+    const total = isProjectContext
+      ? (typeof projectTotal === 'number' ? projectTotal : (Array.isArray(filteredProjectPhotos) ? filteredProjectPhotos.length : 0))
+      : (allTotal || 0);
 
-      label = isLoading ? 'Selecting...' : (allSelected || selectedCount > 0) ? 'Deselect All' : 'Select All';
-      countLabel = isLoading ? `Selecting ${totalFiltered.toLocaleString()} photos...` : `${selectedCount} selected`;
-      isDisabled = isLoading || totalFiltered === 0;
-    } else {
-      // Project mode
-      const folder = projectFolder || (Array.isArray(filteredProjectPhotos) && filteredProjectPhotos.length > 0 ? filteredProjectPhotos[0].project_folder : null);
-      const total = typeof projectTotal === 'number' ? projectTotal : (Array.isArray(filteredProjectPhotos) ? filteredProjectPhotos.length : 0);
-
-      let currentSelectedCount = 0;
-      if (folder && selectedPhotos instanceof Set) {
+    // Determine currently selected count in context
+    let currentSelectedCount = 0;
+    if (isProjectContext) {
+      if (selectedPhotos instanceof Set) {
         for (const key of selectedPhotos) {
           if (key.startsWith(folder + '::')) {
             currentSelectedCount++;
           }
         }
       }
-
-      // For project mode, if any photos from this project are selected, show "Deselect All"
-      label = isLoading ? 'Selecting...' : (currentSelectedCount > 0) ? 'Deselect All' : 'Select All';
-      countLabel = `${currentSelectedCount} selected`;
-      isDisabled = isLoading || total === 0;
+    } else {
+      currentSelectedCount = allSelectedKeys instanceof Set ? allSelectedKeys.size : 0;
     }
+
+    let label = isLoading ? 'Selecting...' : (currentSelectedCount > 0) ? 'Deselect All' : 'Select All';
+    let countLabel = isLoading ? `Selecting ${total.toLocaleString()} photos...` : `${currentSelectedCount} selected`;
+    let isDisabled = isLoading || total === 0;
 
     return (
       <>

@@ -83,15 +83,15 @@ function App({ sharedLinkHash = null, initialPhotoName = null }) {
     selectedProject, setSelectedProject,
     projectData, setProjectData,
     allPhotos: appStateAllPhotos, setAllPhotos,
-    allSelectedKeys: appStateAllSelectedKeys, setAllSelectedKeys,
-    toggleAllSelection: appStateToggleAllSelection, clearAllSelection: appStateClearAllSelection,
+    // allSelectedKeys, setAllSelectedKeys removed
+    // toggleAllSelection, clearAllSelection removed
     registerActiveProject: appStateRegisterActiveProject,
     activeProject, setActiveProject,
     config, setConfig,
     viewerState, setViewerState,
     viewerList, setViewerList,
     viewMode, setViewMode,
-    selectedPhotos, setSelectedPhotos,
+    // selectedPhotos, setSelectedPhotos removed
     filtersCollapsed, setFiltersCollapsed,
     sizeLevel, setSizeLevel,
     taskDefs, setTaskDefs,
@@ -330,7 +330,8 @@ function App({ sharedLinkHash = null, initialPhotoName = null }) {
     updateProjectFilter,
 
     // State setters
-    setSelectedProject, setProjectData, setSelectedPhotos,
+    setSelectedProject, setProjectData,
+    // setSelectedPhotos removed
 
     // Current state
     selectedProject, activeFilters, projects,
@@ -339,7 +340,7 @@ function App({ sharedLinkHash = null, initialPhotoName = null }) {
     previousProjectRef, windowScrollRestoredRef, initialSavedYRef, pendingOpenRef,
 
     // Functions
-    registerActiveProject: appStateRegisterActiveProject, fetchProjectData, clearAllSelection: appStateClearAllSelection,
+    registerActiveProject: appStateRegisterActiveProject, fetchProjectData, clearAllSelection,
 
     // Constants
     ALL_PROJECT_SENTINEL
@@ -361,9 +362,9 @@ function App({ sharedLinkHash = null, initialPhotoName = null }) {
     ALL_PROJECT_SENTINEL,
     setSelectedProject,
     setProjectData,
-    setSelectedPhotos,
+    // setSelectedPhotos removed
     registerActiveProject: appStateRegisterActiveProject,
-    clearAllSelection: appStateClearAllSelection,
+    clearAllSelection,
     handleProjectSelect,
   });
 
@@ -841,18 +842,17 @@ function App({ sharedLinkHash = null, initialPhotoName = null }) {
     handleToggleSelection
   } = useEventHandlers({
     // State setters
-    setProjects, setSelectedProject, setProjectData, setSelectedPhotos,
-    setViewerState, setViewerList,
-    setPendingSelectProjectRef: (ref) => { pendingSelectProjectRef.current = ref; },
+    setProjects, setSelectedProject, setProjectData,
+    // setSelectedPhotos removed
+    setViewerState, setViewerList, setPendingSelectProjectRef: (ref) => { pendingSelectProjectRef.current = ref; },
 
-    // Current state
-    selectedProject, projectData, filteredProjectData,
+    // Data
+    selectedProject, projects, projectData, filteredProjectData,
 
     // Functions
-    fetchProjectData,
-    refreshPendingDeletes,
-    mutatePagedPhotos,
-    mutateAllPhotos,
+    fetchProjectData, refreshPendingDeletes, mutatePagedPhotos, mutateAllPhotos,
+    toggleSelection: toggleAllSelection, // Pass unified toggle
+    clearSelection: clearAllSelection,   // Pass unified clear
 
     // Constants
     ALL_PROJECT_SENTINEL
@@ -894,20 +894,8 @@ function App({ sharedLinkHash = null, initialPhotoName = null }) {
     }
   }, [view?.project_filter, viewerState.isOpen, handleToggleSelectionAll, handleToggleSelection, setViewerState]);
 
-  const clearAllSelections = useCallback(() => {
-    const isAllMode = view?.project_filter === null;
-    if (isAllMode) {
-      clearAllSelection();
-    } else {
-      setSelectedPhotos(new Set());
-    }
-  }, [view?.project_filter, clearAllSelection, setSelectedPhotos]);
-
-  // Clear project selections when switching to a different project view
-  useEffect(() => {
-    if (view?.project_filter === null) return;
-    setSelectedPhotos(new Set());
-  }, [view?.project_filter, selectedProject?.folder, setSelectedPhotos]);
+  // clearAllSelections removed (handled by useModeSwitching and view change effect)
+  // Project selection clearing effect removed (redundant)
 
   const {
     viewerPhotos,
@@ -967,7 +955,7 @@ function App({ sharedLinkHash = null, initialPhotoName = null }) {
   const { activeFilterCount, hasActiveFilters } = useFilterCalculations(activeFilters);
 
   const hasAllSelection = allSelectedKeys instanceof Set && allSelectedKeys.size > 0;
-  const hasProjectSelection = selectedPhotos instanceof Set && selectedPhotos.size > 0;
+  const hasProjectSelection = allSelectedKeys instanceof Set && allSelectedKeys.size > 0;
 
   useLayoutEffect(() => {
     const el = stickyHeaderRef.current;
@@ -989,8 +977,18 @@ function App({ sharedLinkHash = null, initialPhotoName = null }) {
 
     window.addEventListener('resize', updateHeight);
     return () => window.removeEventListener('resize', updateHeight);
-  }, [filtersCollapsed, viewMode, view?.project_filter, hasPendingDeletes, showOptionsModal, hasActiveFilters, hasAllSelection, hasProjectSelection]);
+  }, []);
 
+  // Update document title with selection count
+  useEffect(() => {
+    const isAllMode = view?.project_filter === null;
+    const count = allSelectedKeys?.size || 0;
+    if (count > 0) {
+      document.title = `(${count}) Node.js Photo Manager`;
+    } else {
+      document.title = 'Node.js Photo Manager';
+    }
+  }, [allSelectedKeys, view?.project_filter]);
 
 
 
@@ -1013,12 +1011,11 @@ function App({ sharedLinkHash = null, initialPhotoName = null }) {
           <div className="bg-gray-50 overflow-x-hidden">
             {/* Selection Mode Banner (M2) - Show only for authenticated users when selections exist */}
             {isAuthenticated && (() => {
-              const isAllMode = view?.project_filter === null;
-              const count = isAllMode ? allSelectedKeys.size : selectedPhotos.size;
+              const count = allSelectedKeys?.size || 0;
               return count > 0 ? (
                 <SelectionModeBanner
                   selectedCount={count}
-                  onClearSelection={clearAllSelections}
+                  onClearSelection={clearAllSelection}
                 />
               ) : null;
             })()}
@@ -1255,6 +1252,7 @@ function App({ sharedLinkHash = null, initialPhotoName = null }) {
                                 allSelectedKeys={allSelectedKeys}
                                 allSelectedPhotos={allSelectedPhotos}
                                 setAllSelectedKeys={replaceAllSelection}
+                                clearSelection={clearAllSelection}
                                 allPhotos={allPhotos}
                                 config={config}
                                 trigger="label"
@@ -1272,13 +1270,7 @@ function App({ sharedLinkHash = null, initialPhotoName = null }) {
                                   photos: sortedPagedPhotos?.length > 0 ? sortedPagedPhotos : pagedPhotos
                                 }}
                                 selectedPhotos={allSelectedKeys}
-                                setSelectedPhotos={(newSet) => {
-                                  // OperationsMenu might try to set a Set of filenames
-                                  // We need to handle this if it happens, but ideally it should use unified methods
-                                  if (newSet instanceof Set && newSet.size === 0) {
-                                    clearAllSelection();
-                                  }
-                                }}
+                                clearSelection={clearAllSelection}
                                 allSelectedKeys={allSelectedKeys}
                                 allSelectedPhotos={allSelectedPhotos}
                                 setAllSelectedKeys={replaceAllSelection}
@@ -1317,7 +1309,16 @@ function App({ sharedLinkHash = null, initialPhotoName = null }) {
               onClose={(res) => {
                 setShowMoveModal(false);
                 if (res && res.moved) {
-                  const toRemove = new Set(Array.from(selectedPhotos || []));
+                  const toRemove = new Set();
+                  if (allSelectedKeys) {
+                    for (const key of allSelectedKeys) {
+                      const [folder, filename] = key.split('::');
+                      if (folder === selectedProject?.folder) {
+                        toRemove.add(filename);
+                      }
+                    }
+                  }
+
                   if (toRemove.size > 0) {
                     setProjectData(prev => {
                       if (!prev || !Array.isArray(prev.photos)) return prev;
@@ -1326,14 +1327,17 @@ function App({ sharedLinkHash = null, initialPhotoName = null }) {
                     });
                     mutatePagedPhotos(prev => Array.isArray(prev) ? prev.filter(p => !toRemove.has(p.filename)) : prev);
                   }
-                  setSelectedPhotos(new Set());
+                  clearAllSelection();
                 }
               }}
               sourceFolder={selectedProject ? selectedProject.folder : ''}
-              selectedFilenames={Array.from(selectedPhotos || [])}
+              selectedFilenames={Array.from(allSelectedKeys || []).map(k => {
+                const parts = k.split('::');
+                return parts.length > 1 ? parts[1] : k;
+              })}
               selectedProjectSummaries={(() => {
                 const folder = selectedProject?.folder ? [selectedProject.folder] : [];
-                return folder.map(f => ({ folder: f, count: selectedPhotos?.size || 0 }));
+                return folder.map(f => ({ folder: f, count: allSelectedKeys?.size || 0 }));
               })()}
             />
 
@@ -1356,7 +1360,7 @@ function App({ sharedLinkHash = null, initialPhotoName = null }) {
                       });
                     });
                   }
-                  appStateClearAllSelection();
+                  clearAllSelection();
                 }
               }}
               sourceFolder={''}
@@ -1403,7 +1407,7 @@ function App({ sharedLinkHash = null, initialPhotoName = null }) {
                             : photo
                         );
                       });
-                      appStateClearAllSelection();
+                      clearAllSelection();
                     } else {
                       // Update Project view
                       setProjectData(prev => {
@@ -1425,15 +1429,11 @@ function App({ sharedLinkHash = null, initialPhotoName = null }) {
                             : photo
                         );
                       });
-                      setSelectedPhotos(new Set());
+                      clearAllSelection();
                     }
                   } else {
                     // No photos to update, just clear selection
-                    if (view?.project_filter === null) {
-                      appStateClearAllSelection();
-                    } else {
-                      setSelectedPhotos(new Set());
-                    }
+                    clearAllSelection();
                   }
                 }
               }}
@@ -1453,10 +1453,18 @@ function App({ sharedLinkHash = null, initialPhotoName = null }) {
                   }));
                   return keys.map(k => map.get(k)).filter(Boolean);
                 } else {
-                  // Project mode - use selectedPhotos Set
+                  // Project mode - use allSelectedKeys
                   const photos = Array.isArray(projectData?.photos) ? projectData.photos : [];
-                  return Array.from(selectedPhotos || [])
-                    .map(filename => photos.find(p => p.filename === filename))
+                  const currentFolder = selectedProject?.folder;
+                  return Array.from(allSelectedKeys || [])
+                    .map(key => {
+                      // Key format: folder::filename
+                      const parts = key.split('::');
+                      if (parts.length === 2 && parts[0] === currentFolder) {
+                        return photos.find(p => p.filename === parts[1]);
+                      }
+                      return null;
+                    })
                     .filter(Boolean);
                 }
               })()}
@@ -1574,7 +1582,7 @@ function App({ sharedLinkHash = null, initialPhotoName = null }) {
                   startIndex={Number.isFinite(viewerState.startIndex) ? viewerState.startIndex : -1}
                   onClose={handleCloseViewer}
                   config={config}
-                  selectedPhotos={selectedPhotos}
+                  selectedPhotos={allSelectedKeys}
                   onToggleSelect={handleToggleSelection}
                   onKeepUpdated={handleKeepUpdated}
                   onCurrentIndexChange={handleViewerIndexChange}
@@ -1584,13 +1592,13 @@ function App({ sharedLinkHash = null, initialPhotoName = null }) {
                     const sourceFolder = photo?.project_folder || selectedProject?.folder || '';
                     const filename = photo?.filename;
                     if (!filename) return;
+
+                    setViewerState(prev => ({ ...(prev || {}), isOpen: false }));
+                    replaceAllSelection(new Set([`${sourceFolder}::${filename}`]));
+
                     if (view?.project_filter === null || viewerState.fromAll) {
-                      setViewerState(prev => ({ ...(prev || {}), isOpen: false }));
-                      replaceAllSelection(new Set([`${sourceFolder}::${filename}`]));
                       setShowAllMoveModal(true);
                     } else {
-                      setViewerState(prev => ({ ...(prev || {}), isOpen: false }));
-                      setSelectedPhotos(new Set([filename]));
                       setShowMoveModal(true);
                     }
                   }}
@@ -1615,13 +1623,10 @@ function App({ sharedLinkHash = null, initialPhotoName = null }) {
 
                     // Close viewer and open share modal with single photo
                     setViewerState(prev => ({ ...(prev || {}), isOpen: false }));
+
                     // Set selection to this single photo
-                    if (view?.project_filter === null || viewerState.fromAll) {
-                      const sourceFolder = photo?.project_folder || selectedProject?.folder || '';
-                      replaceAllSelection(new Set([`${sourceFolder}::${photo.filename}`]));
-                    } else {
-                      setSelectedPhotos(new Set([photo.filename]));
-                    }
+                    const sourceFolder = photo?.project_folder || selectedProject?.folder || '';
+                    replaceAllSelection(new Set([`${sourceFolder}::${photo.filename}`]));
                     setShowShareModal(true);
                   }}
                 />

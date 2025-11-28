@@ -21,7 +21,7 @@ export function useModeSwitching({
   ALL_PROJECT_SENTINEL,
   setSelectedProject,
   setProjectData,
-  setSelectedPhotos,
+  // setSelectedPhotos removed
   registerActiveProject,
   clearAllSelection,
   handleProjectSelect,
@@ -40,7 +40,7 @@ export function useModeSwitching({
     // Skip if view hasn't changed to avoid unnecessary updates
     if (prevViewRef.current === view?.project_filter) return;
     prevViewRef.current = view?.project_filter;
-    
+
     // All Photos mode
     if (view?.project_filter === null) {
       // Only update if not already in All Photos mode
@@ -48,31 +48,31 @@ export function useModeSwitching({
         previousProjectRef.current = selectedProject;
         setSelectedProject(ALL_PROJECT_SENTINEL);
         setProjectData(null);
-        setSelectedPhotos(new Set());
+        // setSelectedPhotos removed
         registerActiveProject(null);
-        
+
         // Clear selections
         if (selection?.length > 0) {
           setSelection([]);
         }
         clearAllSelection();
       }
-      
+
       // Always clear these refs
       pendingSelectProjectRef.current = null;
       pendingFolderRef.current = null;
       return;
     }
-    
+
     // Project mode - handle folder change
     const targetFolder = view.project_filter;
-    
+
     // Skip if already on the target project
     if (selectedProject?.folder === targetFolder) {
       pendingFolderRef.current = null;
       return;
     }
-    
+
     // Find the target project in the projects list
     const targetProject = projects.find(p => p.folder === targetFolder);
     if (targetProject) {
@@ -81,7 +81,7 @@ export function useModeSwitching({
       pendingFolderRef.current = null;
       return;
     }
-    
+
     // Projects list hasn't delivered this folder yet—keep it pending
     pendingFolderRef.current = targetFolder;
   }, [
@@ -92,7 +92,7 @@ export function useModeSwitching({
     ALL_PROJECT_SENTINEL,
     setSelectedProject,
     setProjectData,
-    setSelectedPhotos,
+    // setSelectedPhotos removed
     registerActiveProject,
     setSelection,
     clearAllSelection,

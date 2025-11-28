@@ -10,30 +10,32 @@ export class EventHandlersService {
     setProjects,
     setSelectedProject,
     setProjectData,
-    setSelectedPhotos,
+    // setSelectedPhotos removed
     setViewerState,
     setViewerList,
     setPendingSelectProjectRef,
-    
+
     // Data
     selectedProject,
     projects,
     projectData,
     filteredProjectData,
-    
+
     // Functions
     fetchProjectData,
     refreshPendingDeletes,
     mutatePagedPhotos,
     mutateAllPhotos,
-    
+    toggleSelection, // NEW
+    clearSelection,  // NEW
+
     // Constants
     ALL_PROJECT_SENTINEL
   }) {
     this.setProjects = setProjects;
     this.setSelectedProject = setSelectedProject;
     this.setProjectData = setProjectData;
-    this.setSelectedPhotos = setSelectedPhotos;
+    // this.setSelectedPhotos = setSelectedPhotos; // Removed
     this.setViewerState = setViewerState;
     this.setViewerList = setViewerList;
     this.setPendingSelectProjectRef = setPendingSelectProjectRef;
@@ -45,6 +47,8 @@ export class EventHandlersService {
     this.refreshPendingDeletes = refreshPendingDeletes;
     this.mutatePagedPhotos = mutatePagedPhotos;
     this.mutateAllPhotos = mutateAllPhotos;
+    this.toggleSelection = toggleSelection;
+    this.clearSelection = clearSelection;
     this.ALL_PROJECT_SENTINEL = ALL_PROJECT_SENTINEL;
   }
 
@@ -56,7 +60,7 @@ export class EventHandlersService {
         console.error('Project creation response missing folder:', created);
         return null;
       }
-      
+
       // Add to projects list
       const newProject = {
         id: created?.project?.id || created?.id,
@@ -64,9 +68,9 @@ export class EventHandlersService {
         name: created?.project?.name || projectName,
         ...created?.project
       };
-      
+
       this.setProjects(prev => [...prev, newProject]);
-      
+
       // Set as pending selection (will be picked up by project selection effect)
       this.setPendingSelectProjectRef(createdFolder);
 
@@ -83,7 +87,7 @@ export class EventHandlersService {
     if (currentFolder && currentFolder !== this.ALL_PROJECT_SENTINEL.folder) {
       const reload = this.fetchProjectData(currentFolder);
       Promise.resolve(reload)
-        .catch(() => {})
+        .catch(() => { })
         .finally(() => {
           // Additional cleanup if needed
         });
@@ -147,7 +151,7 @@ export class EventHandlersService {
 
     const startIndex = photos.findIndex(p => p?.filename === photo.filename);
     if (startIndex === -1) return;
-    
+
     this.setViewerState({
       isOpen: true,
       startIndex,
@@ -162,41 +166,41 @@ export class EventHandlersService {
       if (!prev) return prev;
       const updated = {
         ...prev,
-        photos: prev.photos.map(p => 
+        photos: prev.photos.map(p =>
           p.filename === filename ? { ...p, keep_jpg, keep_raw } : p
         )
       };
       return updated;
     });
-    
+
     // Update paged photos cache
     if (this.mutatePagedPhotos) {
       this.mutatePagedPhotos(prev => {
         if (!Array.isArray(prev)) return prev;
-        return prev.map(p => 
+        return prev.map(p =>
           p.filename === filename ? { ...p, keep_jpg, keep_raw } : p
         );
       });
     }
-    
+
     // Update all photos cache
     if (this.mutateAllPhotos) {
       this.mutateAllPhotos(prev => {
         if (!Array.isArray(prev)) return prev;
-        return prev.map(p => 
+        return prev.map(p =>
           p.filename === filename ? { ...p, keep_jpg, keep_raw } : p
         );
       });
     }
-    
+
     // Update viewer list if active
     this.setViewerList(prev => {
       if (!Array.isArray(prev)) return prev;
-      return prev.map(p => 
+      return prev.map(p =>
         p.filename === filename ? { ...p, keep_jpg, keep_raw } : p
       );
     });
-    
+
     // Refresh pending deletes count after keep flag change
     if (this.refreshPendingDeletes) {
       this.refreshPendingDeletes();
@@ -204,16 +208,11 @@ export class EventHandlersService {
   }
 
   handleToggleSelection(photo) {
-    this.setSelectedPhotos(prev => {
-      const newSelection = new Set(prev);
-      const photoId = photo.filename; // Use filename as unique identifier
-      if (newSelection.has(photoId)) {
-        newSelection.delete(photoId);
-      } else {
-        newSelection.add(photoId);
-      }
-      return newSelection;
-    });
+    if (this.toggleSelection) {
+      this.toggleSelection(photo);
+    } else {
+      console.warn('toggleSelection not available in EventHandlersService');
+    }
   }
 }
 
@@ -225,23 +224,25 @@ export function useEventHandlers({
   setProjects,
   setSelectedProject,
   setProjectData,
-  setSelectedPhotos,
+  // setSelectedPhotos removed
   setViewerState,
   setViewerList,
   setPendingSelectProjectRef,
-  
+
   // Data
   selectedProject,
   projects,
   projectData,
   filteredProjectData,
-  
+
   // Functions
   fetchProjectData,
   refreshPendingDeletes,
   mutatePagedPhotos,
   mutateAllPhotos,
-  
+  toggleSelection, // NEW
+  clearSelection,  // NEW
+
   // Constants
   ALL_PROJECT_SENTINEL
 }) {
@@ -249,7 +250,7 @@ export function useEventHandlers({
     setProjects,
     setSelectedProject,
     setProjectData,
-    setSelectedPhotos,
+    // setSelectedPhotos removed
     setViewerState,
     setViewerList,
     setPendingSelectProjectRef,
@@ -261,6 +262,8 @@ export function useEventHandlers({
     refreshPendingDeletes,
     mutatePagedPhotos,
     mutateAllPhotos,
+    toggleSelection,
+    clearSelection,
     ALL_PROJECT_SENTINEL
   });
 

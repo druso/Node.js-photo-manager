@@ -28,7 +28,7 @@ const PhotoViewer = ({
   const [currentIndex, setCurrentIndex] = useState(startIndex);
   const [zoomPercent, setZoomPercent] = useState(0); // 0 = Fit, 100 = Actual size, 200 = 2x
   const [position, setPosition] = useState({ x: 0, y: 0 });
-  
+
   // Read showInfo from URL parameter or sessionStorage
   const [showInfo, setShowInfo] = useState(() => {
     try {
@@ -39,7 +39,7 @@ const PhotoViewer = ({
         console.log('[PhotoViewer] Opening with detail panel from URL');
         return true;
       }
-      
+
       // Fallback to checking URL directly
       const params = new URLSearchParams(window.location.search);
       return params.get('showdetail') === '1';
@@ -61,10 +61,10 @@ const PhotoViewer = ({
   const pointerRef = useRef({ x: 0, y: 0 });
   const positionRef = useRef(position);
   const swipeRef = useRef({ active: false, startX: 0, startY: 0, lastX: 0, lastY: 0, startTime: 0 });
-const toast = useToast();
+  const toast = useToast();
 
-const photos = projectData?.photos || [];
-const currentPhoto = photos[currentIndex];
+  const photos = projectData?.photos || [];
+  const currentPhoto = photos[currentIndex];
 
   // Auto-advance if current photo is filtered out (e.g., planned for deletion in preview mode)
   useEffect(() => {
@@ -73,7 +73,7 @@ const currentPhoto = photos[currentIndex];
       if (onClose) onClose();
       return;
     }
-    
+
     // If current index is out of bounds, clamp to valid range
     if (currentIndex >= photos.length) {
       setCurrentIndex(Math.max(0, photos.length - 1));
@@ -105,7 +105,7 @@ const currentPhoto = photos[currentIndex];
   useEffect(() => { positionRef.current = position; }, [position]);
 
   // Clamp position so image cannot go outside the screen
-  const clampPosition = useCallback((x, y, scaleOverride=null) => {
+  const clampPosition = useCallback((x, y, scaleOverride = null) => {
     const el = containerRef.current;
     if (!el || !naturalSize.w || !naturalSize.h) return { x, y };
     const rect = el.getBoundingClientRect();
@@ -160,7 +160,7 @@ const currentPhoto = photos[currentIndex];
   }, [photos.length]);
 
   // Toasts handled globally via ToastProvider
-  
+
   // showInfo is now managed via URL parameter (handled by useUrlSync in App.jsx)
   // Notify parent when showInfo changes so it can update the URL
   useEffect(() => {
@@ -168,7 +168,7 @@ const currentPhoto = photos[currentIndex];
       onShowInfoChange(showInfo);
     }
   }, [showInfo, onShowInfoChange]);
-  
+
   // On mount, if showInfo is true, notify parent immediately
   useEffect(() => {
     if (showInfo && onShowInfoChange) {
@@ -284,7 +284,7 @@ const currentPhoto = photos[currentIndex];
       document.body.style.touchAction = prevTouchAction;
     };
   }, []);
-  
+
   useEffect(() => {
     // Reset index if startIndex changes
     setCurrentIndex(startIndex);
@@ -319,13 +319,13 @@ const currentPhoto = photos[currentIndex];
     const el = containerRef.current;
     const img = imgRef.current;
     if (!el) return 1;
-    
+
     // Use naturalWidth/Height from img element if available
     const imgW = img?.naturalWidth || naturalSize.w;
     const imgH = img?.naturalHeight || naturalSize.h;
-    
+
     if (!imgW || !imgH) return 1;
-    
+
     const cw = el.clientWidth;
     const ch = el.clientHeight;
     const scale = Math.min(cw / imgW, ch / imgH);
@@ -550,7 +550,7 @@ const currentPhoto = photos[currentIndex];
     // Cleanup: abort any in-flight by clearing src
     return () => {
       for (const img of created) {
-        try { img.src = ''; } catch (_) {}
+        try { img.src = ''; } catch (_) { }
       }
     };
   }, [currentIndex, photos, projectFolder, usePreview, config?.viewer?.preload_count, fromAllMode]);
@@ -570,9 +570,14 @@ const currentPhoto = photos[currentIndex];
     return null;
   }
 
-  // RAW-only when we have a RAW but no JPG rendition available
   const isRawFile = !!currentPhoto?.raw_available && !currentPhoto?.jpg_available;
-  const isSelected = !!selectedPhotos?.has && selectedPhotos.has(currentPhoto.filename);
+  const isSelected = useMemo(() => {
+    if (!selectedPhotos || !currentPhoto) return false;
+    if (selectedPhotos.has(currentPhoto.filename)) return true;
+    const folder = currentPhoto.project_folder || projectFolder;
+    if (folder && selectedPhotos.has(`${folder}::${currentPhoto.filename}`)) return true;
+    return false;
+  }, [selectedPhotos, currentPhoto, projectFolder]);
   const onImgLoad = (e) => {
     setNaturalSize({ w: e.target.naturalWidth, h: e.target.naturalHeight });
   };
@@ -659,7 +664,7 @@ const currentPhoto = photos[currentIndex];
   return (
     <div className="fixed inset-0 bg-black/90 z-50 flex" onClick={handleBackdropClick} style={{ overscrollBehavior: 'contain' }}>
       {/* Toolbar (right-aligned) - adjusted for mobile, ALWAYS on top */}
-      <div className="absolute top-3 left-3 right-3 z-[60] flex items-center justify-between sm:justify-end pointer-events-none" onMouseDown={(e)=>e.stopPropagation()} onClick={(e)=>e.stopPropagation()} style={{ touchAction: 'auto' }}>
+      <div className="absolute top-3 left-3 right-3 z-[60] flex items-center justify-between sm:justify-end pointer-events-none" onMouseDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()} style={{ touchAction: 'auto' }}>
         {/* Left section: close button (mobile only) */}
         <div className="flex sm:hidden pointer-events-auto">
           <button onClick={onClose} className="h-9 w-9 inline-flex items-center justify-center rounded-md bg-red-600 text-white shadow hover:bg-red-700" title="Close">
@@ -668,7 +673,7 @@ const currentPhoto = photos[currentIndex];
             </svg>
           </button>
         </div>
-        
+
         {/* Right section: details + close (desktop) */}
         <div className="flex items-center gap-2 pointer-events-auto">
           {/* Detail toggle */}
@@ -688,25 +693,25 @@ const currentPhoto = photos[currentIndex];
         </div>
       </div>
 
-      <div ref={containerRef} className={`flex-1 w-full h-full flex items-center justify-center relative ${isPanning ? 'cursor-grabbing' : (zoomPercent > 0 ? 'cursor-grab' : '')}`} onMouseDown={onMouseDown} onMouseMove={onMouseMove} onMouseUp={onMouseUp} onMouseLeave={onMouseUp} onClick={(e)=>{ if (e.target === e.currentTarget) onClose(); }} style={{ overflow: 'visible', touchAction: 'none' }}>
+      <div ref={containerRef} className={`flex-1 w-full h-full flex items-center justify-center relative ${isPanning ? 'cursor-grabbing' : (zoomPercent > 0 ? 'cursor-grab' : '')}`} onMouseDown={onMouseDown} onMouseMove={onMouseMove} onMouseUp={onMouseUp} onMouseLeave={onMouseUp} onClick={(e) => { if (e.target === e.currentTarget) onClose(); }} style={{ overflow: 'visible', touchAction: 'none' }}>
         {/* Prev/Next inside image container */}
         <button
           type="button"
           data-viewer-control="true"
-          onClick={(e)=>{e.stopPropagation(); prevPhoto();}}
-          onTouchEnd={(e)=>{ e.preventDefault(); e.stopPropagation(); prevPhoto(); }}
-          onPointerDown={(e)=>{e.stopPropagation();}}
-          onTouchStart={(e)=>{e.stopPropagation();}}
+          onClick={(e) => { e.stopPropagation(); prevPhoto(); }}
+          onTouchEnd={(e) => { e.preventDefault(); e.stopPropagation(); prevPhoto(); }}
+          onPointerDown={(e) => { e.stopPropagation(); }}
+          onTouchStart={(e) => { e.stopPropagation(); }}
           className="absolute left-2 sm:left-4 top-1/2 -translate-y-1/2 text-white text-3xl sm:text-4xl z-40 bg-black/40 p-2 rounded-full hover:bg-black/60"
           style={{ touchAction: 'manipulation', pointerEvents: 'auto' }}
         >&#10094;</button>
         <button
           type="button"
           data-viewer-control="true"
-          onClick={(e)=>{e.stopPropagation(); nextPhoto();}}
-          onTouchEnd={(e)=>{ e.preventDefault(); e.stopPropagation(); nextPhoto(); }}
-          onPointerDown={(e)=>{e.stopPropagation();}}
-          onTouchStart={(e)=>{e.stopPropagation();}}
+          onClick={(e) => { e.stopPropagation(); nextPhoto(); }}
+          onTouchEnd={(e) => { e.preventDefault(); e.stopPropagation(); nextPhoto(); }}
+          onPointerDown={(e) => { e.stopPropagation(); }}
+          onTouchStart={(e) => { e.stopPropagation(); }}
           className="absolute right-2 sm:right-4 top-1/2 -translate-y-1/2 text-white text-3xl sm:text-4xl z-40 bg-black/40 p-2 rounded-full hover:bg-black/60"
           style={{ touchAction: 'manipulation', pointerEvents: 'auto' }}
         >&#10095;</button>
@@ -721,33 +726,33 @@ const currentPhoto = photos[currentIndex];
         )}
         {isRawFile ? (
           // RAW file placeholder
-          <div className="flex flex-col items-center justify-center text-white" onMouseDown={(e)=>e.stopPropagation()} onClick={(e)=>e.stopPropagation()}>
+          <div className="flex flex-col items-center justify-center text-white" onMouseDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
             <svg className="w-32 h-32 mb-4" fill="currentColor" viewBox="0 0 20 20">
               <path fillRule="evenodd" d="M4 3a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V5a2 2 0 00-2-2H4zm12 12H4l4-8 3 6 2-4 3 6z" clipRule="evenodd" />
             </svg>
             <h3 className="text-2xl font-bold mb-2">RAW File</h3>
             <p className="text-lg opacity-75 mb-4">{currentPhoto.filename.split('.').pop().toUpperCase()} Format</p>
             <p className="text-sm opacity-50 text-center max-w-md">
-              This is a RAW camera file. Preview is not available.<br/>
+              This is a RAW camera file. Preview is not available.<br />
               Use your preferred RAW editor to view and process this image.
             </p>
           </div>
         ) : (
           // Regular image
           <>
-            <img 
+            <img
               key={imageSrc}
               ref={imgRef}
               src={imageSrc}
               alt={currentPhoto.filename}
-              onLoad={(e)=>{ onImgLoad(e); setImageLoading(false); }}
-              style={{ 
+              onLoad={(e) => { onImgLoad(e); setImageLoading(false); }}
+              style={{
                 position: 'absolute',
                 top: '50%',
                 left: '50%',
                 width: naturalSize.w ? `${naturalSize.w}px` : 'auto',
                 height: naturalSize.h ? `${naturalSize.h}px` : 'auto',
-                transform: `translate(-50%, -50%) translate3d(${position.x}px, ${position.y}px, 0) scale(${effectiveScale})`, 
+                transform: `translate(-50%, -50%) translate3d(${position.x}px, ${position.y}px, 0) scale(${effectiveScale})`,
                 transformOrigin: 'center center',
                 willChange: 'transform',
                 maxWidth: 'none',
@@ -770,7 +775,7 @@ const currentPhoto = photos[currentIndex];
                 setImageLoading(false);
               }}
             />
-            <div className="flex flex-col items-center justify-center text-white" style={{display: 'none'}}>
+            <div className="flex flex-col items-center justify-center text-white" style={{ display: 'none' }}>
               <svg className="w-32 h-32 mb-4" fill="currentColor" viewBox="0 0 20 20">
                 <path fillRule="evenodd" d="M4 3a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V5a2 2 0 00-2-2H4zm12 12H4l4-8 3 6 2-4 3 6z" clipRule="evenodd" />
               </svg>
@@ -783,23 +788,23 @@ const currentPhoto = photos[currentIndex];
         )}
 
         {/* Bottom controls: moved inside image container so they stay centered over the image area */}
-        <div className="absolute bottom-4 inset-x-0 flex justify-center text-white" onMouseDown={(e)=>e.stopPropagation()} onClick={(e)=>e.stopPropagation()} onPointerDown={(e)=>e.stopPropagation()} onTouchStart={(e)=>e.stopPropagation()} style={{ touchAction: 'manipulation', pointerEvents: 'auto' }}>
+        <div className="absolute bottom-4 inset-x-0 flex justify-center text-white" onMouseDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()} onPointerDown={(e) => e.stopPropagation()} onTouchStart={(e) => e.stopPropagation()} style={{ touchAction: 'manipulation', pointerEvents: 'auto' }}>
           <div className="bg-black/60 backdrop-blur px-3 py-2 rounded-md flex items-center gap-3 shadow-lg" style={{ pointerEvents: 'auto' }} data-viewer-control="true">
-          <button className="px-2 py-1 text-xs rounded bg-white/90 text-gray-800" type="button" data-viewer-control="true" onClick={() => { setZoomPercent(0); setPosition({x:0,y:0}); }} onTouchEnd={(e)=>{ e.preventDefault(); e.stopPropagation(); setZoomPercent(0); setPosition({x:0,y:0}); }} title="Fit to screen" style={{ touchAction: 'manipulation', pointerEvents: 'auto' }}>Fit</button>
-          <input
-            type="range"
-            min={0}
-            max={200}
-            step={1}
-            value={zoomPercent}
-            onChange={(e) => setZoomPercent(parseInt(e.target.value, 10))}
-            onInput={(e) => setZoomPercent(parseInt(e.currentTarget.value, 10))}
-            onPointerDown={(e)=>{ e.stopPropagation(); }}
-            onTouchStart={(e)=>{ e.stopPropagation(); }}
-            style={{ touchAction: 'manipulation', pointerEvents: 'auto' }}
-            data-viewer-control="true"
-          />
-          <span className="text-xs">{zoomPercent}%</span>
+            <button className="px-2 py-1 text-xs rounded bg-white/90 text-gray-800" type="button" data-viewer-control="true" onClick={() => { setZoomPercent(0); setPosition({ x: 0, y: 0 }); }} onTouchEnd={(e) => { e.preventDefault(); e.stopPropagation(); setZoomPercent(0); setPosition({ x: 0, y: 0 }); }} title="Fit to screen" style={{ touchAction: 'manipulation', pointerEvents: 'auto' }}>Fit</button>
+            <input
+              type="range"
+              min={0}
+              max={200}
+              step={1}
+              value={zoomPercent}
+              onChange={(e) => setZoomPercent(parseInt(e.target.value, 10))}
+              onInput={(e) => setZoomPercent(parseInt(e.currentTarget.value, 10))}
+              onPointerDown={(e) => { e.stopPropagation(); }}
+              onTouchStart={(e) => { e.stopPropagation(); }}
+              style={{ touchAction: 'manipulation', pointerEvents: 'auto' }}
+              data-viewer-control="true"
+            />
+            <span className="text-xs">{zoomPercent}%</span>
           </div>
         </div>
       </div>
@@ -810,8 +815,8 @@ const currentPhoto = photos[currentIndex];
         <div
           className="fixed sm:relative inset-0 sm:inset-auto w-full sm:w-96 md:w-80 h-full bg-white text-gray-800 px-4 shadow-xl z-50 pt-16 pb-4 overflow-auto"
           aria-hidden={false}
-          onMouseDown={(e)=>e.stopPropagation()}
-          onClick={(e)=>e.stopPropagation()}
+          onMouseDown={(e) => e.stopPropagation()}
+          onClick={(e) => e.stopPropagation()}
         >
           {/* Content moved inside conditional render */}
           {/* Project context - hide Move button in public view */}
@@ -902,7 +907,7 @@ const currentPhoto = photos[currentIndex];
                   </>
                 );
               })()}
-              
+
               <div className="col-span-3 text-xs text-gray-500">
                 {(() => {
                   const ks = config?.keyboard_shortcuts || {};
@@ -963,7 +968,7 @@ const currentPhoto = photos[currentIndex];
                 const cameraMake = meta.camera_make || meta.make || meta.Make;
                 const width = meta.exif_image_width || meta.ExifImageWidth || meta.ImageWidth;
                 const height = meta.exif_image_height || meta.ExifImageHeight || meta.ImageHeight;
-                
+
                 return (
                   <>
                     {dateDisplay && (
@@ -1030,13 +1035,13 @@ const currentPhoto = photos[currentIndex];
                 // Also filter out fields we've already shown above
                 const excludeKeys = ['create_date', 'modify_date', 'camera_model', 'camera_make', 'model', 'make', 'Model', 'Make', 'exif_image_width', 'exif_image_height', 'ExifImageWidth', 'ExifImageHeight', 'ImageWidth', 'ImageHeight'];
                 const metaEntries = Object.entries(meta).filter(([k]) => !excludeKeys.includes(k));
-                const photoEntries = Object.entries(currentPhoto).filter(([k]) => !['tags','metadata','exif','filename','created_at','updated_at','date_time_original'].includes(k));
+                const photoEntries = Object.entries(currentPhoto).filter(([k]) => !['tags', 'metadata', 'exif', 'filename', 'created_at', 'updated_at', 'date_time_original'].includes(k));
                 const allEntries = [...metaEntries, ...photoEntries];
-                
+
                 if (!allEntries.length) {
                   return <div className="text-gray-500">No additional details</div>;
                 }
-                
+
                 const fmtDate = (v) => { const d = new Date(v); return isNaN(d.getTime()) ? String(v) : d.toLocaleString(); };
                 return allEntries.map(([k, v]) => (
                   <div key={k} className="flex justify-between gap-2">
@@ -1056,45 +1061,45 @@ const currentPhoto = photos[currentIndex];
                 disabled={!currentPhoto.jpg_available}
                 title={currentPhoto.jpg_available ? 'Download JPG' : 'JPG not available'}
                 onClick={async () => {
-                const r = await authFetch(`/api/projects/${encodeURIComponent(projectFolder)}/download-url`, {
-                  method: 'POST', headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ filename: currentPhoto.filename, type: 'jpg' })
-                });
-                const { url } = await r.json();
-                await fetchAndSave(url);
-              }}
+                  const r = await authFetch(`/api/projects/${encodeURIComponent(projectFolder)}/download-url`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ filename: currentPhoto.filename, type: 'jpg' })
+                  });
+                  const { url } = await r.json();
+                  await fetchAndSave(url);
+                }}
               >Download JPG</button>
               <button
                 className={`w-full px-4 py-2 rounded-md text-white ${currentPhoto.raw_available ? 'bg-gray-900 hover:bg-black' : 'bg-gray-300 cursor-not-allowed'}`}
                 disabled={!currentPhoto.raw_available}
                 title={currentPhoto.raw_available ? 'Download RAW' : 'RAW not available'}
                 onClick={async () => {
-                const r = await authFetch(`/api/projects/${encodeURIComponent(projectFolder)}/download-url`, {
-                  method: 'POST', headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ filename: currentPhoto.filename, type: 'raw' })
-                });
-                const { url } = await r.json();
-                await fetchAndSave(url);
-              }}
+                  const r = await authFetch(`/api/projects/${encodeURIComponent(projectFolder)}/download-url`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ filename: currentPhoto.filename, type: 'raw' })
+                  });
+                  const { url } = await r.json();
+                  await fetchAndSave(url);
+                }}
               >Download RAW</button>
               <button
-                className={`w-full px-4 py-2 rounded-md border ${ (currentPhoto.jpg_available || currentPhoto.raw_available) ? 'bg-white hover:bg-gray-50' : 'bg-gray-100 cursor-not-allowed'}`}
+                className={`w-full px-4 py-2 rounded-md border ${(currentPhoto.jpg_available || currentPhoto.raw_available) ? 'bg-white hover:bg-gray-50' : 'bg-gray-100 cursor-not-allowed'}`}
                 disabled={!(currentPhoto.jpg_available || currentPhoto.raw_available)}
                 title={(currentPhoto.jpg_available || currentPhoto.raw_available) ? 'Download all available as ZIP' : 'No files available to download'}
                 onClick={async () => {
-                const r = await authFetch(`/api/projects/${encodeURIComponent(projectFolder)}/download-url`, {
-                  method: 'POST', headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ filename: currentPhoto.filename, type: 'zip' })
-                });
-                const { url } = await r.json();
-                await fetchAndSave(url);
-              }}
+                  const r = await authFetch(`/api/projects/${encodeURIComponent(projectFolder)}/download-url`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ filename: currentPhoto.filename, type: 'zip' })
+                  });
+                  const { url } = await r.json();
+                  await fetchAndSave(url);
+                }}
               >Download All (ZIP)</button>
             </div>
           </details>
-          
+
           {/* Filename area: chip + clickable filename badge (toggle selection) - hide selection in public view */}
-          <div className="absolute bottom-4 right-4 flex items-center gap-2" onMouseDown={(e)=>e.stopPropagation()} onClick={(e)=>e.stopPropagation()}>
+          <div className="absolute bottom-4 right-4 flex items-center gap-2" onMouseDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
             {!isPublicView && isSelected && (
               <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-[10px] leading-none bg-blue-100 text-blue-800 border border-blue-200 select-none shadow">
                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-3.5 h-3.5">
@@ -1110,7 +1115,7 @@ const currentPhoto = photos[currentIndex];
             ) : (
               <button
                 className={`text-white bg-black/60 px-4 py-2 rounded-md text-xs select-none cursor-pointer border ${isSelected ? 'border-blue-500' : 'border-transparent'} shadow-lg`}
-                onClick={(e)=>{ e.stopPropagation(); if (onToggleSelect) onToggleSelect(currentPhoto); }}
+                onClick={(e) => { e.stopPropagation(); if (onToggleSelect) onToggleSelect(currentPhoto); }}
                 title={isSelected ? 'Click to unselect' : 'Click to select'}
               >
                 {currentPhoto.filename}

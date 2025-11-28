@@ -45,26 +45,13 @@ export function useAppState() {
   const [viewerList, setViewerList] = useState(null);
 
   // Selection state
-  const [selectedPhotos, setSelectedPhotos] = useState(new Set());
-  const [allSelectedKeys, setAllSelectedKeys] = useState(new Set());
+  // selectedPhotos removed
+  // allSelectedKeys removed
   const [selectionMode, setSelectionMode] = useState(false); // M2: Long-press selection mode
-  
+
   // Selection helpers
-  const clearAllSelection = useMemo(() => () => {
-    setAllSelectedKeys(new Set());
-  }, []);
-  
-  const toggleAllSelection = useMemo(() => (key, force) => {
-    setAllSelectedKeys(prev => {
-      const next = new Set(prev);
-      if (force === true || (force === undefined && !next.has(key))) {
-        next.add(key);
-      } else {
-        next.delete(key);
-      }
-      return next;
-    });
-  }, []);
+  // clearAllSelection removed
+  // toggleAllSelection removed
 
   // Unified view context
   const [view, setView] = useState({
@@ -94,11 +81,11 @@ export function useAppState() {
   const notifiedTasksRef = useRef(new Set());
 
   // All Photos pending deletions state (independent of filtered view)
-  const [allPendingDeletes, setAllPendingDeletes] = useState({ 
-    jpg: 0, 
-    raw: 0, 
-    total: 0, 
-    byProject: new Set() 
+  const [allPendingDeletes, setAllPendingDeletes] = useState({
+    jpg: 0,
+    raw: 0,
+    total: 0,
+    byProject: new Set()
   });
 
   // UI preferences state
@@ -125,27 +112,14 @@ export function useAppState() {
   const updateProjectFilter = useMemo(() => (newFilter) => {
     setView(prev => ({ ...prev, project_filter: newFilter }));
   }, []);
-  
+
   // Active project tracking
   const [activeProject, setActiveProject] = useState(null);
   const registerActiveProject = useMemo(() => (project) => {
     setActiveProject(project);
   }, []);
 
-  // Sync legacy selection state with unified selection
-  const syncSelectionFromLegacy = useMemo(() => () => {
-    if (view.project_filter === null) {
-      // All Photos mode - convert from allSelectedKeys format
-      // This would be handled in App.jsx where allSelectedKeys is defined
-    } else {
-      // Project mode - convert from selectedPhotos format
-      const newSelection = Array.from(selectedPhotos).map(filename => ({
-        project_folder: view.project_filter,
-        filename
-      }));
-      setSelection(newSelection);
-    }
-  }, [selectedPhotos, view.project_filter]);
+  // Sync legacy selection state with unified selection - REMOVED
 
   // Sync move modal state
   const syncMoveModalState = useMemo(() => () => {
@@ -214,15 +188,13 @@ export function useAppState() {
     setViewerList,
 
     // Selection state
-    selectedPhotos,
-    setSelectedPhotos,
-    allSelectedKeys,
-    setAllSelectedKeys,
+    // selectedPhotos removed
+    // allSelectedKeys removed
     selectionMode,
     setSelectionMode,
-    clearAllSelection,
-    toggleAllSelection,
-    
+    // clearAllSelection removed
+    // toggleAllSelection removed
+
     // Active project tracking
     activeProject,
     setActiveProject,

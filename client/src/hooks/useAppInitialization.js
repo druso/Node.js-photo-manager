@@ -47,18 +47,18 @@ export function useAppInitialization({
   setSortKey,
   setSortDir,
   setNotFound,
-  
+
   // Unified view context
   view,
   setView,
   updateProjectFilter,
-  
+
   // Current state
   projects,
   selectedProject,
   config,
   activeFilters,
-  
+
   // Refs
   uiPrefsLoadedRef,
   uiPrefsReadyRef,
@@ -68,7 +68,7 @@ export function useAppInitialization({
   mainRef,
   pendingOpenRef,
   projectLocateTriedRef,
-  
+
   // Other dependencies
   ALL_PROJECT_SENTINEL,
   DEBUG_PERSIST = false
@@ -104,7 +104,7 @@ export function useAppInitialization({
     let alive = true;
     fetchTaskDefinitions()
       .then(d => { if (alive) setTaskDefs(d || {}); })
-      .catch(() => {});
+      .catch(() => { });
     return () => { alive = false; };
   }, [setTaskDefs]);
 
@@ -114,7 +114,7 @@ export function useAppInitialization({
       const path = window.location?.pathname || '';
       const qs = window.location?.search || '';
       const params = new URLSearchParams(qs);
-      
+
       // Parse filter parameters from URL
       const urlFilters = {};
       const dateFrom = params.get('date_from');
@@ -128,12 +128,12 @@ export function useAppInitialization({
       if (keepType && keepType !== 'any') urlFilters.keepType = keepType;
       const orientation = params.get('orientation');
       if (orientation && orientation !== 'any') urlFilters.orientation = orientation;
-      
+
       // Apply URL filters if any were found
       if (Object.keys(urlFilters).length > 0) {
         setActiveFilters(prev => ({ ...prev, ...urlFilters }));
       }
-      
+
       // Parse sort parameters from URL
       const urlSort = params.get('sort');
       const urlDir = params.get('dir');
@@ -143,7 +143,7 @@ export function useAppInitialization({
       if (urlDir && (urlDir === 'asc' || urlDir === 'desc')) {
         setSortDir(urlDir);
       }
-      
+
       // Parse showdetail parameter for viewer - will be applied when viewer opens
       const showDetail = params.get('showdetail') === '1';
       if (showDetail) {
@@ -151,22 +151,23 @@ export function useAppInitialization({
         // Store in sessionStorage so PhotoViewer can read it
         try {
           sessionStorage.setItem('viewer_show_detail_from_url', '1');
-        } catch {}
+        } catch { }
       }
-      
+
       // Check for All Photos mode
       if (path === '/all' || params.get('mode') === 'all') {
         // Set unified view context
         updateProjectFilter(null);
         return;
       }
-      
+
       // Handle project-specific URLs and viewer deep links
       // First check for /project/folder pattern
       let match = path.match(/^\/project\/([^\/]+)(?:\/photo\/(.+))?$/);
 
       // If not found, check for direct /folder or /folder/filename pattern
-      if (!match && path && path !== '/') {
+      // Ignore /shared paths as they are handled by SharedLinkRoute
+      if (!match && path && path !== '/' && !path.startsWith('/shared/')) {
         const withoutLeadingSlash = path.startsWith('/') ? path.slice(1) : path;
         if (withoutLeadingSlash) {
           const segments = withoutLeadingSlash.split('/');
@@ -225,11 +226,11 @@ export function useAppInitialization({
 
   // Persist view context
   useEffect(() => {
-    try { 
+    try {
       // Store using the unified view context
       const isAllPhotosView = view.project_filter === null;
-      localStorage.setItem('all_mode', isAllPhotosView ? '1' : '0'); 
-    } catch {}
+      localStorage.setItem('all_mode', isAllPhotosView ? '1' : '0');
+    } catch { }
   }, [view.project_filter]);
 
   // Load UI prefs from localStorage on mount (only viewMode and sizeLevel)
@@ -237,19 +238,19 @@ export function useAppInitialization({
   useEffect(() => {
     try {
       const raw = localStorage.getItem('ui_prefs');
-      if (!raw) { 
-        if (DEBUG_PERSIST) console.debug('[persist] no ui_prefs found'); 
-        uiPrefsReadyRef.current = true; 
-        return; 
+      if (!raw) {
+        if (DEBUG_PERSIST) console.debug('[persist] no ui_prefs found');
+        uiPrefsReadyRef.current = true;
+        return;
       }
-      
+
       const prefs = JSON.parse(raw);
       if (DEBUG_PERSIST) console.debug('[persist] loaded ui_prefs:', prefs);
-      
+
       if (prefs.viewMode) setViewMode(prefs.viewMode);
       if (prefs.sizeLevel) setSizeLevel(prefs.sizeLevel);
       // filtersCollapsed and activeFilters are no longer loaded from localStorage
-      
+
       uiPrefsLoadedRef.current = true;
     } catch (error) {
       if (DEBUG_PERSIST) console.debug('[persist] failed to load ui_prefs:', error);
@@ -273,7 +274,7 @@ export function useAppInitialization({
     // Use unified view context to determine if we're in All Photos view
     const isAllPhotosView = view.project_filter === null;
     if (isAllPhotosView) return;
-    
+
     if (projects.length > 0 && !selectedProject) {
       // First check if we have a project filter from the URL
       if (view.project_filter) {
@@ -298,7 +299,7 @@ export function useAppInitialization({
             updateProjectFilter(projectFromUrl.folder);
             try {
               window.history.replaceState({}, '', `/${encodeURIComponent(projectFromUrl.folder)}`);
-            } catch {}
+            } catch { }
           }
 
           if (import.meta?.env?.DEV) {
@@ -319,7 +320,7 @@ export function useAppInitialization({
         });
         return;
       }
-      
+
       // Prefer pending selection set by creation flow
       const pendingFolder = setPendingSelectProjectRef?.current;
       if (pendingFolder) {
@@ -330,7 +331,7 @@ export function useAppInitialization({
           return;
         }
       }
-      
+
       // Fall back to last project or first project
       const remember = config?.ui?.remember_last_project !== false;
       if (remember) {
@@ -341,7 +342,7 @@ export function useAppInitialization({
           return;
         }
       }
-      
+
       // Default to first project
       if (projects[0]) {
         setSelectedProject(projects[0]);
@@ -365,7 +366,7 @@ export function useAppInitialization({
     // Use unified view context to determine if we're in All Photos view
     const isAllPhotosView = view.project_filter === null;
     if (!isAllPhotosView) return;
-    
+
     // Debounce: wait 500ms after last filter change before fetching
     const timeoutId = setTimeout(() => {
       const fetchPendingDeletes = async () => {
@@ -392,7 +393,7 @@ export function useAppInitialization({
 
       fetchPendingDeletes();
     }, 500);
-    
+
     return () => clearTimeout(timeoutId);
   }, [view.project_filter, activeFilters?.dateRange, activeFilters?.fileType, activeFilters?.orientation, setAllPendingDeletes]);
 
@@ -404,7 +405,7 @@ export function useAppInitialization({
       if (st && typeof st.windowY === 'number') {
         initialSavedYRef.current = st.windowY;
       }
-    } catch {}
+    } catch { }
   }, [initialSavedYRef]);
 
   // Re-apply saved window scroll once after initial content render
@@ -412,14 +413,14 @@ export function useAppInitialization({
     if (windowScrollRestoredRef.current) return;
     if (initialSavedYRef.current == null) return;
     const y = initialSavedYRef.current;
-    
+
     const restore = () => {
       try {
         window.scrollTo(0, y);
         windowScrollRestoredRef.current = true;
-      } catch {}
+      } catch { }
     };
-    
+
     // Try immediate, then with delays for content loading
     restore();
     setTimeout(restore, 50);
