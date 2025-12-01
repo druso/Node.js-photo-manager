@@ -600,6 +600,7 @@ This ensures all functionality receives security review before deployment.
 
 ## Document History
 
+- **2025-12-01**: Fix Image Download - Added dedicated download button to PhotoViewer using signed URLs (`/api/projects/:folder/download-url`) to ensure secure and correct file downloads (JPG/RAW), resolving an issue where `pointer-events: none` prevented context menu downloads.
 - **2025-11-23**: Weekly security review - verified SSE limits (resolved), confirmed 'Select All' limit issue still open, verified recent maintenance/lifecycle changes, validated npm security status.
 - **2025-11-17**: Derivative cache validation & auto-regeneration - implemented hourly cache validation in maintenance worker to detect and fix cache inconsistencies; added automatic derivative regeneration for photos with `status='missing'`; fixed derivative worker to handle `'missing'` status; fixed frontend bug where "Regenerate Derivatives" wasn't passing `force=true`; system is now self-healing and recovers automatically from missing derivative files
 - **2025-11-17**: 404 error handling - implemented proper 404 pages for non-existent URLs (projects, shared links, etc.); frontend validates project existence in `useAppInitialization` and displays user-friendly `NotFound` component; server already returns proper 404 status codes for all resource endpoints

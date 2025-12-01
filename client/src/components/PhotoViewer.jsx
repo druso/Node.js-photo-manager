@@ -644,6 +644,36 @@ const PhotoViewer = ({
     return buildLocalUrl(folder, type, filename, versionToken);
   }, [currentPhoto, currentIndex, usePreview, filenameWithExtForImage, resolveFolderForPhoto, buildLocalUrl, ensurePublicAssets, getAssetUrl, appendVersion]);
 
+  const handleDownload = useCallback(async () => {
+    if (!currentPhoto) return;
+    const folder = resolveFolderForPhoto(currentPhoto);
+    if (!folder) return;
+
+    // Prefer JPG, then RAW
+    const type = currentPhoto.jpg_available ? 'jpg' : (currentPhoto.raw_available ? 'raw' : null);
+    if (!type) {
+      alert('No downloadable file found.');
+      return;
+    }
+
+    try {
+      // Get signed URL first
+      const res = await authFetch(`/api/projects/${encodeURIComponent(folder)}/download-url`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filename: currentPhoto.filename, type })
+      });
+      if (!res.ok) {
+        throw new Error('Failed to get download URL');
+      }
+      const { url } = await res.json();
+      await fetchAndSave(url);
+    } catch (e) {
+      console.error('Download error:', e);
+      alert('Download failed. Please try again.');
+    }
+  }, [currentPhoto, resolveFolderForPhoto, fetchAndSave]);
+
   const [imageSrc, setImageSrc] = useState(null);
 
   useEffect(() => {
@@ -678,6 +708,16 @@ const PhotoViewer = ({
 
         {/* Right section: details + close (desktop) */}
         <div className="flex items-center gap-2 pointer-events-auto">
+          {/* Download button */}
+          <button
+            onClick={handleDownload}
+            title="Download"
+            className="h-9 w-9 inline-flex items-center justify-center rounded-md shadow bg-white text-gray-900 hover:bg-gray-100 border border-transparent"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5">
+              <path fillRule="evenodd" d="M12 2.25a.75.75 0 01.75.75v11.69l3.22-3.22a.75.75 0 111.06 1.06l-4.5 4.5a.75.75 0 01-1.06 0l-4.5-4.5a.75.75 0 111.06-1.06l3.22 3.22V3a.75.75 0 01.75-.75zm-9 13.5a.75.75 0 01.75.75v2.25a1.5 1.5 0 001.5 1.5h13.5a1.5 1.5 0 001.5-1.5V16.5a.75.75 0 011.5 0v2.25a3 3 0 01-3 3H5.25a3 3 0 01-3-3V16.5a.75.75 0 01.75-.75z" clipRule="evenodd" />
+            </svg>
+          </button>
           {/* Detail toggle */}
           <button
             onClick={() => setShowInfo(v => !v)}
