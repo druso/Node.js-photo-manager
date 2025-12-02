@@ -1,6 +1,6 @@
 const express = require('express');
-const { Server } = require('tus-node-server');
-const { FileStore } = require('tus-node-server');
+const { Server, EVENTS } = require('@tus/server');
+const { FileStore } = require('@tus/file-store');
 const path = require('path');
 const fs = require('fs-extra');
 const { extractMetadata } = require('../services/metadataExtractor');
@@ -42,9 +42,6 @@ function getFileType(filename) {
     if (['.raw', '.cr2', '.nef', '.arw', '.dng'].includes(ext)) return 'raw';
     return 'other';
 }
-
-// Helper function to extract EXIF metadata
-// extractExifMetadata function removed - using imported service
 
 // Batch processing for upload post-processing tasks
 // This prevents creating a separate job for every single file, while still
@@ -120,7 +117,8 @@ const tusServer = new Server({
     // Metadata validation
     namingFunction: (req) => {
         // Generate unique filename for the tus upload
-        const metadata = req.upload?.metadata || {};
+        // In @tus/server, req is the first arg. metadata is not passed to namingFunction directly in the type definition in some versions,
+        // but let's stick to generating a random name as before.
         const timestamp = Date.now();
         const random = Math.random().toString(36).substring(2, 8);
         return `upload-${timestamp}-${random}`;
@@ -185,8 +183,13 @@ const tusServer = new Server({
             }
 
             // Move file from temp location to project directory
-            const tempFilePath = upload.storage.path;
+            const tempFilePath = path.join(UPLOADS_TEMP_DIR, upload.id);
             const finalFilePath = path.join(projectPath, sanitizedName);
+
+            // Verify temp file exists before moving
+            if (!await fs.pathExists(tempFilePath)) {
+                throw new Error(`Temp file not found: ${tempFilePath}`);
+            }
 
             await fs.move(tempFilePath, finalFilePath, { overwrite: true });
             log.info('tus_file_moved', { from: tempFilePath, to: finalFilePath });
@@ -251,6 +254,8 @@ const tusServer = new Server({
                 log.warn('tus_metadata_cleanup_failed', { error: err?.message });
             }
 
+            return { status_code: 204 };
+
         } catch (err) {
             log.error('tus_upload_finish_failed', {
                 filename,
@@ -261,19 +266,24 @@ const tusServer = new Server({
 
             // Clean up temp file on error
             try {
-                if (upload.storage?.path && await fs.pathExists(upload.storage.path)) {
-                    await fs.remove(upload.storage.path);
+                const tempFilePath = path.join(UPLOADS_TEMP_DIR, upload.id);
+                if (await fs.pathExists(tempFilePath)) {
+                    await fs.remove(tempFilePath);
+                }
+                const metadataPath = `${tempFilePath}.json`;
+                if (await fs.pathExists(metadataPath)) {
+                    await fs.remove(metadataPath);
                 }
             } catch (cleanupErr) {
                 log.warn('tus_temp_cleanup_failed', { error: cleanupErr?.message });
             }
 
-            throw err;
+            throw { status_code: 500, body: err.message };
         }
     },
 
     // Called on upload creation
-    onUploadCreate: (req, res, upload) => {
+    onUploadCreate: async (req, upload) => {
         const metadata = upload.metadata || {};
         log.info('tus_upload_created', {
             filename: metadata.filename,
@@ -281,30 +291,28 @@ const tusServer = new Server({
             size: upload.size,
             uploadId: upload.id
         });
-    },
+        // Return empty object to proceed
+        return {};
+    }
+});
 
-    // Called on each chunk received
-    onIncomingRequest: (req, res, next) => {
-        // Log chunk progress (optional, can be verbose)
-        if (req.method === 'PATCH') {
-            const uploadLength = req.headers['upload-length'];
-            const uploadOffset = req.headers['upload-offset'];
-            if (uploadLength && uploadOffset) {
-                const percent = ((parseInt(uploadOffset) / parseInt(uploadLength)) * 100).toFixed(1);
-                log.debug('tus_chunk_received', {
-                    uploadId: req.url.split('/').pop(),
-                    offset: uploadOffset,
-                    length: uploadLength,
-                    percent: `${percent}%`
-                });
-            }
-        }
-        next();
+// Listen for progress events
+tusServer.on(EVENTS.POST_RECEIVE, (req, res, upload) => {
+    const uploadLength = upload.size;
+    const uploadOffset = upload.offset;
+    if (uploadLength && uploadOffset) {
+        const percent = ((parseInt(uploadOffset) / parseInt(uploadLength)) * 100).toFixed(1);
+        log.debug('tus_chunk_received', {
+            uploadId: upload.id,
+            offset: uploadOffset,
+            length: uploadLength,
+            percent: `${percent}%`
+        });
     }
 });
 
 // Mount tus server on all HTTP methods
-// tus server handles its own internal routing, so we just need to pass all requests
+// Use router.use to match all paths and methods without triggering path-to-regexp issues
 router.use((req, res) => {
     // Ensure temp directory exists on first request
     ensureTempDir();
