@@ -118,7 +118,7 @@ function usePhotoPagination({
 
   const resetState = useCallback(() => {
     debugLog(`[UNIFIED] Resetting state for mode: ${mode}`);
-    
+
     // Reset React state
     setPhotos([]);
     setTotal(0);
@@ -127,26 +127,26 @@ function usePhotoPagination({
     setHasPrev(false);
     setGridAnchorIndex(null);
     setLoadingMore(false);
-    
+
     // Reset local ref but keep global instance
     if (windowRef.current) {
       debugLog('[UNIFIED] Resetting local PagedWindowManager reference');
-      
+
       // Reset the manager's internal state if it exists
       if (windowRef.current.reset && typeof windowRef.current.reset === 'function') {
         debugLog('[UNIFIED] Resetting PagedWindowManager internal state');
         windowRef.current.reset();
       }
-      
+
       // Don't null out windowRef.current as we want to keep using the cached instance
       // Instead, we'll rely on ensureWindow to get the right instance
     }
-    
+
     seenKeysRef.current = new Set();
     seenCursorsRef.current = new Set();
     lastCursorRef.current = null;
     loadingLockRef.current = false;
-    
+
     // Don't reset deepLinkRef here as it might be needed after state reset
     debugLog('[UNIFIED] State reset complete');
   }, [mode]);
@@ -162,7 +162,7 @@ function usePhotoPagination({
       windowRef.current = managerInstances.project[projectFolder];
       return windowRef.current;
     }
-    
+
     // Create new manager if not in cache
     if (!windowRef.current) {
       debugLog(`[UNIFIED] Creating new PagedWindowManager for mode: ${mode}`);
@@ -174,14 +174,14 @@ function usePhotoPagination({
           const filters = extra?.filters || {};
           const sort = extra?.sort || sortRef.current;
           const params = { limit, ...filters };
-          
+
           if (cursor) params.cursor = cursor;
           if (before_cursor) params.before_cursor = before_cursor;
-          
+
           // Add sort parameters for both modes
           if (sort?.field) params.sort = sort.field;
           if (sort?.direction) params.dir = sort.direction;
-          
+
           let res;
           if (mode === 'project') {
             const folder = folderRef.current;
@@ -189,26 +189,26 @@ function usePhotoPagination({
               debugLog('[UNIFIED] No folder selected for project mode');
               return { items: [], nextCursor: null, prevCursor: null, total: 0, unfiltered_total: 0 };
             }
-            
+
             // Always use project_folder parameter for consistency
             params.project_folder = folder;
-            
+
             // Use the same API for both modes to ensure consistent behavior
             res = await listAllPhotos(params);
           } else {
             // All photos mode
             res = await listAllPhotos(params);
           }
-          
+
           // Log response cursors for debugging
-          debugLog(`[UNIFIED] API response for ${mode} mode:`, { 
-            nextCursor: res.next_cursor, 
+          debugLog(`[UNIFIED] API response for ${mode} mode:`, {
+            nextCursor: res.next_cursor,
             prevCursor: res.prev_cursor,
             itemCount: res.items?.length || 0,
             total: res.total,
             unfiltered_total: res.unfiltered_total
           });
-          
+
           return {
             items: res.items || [],
             nextCursor: res.next_cursor ?? null,
@@ -218,7 +218,7 @@ function usePhotoPagination({
           };
         },
       });
-      
+
       // Store in global cache for persistence
       if (mode === 'all') {
         managerInstances.all = windowRef.current;
@@ -230,41 +230,41 @@ function usePhotoPagination({
   }, [makeItemKey, mode, projectFolder]);
 
   const loadInitial = useCallback(async () => {
-    debugLog(`[UNIFIED] loadInitial called for mode: ${mode}`, { 
-      isEnabled, 
+    debugLog(`[UNIFIED] loadInitial called for mode: ${mode}`, {
+      isEnabled,
       projectFolder: mode === 'project' ? folderRef.current : 'N/A',
       loadingLock: loadingLockRef.current
     });
-    
+
     // Prevent concurrent loadInitial calls
     if (loadingLockRef.current) {
       debugLog('[UNIFIED] loadInitial already in progress, skipping');
       return;
     }
-    
+
     if (!isEnabled) return;
     if (mode === 'project' && !folderRef.current) {
       debugLog('[UNIFIED] No folder selected for project mode, resetting state');
       resetState();
       return;
     }
-    
+
     loadingLockRef.current = true;
     try {
       const filters = buildFilterParams(activeFilters);
       const manager = ensureWindow();
       debugLog('[UNIFIED] Calling manager.loadInitial');
-      
+
       const page = await manager.loadInitial({ filters, sort: sortRef.current });
       debugLog('[UNIFIED] manager.loadInitial returned:', page ? 'page object' : 'null');
-      
+
       const snap = manager.snapshot();
       if (page && Array.isArray(page.items)) {
         for (const it of page.items) {
           seenKeysRef.current.add(makeItemKey(it));
         }
       }
-      
+
       const flattened = snap.pages.flatMap(p => p.items);
       setPhotos(flattened);
       setTotal(Number.isFinite(page?.total) ? Number(page.total) : flattened.length);
@@ -280,13 +280,13 @@ function usePhotoPagination({
     if (!isEnabled || !nextCursor || loadingMore) return;
     if (mode === 'project' && !folderRef.current) return;
     if (loadingLockRef.current) return;
-    
-    debugLog(`[UNIFIED] loadMore called for mode: ${mode}`, { 
-      nextCursor, 
+
+    debugLog(`[UNIFIED] loadMore called for mode: ${mode}`, {
+      nextCursor,
       windowExists: !!windowRef.current,
       projectFolder: folderRef.current
     });
-    
+
     loadingLockRef.current = true;
     setLoadingMore(true);
     try {
@@ -295,22 +295,22 @@ function usePhotoPagination({
         debugLog('[UNIFIED] No manager available for loadMore');
         return;
       }
-      
+
       const filters = buildFilterParams(activeFilters);
       const currentCursor = nextCursor;
       lastCursorRef.current = currentCursor;
-      
+
       if (seenCursorsRef.current.has(currentCursor)) {
         debugLog('[UNIFIED] Cursor already seen, skipping:', currentCursor);
         return;
       }
-      
+
       seenCursorsRef.current.add(currentCursor);
       debugLog('[UNIFIED] Calling manager.loadNext with cursor:', currentCursor);
-      
+
       const page = await manager.loadNext({ filters, sort: sortRef.current });
       debugLog('[UNIFIED] manager.loadNext returned:', page ? 'page object' : 'null');
-      
+
       const snap = manager.snapshot();
       if (page && Array.isArray(page.items)) {
         debugLog(`[UNIFIED] Received ${page.items.length} items in new page`);
@@ -318,12 +318,18 @@ function usePhotoPagination({
           seenKeysRef.current.add(makeItemKey(it));
         }
       }
-      
+
       setPhotos(snap.pages.flatMap(p => p.items));
       setTotal(Number.isFinite(page?.total) ? Number(page.total) : total);
       setUnfilteredTotal(Number.isFinite(page?.unfiltered_total) ? Number(page.unfiltered_total) : unfilteredTotal);
       setNextCursor(snap.tailNextCursor);
       setHasPrev(!!snap.headPrevCursor);
+    } catch (err) {
+      // If loading failed, remove from seenCursors so we can retry
+      if (nextCursor) {
+        seenCursorsRef.current.delete(nextCursor);
+      }
+      console.error('[UNIFIED] loadMore failed:', err);
     } finally {
       setLoadingMore(false);
       loadingLockRef.current = false;
@@ -333,32 +339,32 @@ function usePhotoPagination({
   const loadPrev = useCallback(async () => {
     if (!isEnabled || loadingMore) return;
     if (mode === 'project' && !folderRef.current) return;
-    
-    debugLog(`[UNIFIED] loadPrev called for mode: ${mode}`, { 
+
+    debugLog(`[UNIFIED] loadPrev called for mode: ${mode}`, {
       windowExists: !!windowRef.current,
       projectFolder: folderRef.current
     });
-    
+
     const manager = windowRef.current;
     if (!manager) {
       debugLog('[UNIFIED] No manager available for loadPrev');
       return;
     }
-    
+
     const snapBefore = manager.snapshot();
     if (!snapBefore.headPrevCursor) {
       debugLog('[UNIFIED] No headPrevCursor available for loadPrev');
       return;
     }
-    
+
     debugLog('[UNIFIED] Starting loadPrev with headPrevCursor:', snapBefore.headPrevCursor);
-    
+
     setLoadingMore(true);
     try {
       const filters = buildFilterParams(activeFilters);
       const page = await manager.loadPrev({ filters, sort: sortRef.current });
       debugLog('[UNIFIED] manager.loadPrev returned:', page ? 'page object' : 'null');
-      
+
       const snap = manager.snapshot();
       if (page && Array.isArray(page.items)) {
         debugLog(`[UNIFIED] Received ${page.items.length} items in prev page`);
@@ -366,15 +372,15 @@ function usePhotoPagination({
           seenKeysRef.current.add(makeItemKey(it));
         }
       }
-      
+
       setPhotos(snap.pages.flatMap(p => p.items));
       setTotal(Number.isFinite(page?.total) ? Number(page.total) : total);
       setUnfilteredTotal(Number.isFinite(page?.unfiltered_total) ? Number(page.unfiltered_total) : unfilteredTotal);
-      
+
       // Ensure both cursors are properly updated
       setNextCursor(snap.tailNextCursor);
       setHasPrev(!!snap.headPrevCursor);
-      
+
       // Clear seen cursors to avoid issues with bidirectional navigation
       seenCursorsRef.current.clear();
     } finally {
@@ -383,48 +389,48 @@ function usePhotoPagination({
   }, [activeFilters, isEnabled, loadingMore, makeItemKey, mode, total, unfilteredTotal]);
 
   useEffect(() => {
-    debugLog(`[UNIFIED] Main effect triggered for mode: ${mode}`, { 
-      isEnabled, 
+    debugLog(`[UNIFIED] Main effect triggered for mode: ${mode}`, {
+      isEnabled,
       projectFolder: mode === 'project' ? projectFolder : 'N/A',
       activeFilters: activeFilters ? 'present' : 'none'
     });
-    
+
     if (!isEnabled) {
       debugLog('[UNIFIED] Not enabled, resetting state');
       resetState();
       return;
     }
-    
+
     if (mode === 'project' && !projectFolder) {
       debugLog('[UNIFIED] Project mode but no folder selected, resetting state');
       resetState();
       return;
     }
-    
+
     // Update folder reference
     if (mode === 'project') {
       folderRef.current = projectFolder;
     } else {
       folderRef.current = null;
     }
-    
+
     // Check if we need to reset the manager due to filter/sort changes
     const shouldResetManager = (
       // Always reset when sort changes
       sortRef.current.field !== resolveProjectSort(sortKey, sortDir).field ||
       sortRef.current.direction !== resolveProjectSort(sortKey, sortDir).direction
     );
-    
+
     if (shouldResetManager) {
       sortRef.current = resolveProjectSort(sortKey, sortDir);
-      
+
       // Reset the appropriate manager in the global cache
       if (mode === 'project' && projectFolder) {
         managerInstances.resetManager('project', projectFolder);
       } else if (mode === 'all') {
         managerInstances.resetManager('all');
       }
-      
+
       // Clear scroll position so we start at the top
       try {
         setSessionMainY(0);
@@ -439,11 +445,11 @@ function usePhotoPagination({
       } catch (e) {
         console.warn('[UNIFIED] Failed to clear scroll position:', e);
       }
-      
+
       // Reset React state to clear photos array and cursors
       resetState();
     }
-    
+
     let canceled = false;
     (async () => {
       try {
@@ -460,23 +466,23 @@ function usePhotoPagination({
         }
       }
     })();
-    
+
     return () => {
       canceled = true;
       debugLog('[UNIFIED] Effect cleanup triggered');
     };
   }, [
-    isEnabled, 
-    projectFolder, 
-    mode, 
-    activeFilters?.dateRange?.start, 
-    activeFilters?.dateRange?.end, 
-    activeFilters?.fileType, 
-    activeFilters?.keepType, 
-    activeFilters?.orientation, 
+    isEnabled,
+    projectFolder,
+    mode,
+    activeFilters?.dateRange?.start,
+    activeFilters?.dateRange?.end,
+    activeFilters?.fileType,
+    activeFilters?.keepType,
+    activeFilters?.orientation,
     activeFilters?.publicLinkId,
-    activeFilters?.tags, 
-    loadInitial, 
+    activeFilters?.tags,
+    loadInitial,
     resetState,
     // Add sortKey and sortDir to dependencies to ensure pagination resets when sort changes
     sortKey,
@@ -625,7 +631,7 @@ const managerInstances = {
   all: null,
   project: {},
   // Helper method to reset a specific manager
-  resetManager: function(mode, projectFolder) {
+  resetManager: function (mode, projectFolder) {
     if (import.meta?.env?.DEV) {
       console.log(`[UNIFIED] Resetting manager for ${mode}${projectFolder ? ': ' + projectFolder : ''}`);
     }
