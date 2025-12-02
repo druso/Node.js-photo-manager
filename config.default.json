@@ -63,10 +63,10 @@
     "hash_ttl_days": 28
   },
   "rate_limits": {
-    "thumbnail_per_minute": 600,
-    "preview_per_minute": 600,
-    "image_per_minute": 120,
-    "zip_per_minute": 30
+    "thumbnail_per_minute": 3000,
+    "preview_per_minute": 3000,
+    "image_per_minute": 600,
+    "zip_per_minute": 60
   },
   "pipeline": {
     "max_parallel_jobs": 2,

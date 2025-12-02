@@ -29,6 +29,11 @@ app.use(accessLog());
 app.use(express.json());
 app.use(cookieParser());
 
+// Trust the first proxy hop (Cloudflare Tunnel) to provide the real client IP.
+// This ensures rate limiting works correctly for users behind the tunnel
+// while still respecting direct local connections (which have no proxy headers).
+app.set('trust proxy', 1);
+
 // HTTP compression for API responses and static assets
 // Configured to skip already-compressed content (images) and small responses
 app.use(compression({
