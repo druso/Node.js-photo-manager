@@ -7,6 +7,7 @@ const { runImageMoveFiles } = require('./workers/imageMoveWorker');
 const { runTrashMaintenance, runDuplicateResolution, runManifestCheck, runFolderCheck, runManifestCleaning, runFolderAlignment, runOrphanedProjectCleanup, runDerivativeCacheValidation } = require('./workers/maintenanceWorker');
 const { runFileRemoval } = require('./workers/fileRemovalWorker');
 const { runFolderDiscovery } = require('./workers/folderDiscoveryWorker');
+const { runRegenerateMetadata } = require('./workers/metadataRegenerationWorker');
 const { emitJobUpdate } = require('./events');
 const tasksOrchestrator = require('./tasksOrchestrator');
 const makeLogger = require('../utils/logger2');
@@ -217,6 +218,26 @@ async function handleJob(job, { heartbeatMs, maxAttemptsDefault, workerId }) {
     // Folder discovery job type
     if (job.type === 'folder_discovery') {
       await runFolderDiscovery(job);
+      stopHeartbeat();
+      jobsRepo.complete(job.id);
+      {
+        const p = job.payload_json || {};
+        emitJobUpdate({ id: job.id, status: 'completed', task_id: p.task_id, task_type: p.task_type, job_type: job.type, source: p.source });
+      }
+      try { tasksOrchestrator.onJobCompleted(job); } catch { }
+      return;
+    }
+
+    // Metadata regeneration job type
+    if (job.type === 'regenerate_metadata') {
+      await runRegenerateMetadata({
+        ...job,
+        onProgress: ({ done, total }) => {
+          const p = job.payload_json || {};
+          emitJobUpdate({ id: job.id, status: 'running', progress_done: done, progress_total: total, task_id: p.task_id, task_type: p.task_type, source: p.source });
+          try { jobsRepo.updateProgress(job.id, { done, total }); } catch { }
+        }
+      });
       stopHeartbeat();
       jobsRepo.complete(job.id);
       {

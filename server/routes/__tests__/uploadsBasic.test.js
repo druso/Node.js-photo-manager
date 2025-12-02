@@ -154,7 +154,7 @@ describe('photo uploads – basic scenarios', { concurrency: false }, () => {
       assert.ok(photo.date_time_original, 'date_time_original should be captured');
       assert.ok(photo.meta_json, 'meta_json should be populated');
       const metadata = JSON.parse(photo.meta_json);
-      assert.ok(metadata.camera_model || metadata.Model, 'metadata should include camera model');
+      assert.ok(metadata.model, 'metadata should include camera model');
       assert.notEqual(photo.thumbnail_status, null);
       assert.notEqual(photo.preview_status, null);
     });

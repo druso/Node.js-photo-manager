@@ -9,6 +9,7 @@ const Settings = ({ project, config, onConfigUpdate, onProjectDelete, onProjectR
   const [localConfig, setLocalConfig] = useState(null);
   const [openSection, setOpenSection] = useState('manage'); // only one open at a time
   const [regenLoading, setRegenLoading] = useState(false);
+  const [metadataLoading, setMetadataLoading] = useState(false);
   const [renameValue, setRenameValue] = useState(project?.name || '');
   const [renaming, setRenaming] = useState(false);
   const { actions: uploadActions } = useUpload();
@@ -93,6 +94,30 @@ const Settings = ({ project, config, onConfigUpdate, onProjectDelete, onProjectR
       alert('Regeneration failed. See console for details.');
     } finally {
       setRegenLoading(false);
+    }
+  };
+
+  const handleRegenerateMetadata = async () => {
+    if (!window.confirm('Regenerate metadata for the entire library? This will rescan all photos and update their metadata. This may take a while.')) return;
+    try {
+      setMetadataLoading(true);
+      const response = await authFetch('/api/jobs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ task_type: 'regenerate_metadata', source: 'settings' }),
+      });
+
+      if (response.ok) {
+        alert('Metadata regeneration started. You can monitor progress in the Processes menu.');
+      } else {
+        const err = await response.json();
+        alert(`Failed to start metadata regeneration: ${err.error || 'Unknown error'}`);
+      }
+    } catch (err) {
+      console.error('Metadata regeneration failed:', err);
+      alert('Metadata regeneration failed. See console for details.');
+    } finally {
+      setMetadataLoading(false);
     }
   };
 
@@ -220,11 +245,11 @@ const Settings = ({ project, config, onConfigUpdate, onProjectDelete, onProjectR
         {project && (
           <section>
             <button
-              className={`w-full flex items-center justify-between px-0 py-3 text-left ${openSection==='manage' ? 'bg-gray-50' : ''}`}
+              className={`w-full flex items-center justify-between px-0 py-3 text-left ${openSection === 'manage' ? 'bg-gray-50' : ''}`}
               onClick={() => setOpenSection(prev => prev === 'manage' ? null : 'manage')}
             >
               <span className="font-medium">Manage Project</span>
-              <span className="text-sm text-gray-500">{openSection==='manage' ? '▲' : '▼'}</span>
+              <span className="text-sm text-gray-500">{openSection === 'manage' ? '▲' : '▼'}</span>
             </button>
             {openSection === 'manage' && (
               <div className="pb-4 space-y-3">
@@ -261,11 +286,11 @@ const Settings = ({ project, config, onConfigUpdate, onProjectDelete, onProjectR
         {/* Image Preprocessing */}
         <section>
           <button
-            className={`w-full flex items-center justify-between px-0 py-3 text-left ${openSection==='image_preprocessing' ? 'bg-gray-50' : ''}`}
+            className={`w-full flex items-center justify-between px-0 py-3 text-left ${openSection === 'image_preprocessing' ? 'bg-gray-50' : ''}`}
             onClick={() => setOpenSection(prev => prev === 'image_preprocessing' ? null : 'image_preprocessing')}
           >
             <span className="font-medium">Image Preprocessing</span>
-            <span className="text-sm text-gray-500">{openSection==='image_preprocessing' ? '▲' : '▼'}</span>
+            <span className="text-sm text-gray-500">{openSection === 'image_preprocessing' ? '▲' : '▼'}</span>
           </button>
           {openSection === 'image_preprocessing' && (
             <div className="pb-4 space-y-6">
@@ -275,13 +300,13 @@ const Settings = ({ project, config, onConfigUpdate, onProjectDelete, onProjectR
                   <label className="block">
                     <span className="text-gray-700">Max Dimension (px)</span>
                     <input type="number" min={1} value={localConfig.processing.thumbnail.maxDim}
-                      onChange={(e)=>handleProcessingChange('thumbnail','maxDim', parseInt(e.target.value,10)||0)}
+                      onChange={(e) => handleProcessingChange('thumbnail', 'maxDim', parseInt(e.target.value, 10) || 0)}
                       className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-md" />
                   </label>
                   <label className="block">
                     <span className="text-gray-700">JPEG Quality</span>
                     <input type="number" min={1} max={100} value={localConfig.processing.thumbnail.quality}
-                      onChange={(e)=>handleProcessingChange('thumbnail','quality', Math.max(1, Math.min(100, parseInt(e.target.value,10)||0)))}
+                      onChange={(e) => handleProcessingChange('thumbnail', 'quality', Math.max(1, Math.min(100, parseInt(e.target.value, 10) || 0)))}
                       className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-md" />
                   </label>
                 </div>
@@ -292,13 +317,13 @@ const Settings = ({ project, config, onConfigUpdate, onProjectDelete, onProjectR
                   <label className="block">
                     <span className="text-gray-700">Max Dimension (px)</span>
                     <input type="number" min={1} value={localConfig.processing.preview.maxDim}
-                      onChange={(e)=>handleProcessingChange('preview','maxDim', parseInt(e.target.value,10)||0)}
+                      onChange={(e) => handleProcessingChange('preview', 'maxDim', parseInt(e.target.value, 10) || 0)}
                       className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-md" />
                   </label>
                   <label className="block">
                     <span className="text-gray-700">JPEG Quality</span>
                     <input type="number" min={1} max={100} value={localConfig.processing.preview.quality}
-                      onChange={(e)=>handleProcessingChange('preview','quality', Math.max(1, Math.min(100, parseInt(e.target.value,10)||0)))}
+                      onChange={(e) => handleProcessingChange('preview', 'quality', Math.max(1, Math.min(100, parseInt(e.target.value, 10) || 0)))}
                       className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-md" />
                   </label>
                 </div>
@@ -313,6 +338,13 @@ const Settings = ({ project, config, onConfigUpdate, onProjectDelete, onProjectR
                 >
                   {regenLoading ? 'Regenerating…' : 'Regenerate thumbnails & previews'}
                 </button>
+                <button
+                  onClick={handleRegenerateMetadata}
+                  disabled={metadataLoading}
+                  className={`mt-2 w-full px-4 py-2 rounded-md text-white ${metadataLoading ? 'bg-gray-400' : 'bg-green-600 hover:bg-green-700'}`}
+                >
+                  {metadataLoading ? 'Starting…' : 'Regenerate Metadata (Whole Library)'}
+                </button>
               </div>
             </div>
           )}
@@ -320,11 +352,11 @@ const Settings = ({ project, config, onConfigUpdate, onProjectDelete, onProjectR
         {/* Other */}
         <section>
           <button
-            className={`w-full flex items-center justify-between px-0 py-3 text-left ${openSection==='other' ? 'bg-gray-50' : ''}`}
+            className={`w-full flex items-center justify-between px-0 py-3 text-left ${openSection === 'other' ? 'bg-gray-50' : ''}`}
             onClick={() => setOpenSection(prev => prev === 'other' ? null : 'other')}
           >
             <span className="font-medium">Other</span>
-            <span className="text-sm text-gray-500">{openSection==='other' ? '▲' : '▼'}</span>
+            <span className="text-sm text-gray-500">{openSection === 'other' ? '▲' : '▼'}</span>
           </button>
           {openSection === 'other' && (
             <div className="pb-4 space-y-4">
@@ -357,11 +389,11 @@ const Settings = ({ project, config, onConfigUpdate, onProjectDelete, onProjectR
         {/* UI Preferences */}
         <section>
           <button
-            className={`w-full flex items-center justify-between px-0 py-3 text-left ${openSection==='ui' ? 'bg-gray-50' : ''}`}
+            className={`w-full flex items-center justify-between px-0 py-3 text-left ${openSection === 'ui' ? 'bg-gray-50' : ''}`}
             onClick={() => setOpenSection(prev => prev === 'ui' ? null : 'ui')}
           >
             <span className="font-medium">UI Preferences</span>
-            <span className="text-sm text-gray-500">{openSection==='ui' ? '▲' : '▼'}</span>
+            <span className="text-sm text-gray-500">{openSection === 'ui' ? '▲' : '▼'}</span>
           </button>
           {openSection === 'ui' && (
             <div className="pb-4 space-y-3">
@@ -390,18 +422,18 @@ const Settings = ({ project, config, onConfigUpdate, onProjectDelete, onProjectR
         {/* Keyboard Shortcuts */}
         <section>
           <button
-            className={`w-full flex items-center justify-between px-0 py-3 text-left ${openSection==='shortcuts' ? 'bg-gray-50' : ''}`}
+            className={`w-full flex items-center justify-between px-0 py-3 text-left ${openSection === 'shortcuts' ? 'bg-gray-50' : ''}`}
             onClick={() => setOpenSection(prev => prev === 'shortcuts' ? null : 'shortcuts')}
           >
             <span className="font-medium">Keyboard Shortcuts</span>
-            <span className="text-sm text-gray-500">{openSection==='shortcuts' ? '▲' : '▼'}</span>
+            <span className="text-sm text-gray-500">{openSection === 'shortcuts' ? '▲' : '▼'}</span>
           </button>
           {openSection === 'shortcuts' && (
             <div className="pb-4 space-y-2">
               {Object.entries(localConfig.keyboard_shortcuts || {}).map(([key, val]) => (
                 <label key={key} className="block">
-                  <span className="text-gray-700 capitalize">{key.replace(/_/g,' ')}</span>
-                  <input type="text" value={val} onChange={(e)=>handleConfigChange('keyboard_shortcuts', key, e.target.value)}
+                  <span className="text-gray-700 capitalize">{key.replace(/_/g, ' ')}</span>
+                  <input type="text" value={val} onChange={(e) => handleConfigChange('keyboard_shortcuts', key, e.target.value)}
                     className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-md" />
                 </label>
               ))}
@@ -466,11 +498,11 @@ const Settings = ({ project, config, onConfigUpdate, onProjectDelete, onProjectR
             {project && (
               <section>
                 <button
-                  className={`w-full flex items-center justify-between px-4 py-3 text-left ${openSection==='manage' ? 'bg-gray-50' : ''}`}
+                  className={`w-full flex items-center justify-between px-4 py-3 text-left ${openSection === 'manage' ? 'bg-gray-50' : ''}`}
                   onClick={() => setOpenSection(prev => prev === 'manage' ? null : 'manage')}
                 >
                   <span className="font-medium">Manage Project</span>
-                  <span className="text-sm text-gray-500">{openSection==='manage' ? '▲' : '▼'}</span>
+                  <span className="text-sm text-gray-500">{openSection === 'manage' ? '▲' : '▼'}</span>
                 </button>
                 {openSection === 'manage' && (
                   <div className="px-4 pb-4 space-y-3">
@@ -507,11 +539,11 @@ const Settings = ({ project, config, onConfigUpdate, onProjectDelete, onProjectR
             {/* Image Preprocessing (processing + maintenance) */}
             <section>
               <button
-                className={`w-full flex items-center justify-between px-4 py-3 text-left ${openSection==='image_preprocessing' ? 'bg-gray-50' : ''}`}
+                className={`w-full flex items-center justify-between px-4 py-3 text-left ${openSection === 'image_preprocessing' ? 'bg-gray-50' : ''}`}
                 onClick={() => setOpenSection(prev => prev === 'image_preprocessing' ? null : 'image_preprocessing')}
               >
                 <span className="font-medium">Image Preprocessing</span>
-                <span className="text-sm text-gray-500">{openSection==='image_preprocessing' ? '▲' : '▼'}</span>
+                <span className="text-sm text-gray-500">{openSection === 'image_preprocessing' ? '▲' : '▼'}</span>
               </button>
               {openSection === 'image_preprocessing' && (
                 <div className="px-4 pb-4 space-y-6">
@@ -521,13 +553,13 @@ const Settings = ({ project, config, onConfigUpdate, onProjectDelete, onProjectR
                       <label className="block">
                         <span className="text-gray-700">Max Dimension (px)</span>
                         <input type="number" min={1} value={localConfig.processing.thumbnail.maxDim}
-                          onChange={(e)=>handleProcessingChange('thumbnail','maxDim', parseInt(e.target.value,10)||0)}
+                          onChange={(e) => handleProcessingChange('thumbnail', 'maxDim', parseInt(e.target.value, 10) || 0)}
                           className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-md" />
                       </label>
                       <label className="block">
                         <span className="text-gray-700">JPEG Quality</span>
                         <input type="number" min={1} max={100} value={localConfig.processing.thumbnail.quality}
-                          onChange={(e)=>handleProcessingChange('thumbnail','quality', Math.max(1, Math.min(100, parseInt(e.target.value,10)||0)))}
+                          onChange={(e) => handleProcessingChange('thumbnail', 'quality', Math.max(1, Math.min(100, parseInt(e.target.value, 10) || 0)))}
                           className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-md" />
                       </label>
                     </div>
@@ -538,13 +570,13 @@ const Settings = ({ project, config, onConfigUpdate, onProjectDelete, onProjectR
                       <label className="block">
                         <span className="text-gray-700">Max Dimension (px)</span>
                         <input type="number" min={1} value={localConfig.processing.preview.maxDim}
-                          onChange={(e)=>handleProcessingChange('preview','maxDim', parseInt(e.target.value,10)||0)}
+                          onChange={(e) => handleProcessingChange('preview', 'maxDim', parseInt(e.target.value, 10) || 0)}
                           className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-md" />
                       </label>
                       <label className="block">
                         <span className="text-gray-700">JPEG Quality</span>
                         <input type="number" min={1} max={100} value={localConfig.processing.preview.quality}
-                          onChange={(e)=>handleProcessingChange('preview','quality', Math.max(1, Math.min(100, parseInt(e.target.value,10)||0)))}
+                          onChange={(e) => handleProcessingChange('preview', 'quality', Math.max(1, Math.min(100, parseInt(e.target.value, 10) || 0)))}
                           className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-md" />
                       </label>
                     </div>
@@ -560,6 +592,13 @@ const Settings = ({ project, config, onConfigUpdate, onProjectDelete, onProjectR
                     >
                       {regenLoading ? 'Regenerating…' : 'Regenerate thumbnails & previews'}
                     </button>
+                    <button
+                      onClick={handleRegenerateMetadata}
+                      disabled={metadataLoading}
+                      className={`mt-2 w-full px-4 py-2 rounded-md text-white ${metadataLoading ? 'bg-gray-400' : 'bg-green-600 hover:bg-green-700'}`}
+                    >
+                      {metadataLoading ? 'Starting…' : 'Regenerate Metadata (Whole Library)'}
+                    </button>
                   </div>
                 </div>
               )}
@@ -570,11 +609,11 @@ const Settings = ({ project, config, onConfigUpdate, onProjectDelete, onProjectR
             {/* Other (moved Keep Defaults here and placed at end) */}
             <section>
               <button
-                className={`w-full flex items-center justify-between px-4 py-3 text-left ${openSection==='other' ? 'bg-gray-50' : ''}`}
+                className={`w-full flex items-center justify-between px-4 py-3 text-left ${openSection === 'other' ? 'bg-gray-50' : ''}`}
                 onClick={() => setOpenSection(prev => prev === 'other' ? null : 'other')}
               >
                 <span className="font-medium">Other</span>
-                <span className="text-sm text-gray-500">{openSection==='other' ? '▲' : '▼'}</span>
+                <span className="text-sm text-gray-500">{openSection === 'other' ? '▲' : '▼'}</span>
               </button>
               {openSection === 'other' && (
                 <div className="px-4 pb-4 space-y-4">
@@ -608,11 +647,11 @@ const Settings = ({ project, config, onConfigUpdate, onProjectDelete, onProjectR
             {/* UI Preferences */}
             <section>
               <button
-                className={`w-full flex items-center justify-between px-4 py-3 text-left ${openSection==='ui' ? 'bg-gray-50' : ''}`}
+                className={`w-full flex items-center justify-between px-4 py-3 text-left ${openSection === 'ui' ? 'bg-gray-50' : ''}`}
                 onClick={() => setOpenSection(prev => prev === 'ui' ? null : 'ui')}
               >
                 <span className="font-medium">UI Preferences</span>
-                <span className="text-sm text-gray-500">{openSection==='ui' ? '▲' : '▼'}</span>
+                <span className="text-sm text-gray-500">{openSection === 'ui' ? '▲' : '▼'}</span>
               </button>
               {openSection === 'ui' && (
                 <div className="px-4 pb-4 space-y-3">
@@ -642,11 +681,11 @@ const Settings = ({ project, config, onConfigUpdate, onProjectDelete, onProjectR
             {/* Keyboard Shortcuts */}
             <section>
               <button
-                className={`w-full flex items-center justify-between px-4 py-3 text-left ${openSection==='shortcuts' ? 'bg-gray-50' : ''}`}
+                className={`w-full flex items-center justify-between px-4 py-3 text-left ${openSection === 'shortcuts' ? 'bg-gray-50' : ''}`}
                 onClick={() => setOpenSection(prev => prev === 'shortcuts' ? null : 'shortcuts')}
               >
                 <span className="font-medium">Keyboard Shortcuts</span>
-                <span className="text-sm text-gray-500">{openSection==='shortcuts' ? '▲' : '▼'}</span>
+                <span className="text-sm text-gray-500">{openSection === 'shortcuts' ? '▲' : '▼'}</span>
               </button>
               {openSection === 'shortcuts' && (
                 <div className="px-4 pb-4 grid grid-cols-2 gap-4">

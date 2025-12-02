@@ -31,6 +31,26 @@ router.post('/projects/:folder/jobs', (req, res) => {
   }
 });
 
+// POST /api/jobs -> start a global task
+router.post('/jobs', (req, res) => {
+  try {
+    const { task_type, source, payload } = req.body || {};
+    if (!task_type) return res.status(400).json({ error: 'task_type is required' });
+
+    // Start global task
+    const start = tasksOrchestrator.startTask({
+      project_id: null,
+      type: task_type,
+      source: source || 'api',
+      payload
+    });
+    return res.status(202).json({ task: start });
+  } catch (err) {
+    log.error('enqueue_global_task_failed', { task_type, error: err && err.message, stack: err && err.stack });
+    return res.status(500).json({ error: 'Failed to start task' });
+  }
+});
+
 // GET /api/projects/:folder/jobs -> list jobs for a project
 router.get('/projects/:folder/jobs', (req, res) => {
   try {

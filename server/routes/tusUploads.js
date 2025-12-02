@@ -3,7 +3,7 @@ const { Server } = require('tus-node-server');
 const { FileStore } = require('tus-node-server');
 const path = require('path');
 const fs = require('fs-extra');
-const exifParser = require('exif-parser');
+const { extractMetadata } = require('../services/metadataExtractor');
 const makeLogger = require('../utils/logger2');
 const log = makeLogger('tus-uploads');
 
@@ -44,37 +44,7 @@ function getFileType(filename) {
 }
 
 // Helper function to extract EXIF metadata
-async function extractExifMetadata(filePath) {
-    try {
-        const buffer = await fs.readFile(filePath);
-        const parser = exifParser.create(buffer);
-        const result = parser.parse();
-
-        if (result && result.tags) {
-            const captureTimestamp = result.tags.DateTimeOriginal || result.tags.CreateDate || result.tags.ModifyDate || null;
-
-            const metadata = {
-                date_time_original: captureTimestamp ? new Date(captureTimestamp * 1000).toISOString() : null,
-                create_date: result.tags.CreateDate || null,
-                modify_date: result.tags.ModifyDate || null,
-                camera_model: result.tags.Model || null,
-                camera_make: result.tags.Make || null,
-                make: result.tags.Make || null,
-                model: result.tags.Model || null,
-                exif_image_width: result.tags.ExifImageWidth || null,
-                exif_image_height: result.tags.ExifImageHeight || null,
-                orientation: result.tags.Orientation || null
-            };
-
-            // Remove null values
-            Object.keys(metadata).forEach(k => metadata[k] === null && delete metadata[k]);
-            return metadata;
-        }
-    } catch (err) {
-        log.warn('exif_extraction_failed', { file: path.basename(filePath), error: err?.message });
-    }
-    return {};
-}
+// extractExifMetadata function removed - using imported service
 
 // Batch processing for upload post-processing tasks
 // This prevents creating a separate job for every single file, while still
@@ -224,7 +194,7 @@ const tusServer = new Server({
             // Extract EXIF metadata (only for non-RAW files)
             let exifMetadata = {};
             if (!isRawFile) {
-                exifMetadata = await extractExifMetadata(finalFilePath);
+                exifMetadata = await extractMetadata(finalFilePath);
             }
 
             // Determine derivative status

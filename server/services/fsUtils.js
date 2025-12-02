@@ -23,14 +23,14 @@ function ensureUserRoot(user = DEFAULT_USER) {
  * @returns {string} Absolute path to project folder
  */
 function getProjectPath(projectOrFolder, user = DEFAULT_USER) {
-  const projectFolder = typeof projectOrFolder === 'string' 
-    ? projectOrFolder 
+  const projectFolder = typeof projectOrFolder === 'string'
+    ? projectOrFolder
     : projectOrFolder?.project_folder;
-  
+
   if (!projectFolder) {
     throw new Error('Invalid project or folder name');
   }
-  
+
   const userRoot = ensureUserRoot(user);
   return path.join(userRoot, projectFolder);
 }
@@ -86,7 +86,7 @@ function buildAcceptPredicate() {
       acceptedExtensions: set,
     };
   } catch (_) {
-    const fallback = new Set(['jpg','jpeg','png','tif','tiff','raw','cr2','nef','arw','dng']);
+    const fallback = new Set(['jpg', 'jpeg', 'png', 'tif', 'tiff', 'raw', 'cr2', 'nef', 'arw', 'dng']);
     return {
       isAccepted(filename, _mimetype) {
         const ext = path.extname(filename).toLowerCase().replace(/^\./, '');

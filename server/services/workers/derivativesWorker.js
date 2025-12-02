@@ -25,7 +25,7 @@ function supportedSourcePath(projectPath, entry) {
 async function runGenerateDerivatives({ job, onProgress }) {
   // job.payload_json may contain { force?: boolean, filenames?: string[] }
   const payload = job.payload_json || {};
-  
+
   // Handle photo_set scope: group photos by project and process each project
   if (job.scope === 'photo_set') {
     const items = jobsRepo.listItems(job.id);
@@ -33,24 +33,24 @@ async function runGenerateDerivatives({ job, onProgress }) {
       log.warn('no_items_for_photo_set_job', { jobId: job.id });
       return;
     }
-    
+
     // Group items by project_id
     const photosByProject = {};
     for (const item of items) {
       if (!item.photo_id) continue;
       const photo = photosRepo.getById(item.photo_id);
       if (!photo) continue;
-      
+
       if (!photosByProject[photo.project_id]) {
         photosByProject[photo.project_id] = [];
       }
       photosByProject[photo.project_id].push({ item, photo });
     }
-    
+
     // Process each project
     let totalDone = 0;
     const totalItems = items.length;
-    
+
     for (const [projectId, projectPhotos] of Object.entries(photosByProject)) {
       const project = projectsRepo.getById(Number(projectId));
       if (!project || project.status === 'canceled') {
@@ -62,7 +62,7 @@ async function runGenerateDerivatives({ job, onProgress }) {
         }
         continue;
       }
-      
+
       // Process this project's photos
       const projectDone = await processProjectPhotos({
         job,
@@ -73,20 +73,20 @@ async function runGenerateDerivatives({ job, onProgress }) {
         onProgress: (progress) => {
           totalDone = progress.done;
           const updated = jobsRepo.updateProgress(job.id, { done: totalDone });
-          emitJobUpdate({ 
-            id: job.id, 
-            status: updated.status, 
-            progress_done: updated.progress_done, 
-            progress_total: updated.progress_total 
+          emitJobUpdate({
+            id: job.id,
+            status: updated.status,
+            progress_done: updated.progress_done,
+            progress_total: updated.progress_total
           });
           onProgress && onProgress({ done: totalDone, total: totalItems });
         }
       });
     }
-    
+
     return;
   }
-  
+
   // Original project-scoped logic
   const project = projectsRepo.getById(job.project_id);
   if (!project) throw new Error('Project not found for job');
@@ -127,7 +127,7 @@ async function runGenerateDerivatives({ job, onProgress }) {
 
   // Helper: compute availability by probing filesystem for known extensions
   const jpgExts = ['jpg', 'jpeg'];
-  const rawExts = ['raw','cr2','nef','arw','dng','raf','orf','rw2'];
+  const rawExts = ['raw', 'cr2', 'nef', 'arw', 'dng', 'raf', 'orf', 'rw2'];
 
   const existsAny = (base, exts) => {
     for (const e of exts) {
@@ -141,18 +141,18 @@ async function runGenerateDerivatives({ job, onProgress }) {
   // Get worker pool (configurable via config.processing.workerCount)
   const workerCount = (cfg.processing && cfg.processing.workerCount) || 4;
   const pool = getPool(workerCount);
-  
+
   // Process items in batches for parallel processing
   const batchSize = workerCount * 2; // Queue 2x workers to keep them busy
   const pendingItems = items.filter(i => i.status === 'pending');
-  
-  log.info('batch_processing_start', { 
-    total: items.length, 
+
+  log.info('batch_processing_start', {
+    total: items.length,
     pending: pendingItems.length,
     workerCount,
     batchSize
   });
-  
+
   for (let i = 0; i < pendingItems.length; i += batchSize) {
     // Stop if job was canceled mid-run
     const fresh = jobsRepo.getById(job.id);
@@ -166,10 +166,10 @@ async function runGenerateDerivatives({ job, onProgress }) {
       log.info('project_canceled', { projectId: job.project_id });
       break;
     }
-    
+
     const batch = pendingItems.slice(i, i + batchSize);
     log.debug('processing_batch', { batchStart: i, batchSize: batch.length });
-    
+
     // Process batch in parallel
     const batchPromises = batch.map(item => processItem({
       item,
@@ -184,31 +184,31 @@ async function runGenerateDerivatives({ job, onProgress }) {
       existsAny,
       pool
     }));
-    
+
     const batchResults = await Promise.allSettled(batchPromises);
-    
+
     // Update progress for completed batch
     for (let j = 0; j < batchResults.length; j++) {
       const result = batchResults[j];
       if (result.status === 'rejected') {
-        log.error('batch_item_error', { 
-          itemId: batch[j].id, 
-          error: result.reason?.message || String(result.reason) 
+        log.error('batch_item_error', {
+          itemId: batch[j].id,
+          error: result.reason?.message || String(result.reason)
         });
       }
       done += 1;
     }
-    
+
     const updated = jobsRepo.updateProgress(job.id, { done });
-    emitJobUpdate({ 
-      id: job.id, 
-      status: updated.status, 
-      progress_done: updated.progress_done, 
-      progress_total: updated.progress_total 
+    emitJobUpdate({
+      id: job.id,
+      status: updated.status,
+      progress_done: updated.progress_done,
+      progress_total: updated.progress_total
     });
     onProgress && onProgress({ done, total: items.length });
   }
-  
+
   log.info('batch_processing_complete', { total: items.length, done });
 }
 
@@ -220,11 +220,11 @@ async function processProjectPhotos({ job, project, projectPhotos, items, payloa
   const cfg = getConfig();
   const thumbCfg = (cfg.processing && cfg.processing.thumbnail) || { maxDim: 200, quality: 80 };
   const prevCfg = (cfg.processing && cfg.processing.preview) || { maxDim: 6000, quality: 80 };
-  
+
   const effectiveForce = !!payload.force;
   const jpgExts = ['jpg', 'jpeg'];
-  const rawExts = ['raw','cr2','nef','arw','dng','raf','orf','rw2'];
-  
+  const rawExts = ['raw', 'cr2', 'nef', 'arw', 'dng', 'raf', 'orf', 'rw2'];
+
   const existsAny = (base, exts) => {
     for (const e of exts) {
       const p1 = path.join(projectPath, `${base}.${e}`);
@@ -233,21 +233,21 @@ async function processProjectPhotos({ job, project, projectPhotos, items, payloa
     }
     return false;
   };
-  
+
   const workerCount = (cfg.processing && cfg.processing.workerCount) || 4;
   const pool = getPool(workerCount);
   const batchSize = workerCount * 2;
-  
+
   let done = 0;
   const pendingItems = items.filter(i => i.status === 'pending');
-  
-  log.info('processing_project_photos', { 
+
+  log.info('processing_project_photos', {
     projectId: project.id,
     projectFolder: project.project_folder,
-    total: items.length, 
-    pending: pendingItems.length 
+    total: items.length,
+    pending: pendingItems.length
   });
-  
+
   for (let i = 0; i < pendingItems.length; i += batchSize) {
     // Stop if job was canceled
     const fresh = jobsRepo.getById(job.id);
@@ -255,7 +255,7 @@ async function processProjectPhotos({ job, project, projectPhotos, items, payloa
       log.info('job_canceled', { jobId: job.id });
       break;
     }
-    
+
     const batch = pendingItems.slice(i, i + batchSize);
     const batchPromises = batch.map(item => processItem({
       item,
@@ -270,23 +270,23 @@ async function processProjectPhotos({ job, project, projectPhotos, items, payloa
       existsAny,
       pool
     }));
-    
+
     const batchResults = await Promise.allSettled(batchPromises);
-    
+
     for (let j = 0; j < batchResults.length; j++) {
       const result = batchResults[j];
       if (result.status === 'rejected') {
-        log.error('batch_item_error', { 
-          itemId: batch[j].id, 
-          error: result.reason?.message || String(result.reason) 
+        log.error('batch_item_error', {
+          itemId: batch[j].id,
+          error: result.reason?.message || String(result.reason)
         });
       }
       done += 1;
     }
-    
+
     onProgress && onProgress({ done, total: items.length });
   }
-  
+
   return done;
 }
 
@@ -308,7 +308,7 @@ async function processItem({
   pool
 }) {
   jobsRepo.updateItemStatus(item.id, { status: 'running' });
-  
+
   try {
     const entry = all.find(p => p.id === item.photo_id || p.filename === item.filename);
     if (!entry) {
@@ -323,7 +323,7 @@ async function processItem({
       });
       return;
     }
-    
+
     // Recompute availability and align keep flags before derivative generation
     try {
       const jpgExists = existsAny(entry.filename, jpgExts);
@@ -348,7 +348,7 @@ async function processItem({
     } catch (err) {
       log.warn('availability_update_failed', { photoId: entry.id, error: err.message });
     }
-    
+
     const sourceFile = supportedSourcePath(projectPath, entry);
     if (!sourceFile) {
       photosRepo.updateDerivativeStatus(entry.id, {
@@ -366,14 +366,14 @@ async function processItem({
       });
       return;
     }
-    
+
     // If user explicitly requested regeneration (force), invalidate cache first
     // User-initiated regeneration means they may not be satisfied with cached derivatives
     if (effectiveForce) {
       derivativeCache.invalidate(entry.id);
       log.debug('cache_invalidated_force', { photoId: entry.id, filename: entry.filename });
     }
-    
+
     // Calculate source file hash for caching
     let sourceHash;
     let sourceSize;
@@ -385,21 +385,21 @@ async function processItem({
       log.error('hash_calculation_failed', { photoId: entry.id, error: err.message });
       sourceHash = null;
     }
-    
+
     // Check cache unless force is enabled
-    const needsRegen = effectiveForce || !sourceHash || 
+    const needsRegen = effectiveForce || !sourceHash ||
       derivativeCache.needsRegeneration(entry.id, sourceHash, sourceSize);
-    
+
     if (!needsRegen) {
       // Cache hit - skip processing but update database status
       log.debug('cache_hit_skip', { photoId: entry.id, filename: entry.filename });
-      
+
       // Update database to mark derivatives as generated (fixes bug where status stays 'pending')
       photosRepo.updateDerivativeStatus(entry.id, {
         thumbnail_status: 'generated',
         preview_status: 'generated',
       });
-      
+
       jobsRepo.updateItemStatus(item.id, { status: 'done', message: 'cached' });
       emitJobUpdate({
         type: 'item',
@@ -411,10 +411,10 @@ async function processItem({
       });
       return;
     }
-    
+
     // Build derivatives list
     const derivatives = [];
-    
+
     if (effectiveForce || entry.thumbnail_status === 'pending' || entry.thumbnail_status === 'failed' || entry.thumbnail_status === 'missing' || !entry.thumbnail_status) {
       derivatives.push({
         type: 'thumbnail',
@@ -424,7 +424,7 @@ async function processItem({
         outputPath: path.join(projectPath, '.thumb', `${entry.filename}.jpg`)
       });
     }
-    
+
     if (effectiveForce || entry.preview_status === 'pending' || entry.preview_status === 'failed' || entry.preview_status === 'missing' || !entry.preview_status) {
       derivatives.push({
         type: 'preview',
@@ -434,27 +434,27 @@ async function processItem({
         outputPath: path.join(projectPath, '.preview', `${entry.filename}.jpg`)
       });
     }
-    
+
     if (derivatives.length === 0) {
       // Nothing to process
       jobsRepo.updateItemStatus(item.id, { status: 'done', message: 'already generated' });
       return;
     }
-    
+
     // Process with worker pool
     const task = { sourcePath: sourceFile, derivatives };
     const results = await pool.processImage(task);
-    
+
     // Update database with results
     let thumbStatus = entry.thumbnail_status;
     let prevStatus = entry.preview_status;
-    
+
     for (const result of results) {
       if (result.error) {
-        log.error('derivative_generation_failed', { 
-          photoId: entry.id, 
-          type: result.type, 
-          error: result.error 
+        log.error('derivative_generation_failed', {
+          photoId: entry.id,
+          type: result.type,
+          error: result.error
         });
         if (result.type === 'thumbnail') thumbStatus = 'failed';
         if (result.type === 'preview') prevStatus = 'failed';
@@ -463,12 +463,12 @@ async function processItem({
         if (result.type === 'preview') prevStatus = 'generated';
       }
     }
-    
+
     photosRepo.updateDerivativeStatus(entry.id, {
       thumbnail_status: thumbStatus,
       preview_status: prevStatus,
     });
-    
+
     // Update cache with successful generation
     if (sourceHash && (thumbStatus === 'generated' || prevStatus === 'generated')) {
       const metadata = {
@@ -477,9 +477,9 @@ async function processItem({
       };
       derivativeCache.updateCache(entry.id, sourceHash, sourceSize, metadata);
     }
-    
+
     jobsRepo.updateItemStatus(item.id, { status: 'done' });
-    
+
     // Emit item-level update for UI
     emitJobUpdate({
       type: 'item',
@@ -489,17 +489,17 @@ async function processItem({
       preview_status: prevStatus,
       updated_at: new Date().toISOString(),
     });
-    
+
   } catch (err) {
-    log.error('item_processing_failed', { 
-      itemId: item.id, 
+    log.error('item_processing_failed', {
+      itemId: item.id,
       photoId: item.photo_id,
       error: err.message,
       stack: err.stack
     });
-    jobsRepo.updateItemStatus(item.id, { 
-      status: 'failed', 
-      message: String(err.message || err) 
+    jobsRepo.updateItemStatus(item.id, {
+      status: 'failed',
+      message: String(err.message || err)
     });
     throw err;
   }

@@ -3,7 +3,7 @@ const path = require('path');
 const fs = require('fs-extra');
 const makeLogger = require('../utils/logger2');
 const log = makeLogger('uploads');
-const exifParser = require('exif-parser');
+const { extractMetadata } = require('../services/metadataExtractor');
 const multer = require('multer');
 const { buildAcceptPredicate } = require('../utils/acceptance');
 const jobsRepo = require('../services/repositories/jobsRepo');
@@ -192,26 +192,7 @@ router.post('/:folder/upload', async (req, res) => {
           let metadata = {};
           if (!isRawFile) {
             try {
-              const parser = exifParser.create(file.buffer);
-              const result = parser.parse();
-              if (result && result.tags) {
-                // Prefer DateTimeOriginal (when photo was taken), fall back to CreateDate, then ModifyDate
-                const captureTimestamp = result.tags.DateTimeOriginal || result.tags.CreateDate || result.tags.ModifyDate || null;
-                
-                metadata = {
-                  date_time_original: captureTimestamp ? new Date(captureTimestamp * 1000).toISOString() : null,
-                  create_date: result.tags.CreateDate || null,
-                  modify_date: result.tags.ModifyDate || null,
-                  camera_model: result.tags.Model || null,
-                  camera_make: result.tags.Make || null,
-                  make: result.tags.Make || null,
-                  model: result.tags.Model || null,
-                  exif_image_width: result.tags.ExifImageWidth || null,
-                  exif_image_height: result.tags.ExifImageHeight || null,
-                  orientation: result.tags.Orientation || null
-                };
-                Object.keys(metadata).forEach(k => metadata[k] === null && delete metadata[k]);
-              }
+              metadata = await extractMetadata(file.buffer);
             } catch (err) {
               log.warn('exif_parse_failed', { project_id: project.id, project_folder: project.project_folder, project_name: project.project_name, filename: sanitizedName, error: err && err.message });
               perFileErrors.push({ filename: sanitizedName, error: 'EXIF parsing failed' });
@@ -280,7 +261,7 @@ router.post('/:folder/upload', async (req, res) => {
           if (perFileErrors.length > 0) response.warnings = perFileErrors;
           return res.status(202).json(response);
         }
-        const errorMsg = perFileErrors.length > 0 
+        const errorMsg = perFileErrors.length > 0
           ? `No valid files uploaded. Errors: ${perFileErrors.map(e => `${e.filename}: ${e.error}`).join('; ')}`
           : 'No valid files uploaded';
         return res.status(400).json({ error: errorMsg, perFileErrors });
@@ -293,8 +274,8 @@ router.post('/:folder/upload', async (req, res) => {
         log.warn('start_upload_postprocess_failed', { project_id: project.id, project_folder: project.project_folder, project_name: project.project_name, error: e && e.message });
       }
 
-      const response = { 
-        message: `Successfully uploaded ${uploadedFiles.length} files`, 
+      const response = {
+        message: `Successfully uploaded ${uploadedFiles.length} files`,
         files: uploadedFiles,
         flags: { overwriteInThisProject, reloadConflictsIntoThisProject }
       };
@@ -360,8 +341,8 @@ router.post('/:folder/analyze-files', async (req, res) => {
       const existing = photosRepo.getByProjectAndFilename(project.id, baseName);
       // Cross-project conflict detection (by full filename base)
       const otherProjectEntry = photosRepo.getGlobalByFilename(baseName, { exclude_project_id: project.id });
-      
-      
+
+
       if (existing) {
         const hasCompletion = (existing.raw_available && /\.(jpe?g)$/i.test(ext)) || (existing.jpg_available && /\.(arw|cr2|nef|dng|raw)$/i.test(ext));
         if (hasCompletion) {

@@ -74,4 +74,47 @@ module.exports = {
   guessContentTypeFromExt,
   JPG_EXTS,
   RAW_EXTS,
+  resolvePhotoPath,
 };
+
+/**
+ * Resolve the absolute path to a photo file, checking for existence with extension variants.
+ * This is the canonical way to find a photo's source file on disk.
+ * 
+ * @param {string} projectPath - Absolute path to project folder
+ * @param {Object} photo - Photo object with filename and ext
+ * @returns {Promise<string|null>} Absolute path to photo file or null if not found
+ */
+async function resolvePhotoPath(projectPath, photo) {
+  if (!projectPath || !photo || !photo.filename) return null;
+
+  // Try exact match first (if ext is known)
+  if (photo.ext) {
+    const p1 = path.join(projectPath, `${photo.filename}.${photo.ext}`);
+    if (await fs.pathExists(p1)) return p1;
+
+    // Try uppercase
+    const p2 = path.join(projectPath, `${photo.filename}.${photo.ext.toUpperCase()}`);
+    if (await fs.pathExists(p2)) return p2;
+
+    // Try lowercase
+    const p3 = path.join(projectPath, `${photo.filename}.${photo.ext.toLowerCase()}`);
+    if (await fs.pathExists(p3)) return p3;
+  }
+
+  // Fallback: try common extensions if ext is missing or not found
+  // Combined list of supported extensions
+  const commonExts = [
+    'jpg', 'jpeg', 'png', 'webp', 'tiff', 'tif', // Common image formats
+    'raw', 'cr2', 'nef', 'arw', 'dng', 'raf', 'orf', 'rw2' // RAW formats
+  ];
+
+  for (const ext of commonExts) {
+    const p1 = path.join(projectPath, `${photo.filename}.${ext}`);
+    if (await fs.pathExists(p1)) return p1;
+    const p2 = path.join(projectPath, `${photo.filename}.${ext.toUpperCase()}`);
+    if (await fs.pathExists(p2)) return p2;
+  }
+
+  return null;
+}
