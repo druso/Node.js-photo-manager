@@ -226,7 +226,7 @@ router.post('/:folder/upload', async (req, res) => {
             thumbnail_status: (fileType === 'jpg' || (existing && existing.thumbnail_status === 'failed')) ? thumbnailStatus : (existing?.thumbnail_status || null),
             preview_status: (fileType === 'jpg' || (existing && existing.preview_status === 'failed')) ? previewStatus : (existing?.preview_status || null),
             orientation: metadata.orientation ?? existing?.orientation ?? null,
-            meta_json: Object.keys(metadata).length ? JSON.stringify(metadata) : (existing?.meta_json || null),
+            meta_json: metadata.meta_json || (Object.keys(metadata).length ? JSON.stringify(metadata) : (existing?.meta_json || null)),
           };
           photosRepo.upsertPhoto(project.id, photoPayload);
 
