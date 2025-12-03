@@ -212,7 +212,7 @@ router.get('/:folder/thumbnail/:filename', rateLimit({ windowMs: 60 * 1000, max:
     }
     let entry = photosRepo.getByProjectAndFilename(project.id, filename);
     if (!entry && base && base !== filename) {
-      entry = photosRepo.getByProjectAndFilename(project.id, base);
+      entry = photosRepo.getByProjectAndBasename(project.id, base);
     }
     if (!entry) {
       setNegativeCacheHeaders(res);
@@ -292,7 +292,7 @@ router.get('/:folder/preview/:filename', rateLimit({ windowMs: 60 * 1000, max: R
     }
     let entry = photosRepo.getByProjectAndFilename(project.id, filename);
     if (!entry && base && base !== filename) {
-      entry = photosRepo.getByProjectAndFilename(project.id, base);
+      entry = photosRepo.getByProjectAndBasename(project.id, base);
     }
     if (!entry) {
       setNegativeCacheHeaders(res);
@@ -368,7 +368,7 @@ router.get('/:folder/file/:type/:filename', rateLimit({ windowMs: 60 * 1000, max
     let entry = photosRepo.getByProjectAndFilename(project.id, filenameParam);
     const triedExact = !!entry;
     if (!entry && base && base !== filenameParam) {
-      entry = photosRepo.getByProjectAndFilename(project.id, base);
+      entry = photosRepo.getByProjectAndBasename(project.id, base);
     }
     log.info('file_lookup', { project_folder: folder, type, filename: filenameParam, base, tried_exact: triedExact, found: !!entry });
     if (!entry) return res.status(404).json({ error: 'Photo not found' });
@@ -435,7 +435,7 @@ router.post('/:folder/download-url', express.json(), async (req, res) => {
     let entry = photosRepo.getByProjectAndFilename(project.id, filename);
     const triedExact = !!entry;
     if (!entry && base && base !== filename) {
-      entry = photosRepo.getByProjectAndFilename(project.id, base);
+      entry = photosRepo.getByProjectAndBasename(project.id, base);
     }
     log.info('download_url_lookup', { project_folder: folder, filename, base, tried_exact: triedExact, found: !!entry });
     if (!entry) return res.status(404).json({ error: 'Photo not found' });
@@ -460,7 +460,7 @@ router.get('/:folder/files-zip/:filename', rateLimit({ windowMs: 60 * 1000, max:
     let entry = photosRepo.getByProjectAndFilename(project.id, filenameParam);
     const triedExact = !!entry;
     if (!entry && base && base !== filenameParam) {
-      entry = photosRepo.getByProjectAndFilename(project.id, base);
+      entry = photosRepo.getByProjectAndBasename(project.id, base);
     }
     log.info('zip_lookup', { project_folder: folder, filename: filenameParam, base, tried_exact: triedExact, found: !!entry });
     if (!entry) return res.status(404).json({ error: 'Photo not found' });
@@ -501,7 +501,7 @@ router.get('/:folder/image/:filename', rateLimit({ windowMs: 60 * 1000, max: RAT
     let entry = photosRepo.getByProjectAndFilename(project.id, filename);
     const triedExact = !!entry;
     if (!entry && base && base !== filename) {
-      entry = photosRepo.getByProjectAndFilename(project.id, base);
+      entry = photosRepo.getByProjectAndBasename(project.id, base);
     }
     log.info('image_lookup', { project_folder: folder, filename, base, tried_exact: triedExact, found: !!entry });
     if (!entry) { setNegativeCacheHeaders(res); return res.status(404).json({ error: 'Photo not found' }); }

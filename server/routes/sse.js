@@ -7,7 +7,7 @@ const makeLogger = require('../utils/logger2');
 const log = makeLogger('sse-pending');
 
 
-const MAX_SSE_PER_IP = Number(process.env.SSE_MAX_CONN_PER_IP || 2);
+const MAX_SSE_PER_IP = Number(process.env.SSE_MAX_CONN_PER_IP || 5);
 
 /**
  * UNIFIED SSE ENDPOINT - Multiplexed stream for all events
@@ -24,6 +24,7 @@ router.get('/stream', (req, res) => {
   const currentConnections = sseMultiplexer.getConnectionCountForUser(ip);
   if (currentConnections >= MAX_SSE_PER_IP) {
     log.warn('sse_stream_ip_limit_exceeded', { ip, current: currentConnections, max: MAX_SSE_PER_IP });
+    res.setHeader('Retry-After', '30');
     return res.status(429).json({ error: 'Too many SSE connections from this IP' });
   }
 

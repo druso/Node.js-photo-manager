@@ -54,6 +54,29 @@ function getByProjectAndFilename(project_id, filename) {
 }
 
 /**
+ * Get photo by project and basename (fuzzy match)
+ * @param {number} project_id - Project ID
+ * @param {string} basename - Photo basename (without extension)
+ * @returns {Object|null} Photo record or null if not found
+ */
+function getByProjectAndBasename(project_id, basename) {
+  if (!project_id || !basename) return null;
+  const db = getDb();
+  const normalized = String(basename).toLowerCase();
+  const stmt = stmtCache.get(db, 'photos:getByProjectAndBasename', `
+    SELECT * FROM photos
+    WHERE project_id = ?
+      AND (
+        (basename IS NOT NULL AND lower(basename) = ?)
+        OR lower(filename) = ?
+        OR lower(filename) LIKE (? || '.%')
+      )
+    LIMIT 1
+  `);
+  return stmt.get(project_id, normalized, normalized, normalized);
+}
+
+/**
  * Get photo by filename across all projects, optionally excluding a project
  * @param {string} filename - Photo filename
  * @param {Object} options - Options object
@@ -350,6 +373,7 @@ module.exports = {
   getByManifestId,
   getByFilename,
   getByProjectAndFilename,
+  getByProjectAndBasename,
   getGlobalByFilename,
   getGlobalByFilenameInsensitive,
   getPublicByFilename,

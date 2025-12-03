@@ -30,6 +30,7 @@ const getById = photoCrud.getById;
 const getByManifestId = photoCrud.getByManifestId;
 const getByFilename = photoCrud.getByFilename;
 const getByProjectAndFilename = photoCrud.getByProjectAndFilename;
+const getByProjectAndBasename = photoCrud.getByProjectAndBasename;
 const getGlobalByFilename = photoCrud.getGlobalByFilename;
 const getGlobalByFilenameInsensitive = photoCrud.getGlobalByFilenameInsensitive;
 const moveToProject = photoCrud.moveToProject;
@@ -101,6 +102,7 @@ module.exports = {
   getByManifestId,
   getByFilename,
   getByProjectAndFilename,
+  getByProjectAndBasename,
   getGlobalByFilename,
   getGlobalByFilenameInsensitive,
   getPublicByFilename,
