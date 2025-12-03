@@ -532,7 +532,7 @@ const PhotoViewer = ({
       const pf = fromAllMode ? (p?.project_folder || projectFolder) : projectFolder;
       const v = encodeURIComponent(String(p?.updated_at || p?.taken_at || p?.id || ''));
       return usePreview
-        ? `/api/projects/${encodeURIComponent(pf)}/preview/${encodeURIComponent(p.filename)}?v=${v}`
+        ? `/api/projects/${encodeURIComponent(pf)}/preview/${encodeURIComponent(p.filename.replace(/\.[^/.]+$/, "") + ".webp")}?v=${v}`
         : `/api/projects/${encodeURIComponent(pf)}/image/${encodeURIComponent(filenameWithExtForImage(p))}?v=${v}`;
     };
     for (let offset = 1; offset <= preloadCount; offset++) {
@@ -620,7 +620,9 @@ const PhotoViewer = ({
     if (!folder) return null;
     const versionToken = String(currentPhoto?.updated_at || currentPhoto?.taken_at || currentPhoto?.id || currentIndex || '');
     const type = usePreview ? 'preview' : 'image';
-    const filename = usePreview ? currentPhoto.filename : filenameWithExtForImage(currentPhoto);
+    const filename = usePreview 
+      ? currentPhoto.filename.replace(/\.[^/.]+$/, "") + ".webp" 
+      : filenameWithExtForImage(currentPhoto);
 
     if (!isPublicPhoto(currentPhoto)) {
       return buildLocalUrl(folder, type, filename, versionToken);

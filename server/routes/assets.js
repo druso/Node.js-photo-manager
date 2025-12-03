@@ -201,7 +201,7 @@ router.get('/:folder/thumbnail/:filename', rateLimit({ windowMs: 60 * 1000, max:
   const { folder, filename } = req.params;
   const base = baseFromParam(filename);
   const projectPath = getProjectPath(folder);
-  const thumbPath = path.join(projectPath, '.thumb', `${base}.jpg`);
+  const thumbPath = path.join(projectPath, '.thumb', `${base}.webp`);
   log.info('thumb_request', { folder, filename, base, thumbPath, exists: fs.existsSync(thumbPath) });
   const admin = getOptionalAdmin(req);
   if (fs.existsSync(thumbPath)) {
@@ -245,7 +245,7 @@ router.get('/:folder/thumbnail/:filename', rateLimit({ windowMs: 60 * 1000, max:
     setCacheHeadersOn200(req, res);
     if (etag) res.setHeader('ETag', etag);
     try {
-      res.setHeader('Content-Type', 'image/jpeg');
+      res.setHeader('Content-Type', 'image/webp');
       if (hashRecord) {
         res.setHeader('X-Public-Hash', hashRecord.hash);
         res.setHeader('X-Public-Hash-Expires-At', hashRecord.expires_at);
@@ -281,7 +281,7 @@ router.get('/:folder/preview/:filename', rateLimit({ windowMs: 60 * 1000, max: R
   const { folder, filename } = req.params;
   const base = baseFromParam(filename);
   const projectPath = getProjectPath(folder);
-  const prevPath = path.join(projectPath, '.preview', `${base}.jpg`);
+  const prevPath = path.join(projectPath, '.preview', `${base}.webp`);
   log.info('preview_request', { folder, filename, base, prevPath, exists: fs.existsSync(prevPath) });
   const admin = getOptionalAdmin(req);
   if (fs.existsSync(prevPath)) {
@@ -325,7 +325,7 @@ router.get('/:folder/preview/:filename', rateLimit({ windowMs: 60 * 1000, max: R
     setCacheHeadersOn200(req, res);
     if (etag) res.setHeader('ETag', etag);
     try {
-      res.setHeader('Content-Type', 'image/jpeg');
+      res.setHeader('Content-Type', 'image/webp');
       if (hashRecord) {
         res.setHeader('X-Public-Hash', hashRecord.hash);
         res.setHeader('X-Public-Hash-Expires-At', hashRecord.expires_at);

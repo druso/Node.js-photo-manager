@@ -34,20 +34,20 @@ router.post('/maintenance/discover-folders', rateLimit({ windowMs: 10 * 60 * 100
       type: 'folder_discovery',
       priority: 95,
       scope: 'global',
-      payload: { 
+      payload: {
         source: 'manual',
         triggered_at: new Date().toISOString()
       }
     });
-    
-    log.info('manual_folder_discovery_triggered', { 
+
+    log.info('manual_folder_discovery_triggered', {
       job_id: job.id
     });
-    
-    res.json({ 
-      success: true, 
+
+    res.json({
+      success: true,
       job_id: job.id,
-      message: 'Folder discovery job enqueued. Check job status or logs for results.' 
+      message: 'Folder discovery job enqueued. Check job status or logs for results.'
     });
   } catch (err) {
     log.error('manual_folder_discovery_failed', { error: err.message });
@@ -61,32 +61,64 @@ router.post('/maintenance/discover-folders', rateLimit({ windowMs: 10 * 60 * 100
 router.post('/maintenance/manifest-check', rateLimit({ windowMs: 10 * 60 * 1000, max: 5 }), async (req, res) => {
   try {
     const { project_id } = req.body;
-    
+
     const job = jobsRepo.enqueue({
       tenant_id: 1,
       project_id: project_id || null,
       type: 'manifest_check',
       priority: 95,
       scope: project_id ? 'project' : 'global',
-      payload: { 
+      payload: {
         source: 'manual',
         triggered_at: new Date().toISOString()
       }
     });
-    
-    log.info('manual_manifest_check_triggered', { 
+
+    log.info('manual_manifest_check_triggered', {
       job_id: job.id,
       project_id: project_id || 'all'
     });
-    
-    res.json({ 
-      success: true, 
+
+    res.json({
+      success: true,
       job_id: job.id,
-      message: `Manifest check job enqueued${project_id ? ' for project' : ' (global)'}. Check job status or logs for results.` 
+      message: `Manifest check job enqueued${project_id ? ' for project' : ' (global)'}. Check job status or logs for results.`
     });
   } catch (err) {
     log.error('manual_manifest_check_failed', { error: err.message });
     res.status(500).json({ error: err.message || 'Failed to enqueue manifest check job' });
+  }
+});
+
+// POST /api/projects/maintenance/migrate-webp
+// Manual trigger for WebP migration
+// Limit: 5 requests per 10 minutes per IP
+router.post('/maintenance/migrate-webp', rateLimit({ windowMs: 10 * 60 * 1000, max: 5 }), async (req, res) => {
+  try {
+    const job = jobsRepo.enqueue({
+      tenant_id: 1,
+      project_id: null,
+      type: 'webp_migration',
+      priority: 95,
+      scope: 'global',
+      payload: {
+        source: 'manual',
+        triggered_at: new Date().toISOString()
+      }
+    });
+
+    log.info('manual_webp_migration_triggered', {
+      job_id: job.id
+    });
+
+    res.json({
+      success: true,
+      job_id: job.id,
+      message: 'WebP migration job enqueued. Check job status or logs for results.'
+    });
+  } catch (err) {
+    log.error('manual_webp_migration_failed', { error: err.message });
+    res.status(500).json({ error: err.message || 'Failed to enqueue WebP migration job' });
   }
 });
 

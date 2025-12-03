@@ -31,7 +31,7 @@ export class ProjectDataService {
         return (st && typeof st.windowY === 'number') ? st.windowY : live;
       } catch { return live; }
     })();
-    
+
     const mainEl = this.mainRef.current;
     const savedMainY = (() => {
       const live = mainEl ? mainEl.scrollTop : 0;
@@ -40,11 +40,11 @@ export class ProjectDataService {
         return (st && typeof st.mainY === 'number') ? st.mainY : live;
       } catch { return live; }
     })();
-    
+
     const savedViewer = (() => {
-      try { 
-        const st = getSessionState(); 
-        return (st && st.viewer) ? st.viewer : (this.viewerState || { isOpen: false }); 
+      try {
+        const st = getSessionState();
+        return (st && st.viewer) ? st.viewer : (this.viewerState || { isOpen: false });
       }
       catch { return this.viewerState || { isOpen: false }; }
     })();
@@ -54,7 +54,6 @@ export class ProjectDataService {
       const project = await getProject(projectFolder);
       const normalized = project ? { ...project, photos: project.photos || [] } : null;
       this.setProjectData(normalized);
-      try { this.resetProjectPagination(); } catch {}
     } catch (error) {
       // Error fetching project data
       console.error('Failed to fetch project data:', error);
@@ -62,18 +61,18 @@ export class ProjectDataService {
       // Restore scroll and viewer context on next frame(s); retry a couple frames for layout settle
       try {
         requestAnimationFrame(() => {
-          try { window.scrollTo(0, savedWindowY); } catch {}
-          if (mainEl) { try { mainEl.scrollTop = savedMainY; } catch {} }
+          try { window.scrollTo(0, savedWindowY); } catch { }
+          if (mainEl) { try { mainEl.scrollTop = savedMainY; } catch { } }
           if (savedViewer && savedViewer.isOpen) {
             this.setViewerState(prev => ({ ...(prev || {}), ...savedViewer, isOpen: true }));
           }
           // second tick in case images/layout shift
           requestAnimationFrame(() => {
-            try { window.scrollTo(0, savedWindowY); } catch {}
-            if (mainEl) { try { mainEl.scrollTop = savedMainY; } catch {} }
+            try { window.scrollTo(0, savedWindowY); } catch { }
+            if (mainEl) { try { mainEl.scrollTop = savedMainY; } catch { } }
           });
         });
-      } catch {}
+      } catch { }
       this.setLoading(false);
     }
   }

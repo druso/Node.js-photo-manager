@@ -21,8 +21,10 @@ export default function Thumbnail({ photo, projectFolder, className = '', rounde
   const versionToken = photo.updated_at || photo.taken_at || photo.id || '0';
   const debug = (typeof window !== 'undefined') && (window.__DEBUG_THUMBS || localStorage.getItem('debugThumbs') === '1');
   const resolvedFolder = photo.project_folder || projectFolder;
+  // Construct WebP filename: replace extension or append .webp
+  const webpFilename = photo.filename.replace(/\.[^/.]+$/, "") + ".webp";
   const baseUrl = resolvedFolder
-    ? `/api/projects/${encodeURIComponent(resolvedFolder)}/thumbnail/${encodeURIComponent(photo.filename)}?v=${encodeURIComponent(versionToken)}`
+    ? `/api/projects/${encodeURIComponent(resolvedFolder)}/thumbnail/${encodeURIComponent(webpFilename)}?v=${encodeURIComponent(versionToken)}`
     : '';
   const { ensurePublicAssets, getAssetUrl } = usePublicHashContext();
   const [src, setSrc] = useState(isPublicPhoto(photo) ? '' : baseUrl);

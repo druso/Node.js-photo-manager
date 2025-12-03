@@ -9,7 +9,7 @@ const RAW_EXTS = ['.cr2', '.nef', '.arw', '.dng', '.raw'];
 function baseFromParam(name) {
   try {
     const ext = (path.extname(name) || '').toLowerCase();
-    const known = new Set(['.jpg', '.jpeg', '.raw', '.arw', '.cr2', '.nef', '.dng']);
+    const known = new Set(['.jpg', '.jpeg', '.raw', '.arw', '.cr2', '.nef', '.dng', '.webp']);
     if (known.has(ext)) {
       return path.basename(name, ext);
     }

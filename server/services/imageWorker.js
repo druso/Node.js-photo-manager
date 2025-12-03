@@ -17,10 +17,10 @@ parentPort.on('message', async ({ jobId, task }) => {
     const result = await processImage(task);
     parentPort.postMessage({ jobId, result });
   } catch (err) {
-    parentPort.postMessage({ 
-      jobId, 
+    parentPort.postMessage({
+      jobId,
       error: err.message || String(err),
-      stack: err.stack 
+      stack: err.stack
     });
   }
 });
@@ -34,17 +34,17 @@ parentPort.on('message', async ({ jobId, task }) => {
  */
 async function processImage(task) {
   const { sourcePath, derivatives } = task;
-  
+
   if (!sourcePath || !fs.existsSync(sourcePath)) {
     throw new Error(`Source file not found: ${sourcePath}`);
   }
-  
+
   if (!Array.isArray(derivatives) || derivatives.length === 0) {
     throw new Error('No derivatives specified');
   }
-  
+
   const results = [];
-  
+
   for (const deriv of derivatives) {
     try {
       const result = await generateDerivative(sourcePath, deriv);
@@ -58,7 +58,7 @@ async function processImage(task) {
       });
     }
   }
-  
+
   return results;
 }
 
@@ -70,14 +70,14 @@ async function processImage(task) {
  */
 async function generateDerivative(sourcePath, deriv) {
   const { type, width, height, quality, outputPath } = deriv;
-  
+
   // Ensure output directory exists
   await fs.ensureDir(path.dirname(outputPath));
-  
+
   // Create Sharp pipeline
   let pipeline = sharp(sourcePath)
     .rotate(); // Auto-rotate based on EXIF orientation
-  
+
   // Resize if dimensions specified
   if (width || height) {
     pipeline = pipeline.resize(width, height, {
@@ -85,18 +85,17 @@ async function generateDerivative(sourcePath, deriv) {
       withoutEnlargement: true
     });
   }
-  
-  // Convert to JPEG with progressive encoding
-  const jpegQuality = Math.max(1, Math.min(100, Number(quality) || 80));
-  pipeline = pipeline.jpeg({
-    quality: jpegQuality,
-    progressive: true, // Enable progressive JPEG for better loading experience
-    mozjpeg: true // Use mozjpeg for better compression if available
+
+  // Convert to WebP
+  const webpQuality = Math.max(1, Math.min(100, Number(quality) || 80));
+  pipeline = pipeline.webp({
+    quality: webpQuality,
+    effort: 4 // Balance between speed and compression (0-6)
   });
-  
+
   // Generate the file
   const output = await pipeline.toFile(outputPath);
-  
+
   return {
     type,
     outputPath,

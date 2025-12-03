@@ -84,6 +84,10 @@
       {
         "type": "manifest_cleaning",
         "priority": 80
+      },
+      {
+        "type": "webp_migration",
+        "priority": 50
       }
     ]
   },
@@ -123,6 +127,10 @@
       {
         "type": "manifest_cleaning",
         "priority": 80
+      },
+      {
+        "type": "webp_migration",
+        "priority": 50
       }
     ]
   },

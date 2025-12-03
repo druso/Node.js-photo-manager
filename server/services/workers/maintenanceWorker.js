@@ -14,7 +14,7 @@ function splitExtSets() {
   const { acceptedExtensions } = buildAcceptPredicate();
   const lower = new Set([...acceptedExtensions].map(e => String(e).toLowerCase()));
   const jpg = new Set(['jpg', 'jpeg']);
-  const knownRaw = new Set(['raw','cr2','nef','arw','dng','raf','orf','rw2']);
+  const knownRaw = new Set(['raw', 'cr2', 'nef', 'arw', 'dng', 'raf', 'orf', 'rw2']);
   const raw = new Set();
   const other = new Set();
   for (const e of lower) {
@@ -180,16 +180,16 @@ async function runManifestCheck(job) {
   const CHUNK_SIZE = config.maintenance?.manifest_check_chunk_size || 2000;
   const projects = getProjectsForJob(job);
   let totalChanged = 0;
-  
+
   for (const project of projects) {
     try {
       const projectPath = await ensureManifest(project);
       const { jpg, raw, other } = splitExtSets();
-      
+
       let cursor = null;
       let changed = 0;
       let processed = 0;
-      
+
       // Stream through photos using cursor-based pagination
       do {
         const page = photosRepo.listPaged({
@@ -199,23 +199,23 @@ async function runManifestCheck(job) {
           sort: 'date_time_original',
           dir: 'DESC'
         });
-        
+
         // Process this chunk
         for (const p of page.items) {
           const base = p.filename;
-          const jpgExists = [...jpg].some(e => 
-            fs.existsSync(path.join(projectPath, `${base}.${e}`)) || 
+          const jpgExists = [...jpg].some(e =>
+            fs.existsSync(path.join(projectPath, `${base}.${e}`)) ||
             fs.existsSync(path.join(projectPath, `${base}.${e.toUpperCase()}`)));
-          const rawExists = [...raw].some(e => 
-            fs.existsSync(path.join(projectPath, `${base}.${e}`)) || 
+          const rawExists = [...raw].some(e =>
+            fs.existsSync(path.join(projectPath, `${base}.${e}`)) ||
             fs.existsSync(path.join(projectPath, `${base}.${e.toUpperCase()}`)));
-          const otherExists = [...other].some(e => 
-            fs.existsSync(path.join(projectPath, `${base}.${e}`)) || 
+          const otherExists = [...other].some(e =>
+            fs.existsSync(path.join(projectPath, `${base}.${e}`)) ||
             fs.existsSync(path.join(projectPath, `${base}.${e.toUpperCase()}`)));
-          
-          if ((!!p.jpg_available) !== jpgExists || 
-              (!!p.raw_available) !== rawExists || 
-              (!!p.other_available) !== otherExists) {
+
+          if ((!!p.jpg_available) !== jpgExists ||
+            (!!p.raw_available) !== rawExists ||
+            (!!p.other_available) !== otherExists) {
             photosRepo.upsertPhoto(project.id, {
               manifest_id: p.manifest_id,
               filename: p.filename,
@@ -232,57 +232,57 @@ async function runManifestCheck(job) {
               orientation: p.orientation,
               meta_json: p.meta_json,
             });
-            log.warn('manifest_check_corrected', { 
-              ...projectLogContext(project), 
-              filename: base, 
-              jpg: jpgExists, 
-              raw: rawExists, 
-              other: otherExists 
+            log.warn('manifest_check_corrected', {
+              ...projectLogContext(project),
+              filename: base,
+              jpg: jpgExists,
+              raw: rawExists,
+              other: otherExists
             });
             changed++;
           }
           processed++;
         }
-        
+
         // Update job progress
         if (job.id && page.total) {
           jobsRepo.updateProgress(job.id, { done: processed, total: page.total });
         }
-        
+
         // Move to next page
         cursor = page.nextCursor;
-        
+
         // Yield to event loop between chunks
         await new Promise(resolve => setImmediate(resolve));
-        
+
       } while (cursor);
-      
+
       totalChanged += changed;
-      log.info('manifest_check_summary', { 
-        ...projectLogContext(project), 
+      log.info('manifest_check_summary', {
+        ...projectLogContext(project),
         updated_rows: changed,
         total_processed: processed
       });
-      
+
       if (changed > 0) {
-        emitJobUpdate({ 
-          type: 'manifest_changed', 
-          project_folder: project.project_folder, 
-          changed 
+        emitJobUpdate({
+          type: 'manifest_changed',
+          project_folder: project.project_folder,
+          changed
         });
       }
     } catch (err) {
-      log.error('manifest_check_project_failed', { 
-        ...projectLogContext(project), 
-        error: err.message 
+      log.error('manifest_check_project_failed', {
+        ...projectLogContext(project),
+        error: err.message
       });
     }
   }
-  
+
   if (projects.length > 1) {
-    log.info('manifest_check_global_summary', { 
-      projects_processed: projects.length, 
-      total_changed: totalChanged 
+    log.info('manifest_check_global_summary', {
+      projects_processed: projects.length,
+      total_changed: totalChanged
     });
   }
 }
@@ -485,7 +485,7 @@ async function runFolderAlignment(job) {
   const { generateUniqueFolderName } = require('../../utils/projects');
   const { writeManifest, readManifest } = require('../projectManifest');
   const { getProjectPath } = require('../fsUtils');
-  
+
   const projects = getProjectsForJob(job);
   let totalAligned = 0;
 
@@ -493,24 +493,24 @@ async function runFolderAlignment(job) {
     try {
       const dbName = project.project_name;
       const dbFolder = project.project_folder;
-      
+
       // Read manifest to check three-way consistency
       const manifest = readManifest(dbFolder);
       const manifestName = manifest?.name;
-      
+
       // Check if all three are in sync
       const allInSync = (dbName === dbFolder && dbName === manifestName);
-      
+
       if (allInSync) {
         continue; // Perfect sync, nothing to do
       }
-      
+
       // Generate expected folder name from project name (source of truth)
       const expectedFolder = generateUniqueFolderName(dbName);
-      
+
       const oldPath = getProjectPath(dbFolder);
       const newPath = getProjectPath(expectedFolder);
-      
+
       // Safety checks
       if (!await fs.pathExists(oldPath)) {
         log.warn('folder_alignment_source_missing', {
@@ -520,7 +520,7 @@ async function runFolderAlignment(job) {
         });
         continue;
       }
-      
+
       // If folder needs renaming
       let folderRenamed = false;
       if (dbFolder !== expectedFolder) {
@@ -533,19 +533,19 @@ async function runFolderAlignment(job) {
         } else {
           // Perform atomic rename
           await fs.rename(oldPath, newPath);
-          
+
           // Update database
           projectsRepo.updateFolder(project.id, expectedFolder);
-          
+
           folderRenamed = true;
-          
+
           log.info('folder_renamed', {
             project_id: project.id,
             project_name: dbName,
             old_folder: dbFolder,
             new_folder: expectedFolder
           });
-          
+
           // Emit SSE event for UI update
           emitJobUpdate({
             type: 'folder_renamed',
@@ -556,7 +556,7 @@ async function runFolderAlignment(job) {
           });
         }
       }
-      
+
       // Always sync manifest to match project_name (source of truth)
       const finalFolder = folderRenamed ? expectedFolder : dbFolder;
       writeManifest(finalFolder, {
@@ -564,7 +564,7 @@ async function runFolderAlignment(job) {
         id: project.id,
         created_at: project.created_at
       });
-      
+
       if (manifestName !== dbName) {
         log.info('manifest_name_synced', {
           project_id: project.id,
@@ -573,9 +573,9 @@ async function runFolderAlignment(job) {
           new_manifest_name: dbName
         });
       }
-      
+
       totalAligned++;
-      
+
     } catch (err) {
       log.error('folder_alignment_failed', {
         ...projectLogContext(project),
@@ -613,10 +613,10 @@ async function runOrphanedProjectCleanup(job) {
           ...projectLogContext(project),
           reason: 'Folder does not exist'
         });
-        
+
         projectsRepo.remove(project.id);
         totalRemoved++;
-        
+
         emitJobUpdate({
           type: 'project_removed',
           project_id: project.id,
@@ -652,21 +652,21 @@ async function runDerivativeCacheValidation(job) {
   const derivativeCache = require('../derivativeCache');
   const { getProjectPath } = require('../fsUtils');
   const CHUNK_SIZE = config.maintenance?.cache_validation_chunk_size || 1000;
-  
+
   const projects = getProjectsForJob(job);
   let totalValidated = 0;
   let totalInvalidated = 0;
-  
+
   for (const project of projects) {
     try {
       const projectPath = getProjectPath(project.project_folder);
       const thumbDir = path.join(projectPath, '.thumb');
       const previewDir = path.join(projectPath, '.preview');
-      
+
       let cursor = null;
       let projectInvalidated = 0;
       let projectValidated = 0;
-      
+
       // Stream through photos using cursor-based pagination
       do {
         const page = photosRepo.listPaged({
@@ -676,7 +676,7 @@ async function runDerivativeCacheValidation(job) {
           sort: 'id',
           dir: 'ASC'
         });
-        
+
         // Check each photo's cache entry
         for (const photo of page.items) {
           const cached = derivativeCache.getCached(photo.id);
@@ -684,28 +684,28 @@ async function runDerivativeCacheValidation(job) {
             projectValidated++;
             continue; // No cache entry, nothing to validate
           }
-          
+
           // Check if cached derivatives actually exist on disk
           let thumbExists = false;
           let previewExists = false;
-          
+
           if (cached.thumbnail) {
             const thumbPath = path.join(thumbDir, `${photo.filename}.jpg`);
             thumbExists = await fs.pathExists(thumbPath);
           }
-          
+
           if (cached.preview) {
             const previewPath = path.join(previewDir, `${photo.filename}.jpg`);
             previewExists = await fs.pathExists(previewPath);
           }
-          
+
           // If cache says derivatives exist but they don't, invalidate cache
           const cacheInvalid = (cached.thumbnail && !thumbExists) || (cached.preview && !previewExists);
-          
+
           if (cacheInvalid) {
             derivativeCache.invalidate(photo.id);
             projectInvalidated++;
-            
+
             // Also update database status to reflect missing derivatives
             const updates = {};
             if (cached.thumbnail && !thumbExists) {
@@ -714,11 +714,11 @@ async function runDerivativeCacheValidation(job) {
             if (cached.preview && !previewExists) {
               updates.preview_status = 'missing';
             }
-            
+
             if (Object.keys(updates).length > 0) {
               photosRepo.updateDerivativeStatus(photo.id, updates);
             }
-            
+
             log.warn('cache_invalidated_missing_files', {
               ...projectLogContext(project),
               photo_id: photo.id,
@@ -730,26 +730,26 @@ async function runDerivativeCacheValidation(job) {
             projectValidated++;
           }
         }
-        
+
         // Update job progress
         if (job.id && page.total) {
-          jobsRepo.updateProgress(job.id, { 
-            done: projectValidated + projectInvalidated, 
-            total: page.total 
+          jobsRepo.updateProgress(job.id, {
+            done: projectValidated + projectInvalidated,
+            total: page.total
           });
         }
-        
+
         // Move to next page
         cursor = page.nextCursor;
-        
+
         // Yield to event loop between chunks
         await new Promise(resolve => setImmediate(resolve));
-        
+
       } while (cursor);
-      
+
       totalValidated += projectValidated;
       totalInvalidated += projectInvalidated;
-      
+
       // Check for photos with missing derivatives (regardless of cache invalidation)
       // This catches cases where derivatives were never generated or manually deleted
       let missingPhotos = [];
@@ -759,7 +759,7 @@ async function runDerivativeCacheValidation(job) {
           limit: 10000,
           sort: 'id',
           dir: 'ASC'
-        }).items.filter(p => 
+        }).items.filter(p =>
           p.thumbnail_status === 'missing' || p.preview_status === 'missing'
         );
       } catch (err) {
@@ -768,14 +768,14 @@ async function runDerivativeCacheValidation(job) {
           error: err.message
         });
       }
-      
+
       log.info('cache_validation_summary', {
         ...projectLogContext(project),
         validated: projectValidated,
         invalidated: projectInvalidated,
         missing_derivatives: missingPhotos.length
       });
-      
+
       if (projectInvalidated > 0) {
         emitJobUpdate({
           type: 'cache_validated',
@@ -783,7 +783,7 @@ async function runDerivativeCacheValidation(job) {
           invalidated: projectInvalidated
         });
       }
-      
+
       // Trigger derivative generation for photos with missing derivatives
       if (missingPhotos.length > 0) {
         try {
@@ -802,7 +802,7 @@ async function runDerivativeCacheValidation(job) {
             priority: 85,
             scope: 'photo_set',
           });
-          
+
           log.info('cache_validation_triggered_regen', {
             ...projectLogContext(project),
             photo_count: missingPhotos.length,
@@ -822,7 +822,7 @@ async function runDerivativeCacheValidation(job) {
       });
     }
   }
-  
+
   if (projects.length > 1) {
     log.info('cache_validation_global_summary', {
       projects_processed: projects.length,
@@ -832,13 +832,96 @@ async function runDerivativeCacheValidation(job) {
   }
 }
 
+/**
+ * Migrate all derivatives to WebP
+ * Scans for existing JPG derivatives and queues regeneration (which converts to WebP and deletes JPG)
+ */
+async function runWebPMigration(job) {
+  const { getProjectPath } = require('../fsUtils');
+  const projects = getProjectsForJob(job);
+  let totalQueued = 0;
+
+  for (const project of projects) {
+    try {
+      const projectPath = getProjectPath(project.project_folder);
+      const thumbDir = path.join(projectPath, '.thumb');
+      const previewDir = path.join(projectPath, '.preview');
+
+      // Get all photos
+      const page = photosRepo.listPaged({ project_id: project.id, limit: 100000 });
+      const toRegenerate = [];
+
+      for (const p of page.items) {
+        const thumbJpg = path.join(thumbDir, `${p.filename}.jpg`);
+        const previewJpg = path.join(previewDir, `${p.filename}.jpg`);
+
+        // Check if legacy JPGs exist
+        const hasLegacy = (await fs.pathExists(thumbJpg)) || (await fs.pathExists(previewJpg));
+
+        // Also check if WebP is missing (in case of partial migration)
+        const thumbWebP = path.join(thumbDir, `${p.filename}.webp`);
+        const previewWebP = path.join(previewDir, `${p.filename}.webp`);
+        const missingWebP = (!await fs.pathExists(thumbWebP)) || (!await fs.pathExists(previewWebP));
+
+        if (hasLegacy || missingWebP) {
+          toRegenerate.push({ filename: p.filename, photo_id: p.id });
+        }
+      }
+
+      if (toRegenerate.length > 0) {
+        jobsRepo.enqueueWithItems({
+          tenant_id: job.tenant_id,
+          project_id: project.id,
+          type: 'generate_derivatives',
+          payload: {
+            task_id: `webp-migration-${project.id}`,
+            task_type: 'generate_derivatives',
+            source: 'maintenance',
+            force: true // Force regeneration to ensure WebP creation and JPG cleanup
+          },
+          items: toRegenerate,
+          priority: 50,
+          scope: 'project',
+          autoChunk: true
+        });
+
+        totalQueued += toRegenerate.length;
+        log.info('webp_migration_queued', {
+          ...projectLogContext(project),
+          count: toRegenerate.length
+        });
+
+        emitJobUpdate({
+          type: 'migration_queued',
+          project_folder: project.project_folder,
+          count: toRegenerate.length
+        });
+      }
+
+    } catch (err) {
+      log.error('webp_migration_project_failed', {
+        ...projectLogContext(project),
+        error: err.message
+      });
+    }
+  }
+
+  if (projects.length > 1) {
+    log.info('webp_migration_global_summary', {
+      projects_processed: projects.length,
+      total_queued: totalQueued
+    });
+  }
+}
+
 module.exports = {
   runTrashMaintenance,
-  runDuplicateResolution,
   runManifestCheck,
   runFolderCheck,
   runManifestCleaning,
+  runDuplicateResolution,
   runFolderAlignment,
   runOrphanedProjectCleanup,
   runDerivativeCacheValidation,
+  runWebPMigration
 };

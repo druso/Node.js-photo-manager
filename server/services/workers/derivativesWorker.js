@@ -12,10 +12,16 @@ const makeLogger = require('../../utils/logger2');
 const log = makeLogger('deriv-worker');
 
 function supportedSourcePath(projectPath, entry) {
+  // First check exact filename
+  const p1 = path.join(projectPath, entry.filename);
+  if (fs.existsSync(p1)) return p1;
+
+  // Then check variants using basename if available
+  const base = entry.basename || entry.filename;
   const exts = ['.jpg', '.jpeg', '.png', '.tiff', '.webp'];
   for (const ext of exts) {
     for (const variant of [ext, ext.toUpperCase()]) {
-      const p = path.join(projectPath, `${entry.filename}${variant}`);
+      const p = path.join(projectPath, `${base}${variant}`);
       if (fs.existsSync(p)) return p;
     }
   }
@@ -87,14 +93,10 @@ async function runGenerateDerivatives({ job, onProgress }) {
     return;
   }
 
-  // Original project-scoped logic
+
   const project = projectsRepo.getById(job.project_id);
   if (!project) throw new Error('Project not found for job');
-  if (project.status === 'canceled') {
-    // Project has been archived/canceled – do not process derivatives
-    return;
-  }
-  const projectPath = getProjectPath(project);
+  const projectPath = getProjectPath(project.project_folder);
 
   const cfg = getConfig();
   const thumbCfg = (cfg.processing && cfg.processing.thumbnail) || { maxDim: 200, quality: 80 };
@@ -106,7 +108,7 @@ async function runGenerateDerivatives({ job, onProgress }) {
   const effectiveForce = !!payload.force || !!requested;
   let baseCandidates = effectiveForce
     ? all.filter(e => e.thumbnail_status !== 'not_supported' || e.preview_status !== 'not_supported')
-    : all.filter(e => (e.thumbnail_status === 'pending' || e.thumbnail_status === 'failed' || !e.thumbnail_status) || (e.preview_status === 'pending' || e.preview_status === 'failed' || !e.preview_status));
+    : all.filter(e => (e.thumbnail_status === 'pending' || e.thumbnail_status === 'failed' || !e.thumbnail_status || e.thumbnail_status === 'missing') || (e.preview_status === 'pending' || e.preview_status === 'failed' || !e.preview_status || e.preview_status === 'missing'));
   const candidates = requested ? all.filter(e => requested.has(String(e.filename).toLowerCase())) : baseCandidates;
 
   // If no items pre-created, create job_items from candidates
@@ -421,7 +423,7 @@ async function processItem({
         width: Number(thumbCfg.maxDim) || 200,
         height: Number(thumbCfg.maxDim) || 200,
         quality: Number(thumbCfg.quality) || 80,
-        outputPath: path.join(projectPath, '.thumb', `${entry.filename}.jpg`)
+        outputPath: path.join(projectPath, '.thumb', `${entry.filename}.webp`)
       });
     }
 
@@ -431,7 +433,7 @@ async function processItem({
         width: Number(prevCfg.maxDim) || 6000,
         height: Number(prevCfg.maxDim) || 6000,
         quality: Number(prevCfg.quality) || 80,
-        outputPath: path.join(projectPath, '.preview', `${entry.filename}.jpg`)
+        outputPath: path.join(projectPath, '.preview', `${entry.filename}.webp`)
       });
     }
 
@@ -459,8 +461,22 @@ async function processItem({
         if (result.type === 'thumbnail') thumbStatus = 'failed';
         if (result.type === 'preview') prevStatus = 'failed';
       } else {
-        if (result.type === 'thumbnail') thumbStatus = 'generated';
-        if (result.type === 'preview') prevStatus = 'generated';
+        if (result.type === 'thumbnail') {
+          thumbStatus = 'generated';
+          // Cleanup old JPG if exists
+          try {
+            const oldJpg = path.join(projectPath, '.thumb', `${entry.filename}.jpg`);
+            if (await fs.pathExists(oldJpg)) await fs.remove(oldJpg);
+          } catch (e) { /* ignore */ }
+        }
+        if (result.type === 'preview') {
+          prevStatus = 'generated';
+          // Cleanup old JPG if exists
+          try {
+            const oldJpg = path.join(projectPath, '.preview', `${entry.filename}.jpg`);
+            if (await fs.pathExists(oldJpg)) await fs.remove(oldJpg);
+          } catch (e) { /* ignore */ }
+        }
       }
     }
 
